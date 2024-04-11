@@ -9,19 +9,19 @@ WORKDIR /config
 COPY src/ /config/
 
 # Install system dependencies
-RUN apk update && \
-    apk add --no-cache build-base libffi-dev openssl-dev
+RUN apt update && \
+    apt install -y build-essential libffi-dev libssl-dev
 
 # Install Python dependencies
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Install Node.js and npm
-RUN apk add --no-cache nodejs npm
+RUN apt install -y nodejs npm
 
 # Set the environment variables for the bot
 # TODO: Custom environment variables
 ENV TELEGRAM_TOKEN ${TELEGRAM_TOKEN}
-ENV BOT_HOST ${BOT_HOST}s
+ENV BOT_HOST ${BOT_HOST}
 
 # Set user group as environment variables
 ENV PUID=1000
