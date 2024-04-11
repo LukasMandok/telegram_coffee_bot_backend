@@ -1,0 +1,28 @@
+# Python environment requirements
+# Adapted from:  https://github.com/xstar97/reddit-auto-reply/blob/master/bot/requirements.txt
+
+# TODO: check actual requirements
+
+python-dotenv #==0.20.0
+gunicorn==20.1.0
+uvicorn #=0.22.0
+
+asnycio # maybe anyio instead
+
+### WEB COMMUNICATION
+python-telegram-bot
+
+httpx #==0.24.1
+fastapi #0.103.2
+
+### DATABASE
+redis
+pymongo#==4.2.0
+
+### GOOGLE API
+google-api-core #==2.7.3
+google-api-python-client #==2.47.0
+google-auth #==2.6.6
+google-auth-httplib2 #==0.1.0
+google-auth-oauthlib #==0.5.1
+googleapis-common-protos #==1.56.0
