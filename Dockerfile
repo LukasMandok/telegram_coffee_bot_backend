@@ -21,7 +21,7 @@ RUN apk add --no-cache nodejs npm
 # Set the environment variables for the bot
 # TODO: Custom environment variables
 ENV TELEGRAM_TOKEN ${TELEGRAM_TOKEN}
-
+ENV BOT_HOST ${BOT_HOST}s
 
 # Set user group as environment variables
 ENV PUID=1000

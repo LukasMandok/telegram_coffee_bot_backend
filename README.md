@@ -32,7 +32,7 @@ services:
       - "8080:3000"
     environment:
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
-      - WEBHOOK_URL=${WEBHOOK_URL}
+      - BOT_HOST=${BOT_HOST}
 
       - GSHEET_SSID=${GSHEET_SSID}
     #   - BOT_STATE=production

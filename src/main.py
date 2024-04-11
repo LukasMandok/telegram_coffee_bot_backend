@@ -1,7 +1,7 @@
 from http import HTTPStatus
 from fastapi import FastAPI, Request, Response
 
-import uvicorn
+# import uvicorn
 
 from contextlib import asynccontextmanager
 from telegram import Update
@@ -10,12 +10,14 @@ from telegram.ext._contexttypes import ContextTypes
 
 from api import app
 
-from bot.ptb import ptb
-from bot import handlers, commands
+# from bot.ptb import ptb
+# from bot import handlers, commands
 
-from config import TELEGRAM_TOKEN, WEBHOOK_URL
+from config import TELEGRAM_TOKEN, BOT_HOST
 
-from common.log import logger
+# from common.log import logger
+
+
 # Initialize telegram bot -> move to another file
 ptb = (
     Application.builder()
@@ -28,7 +30,7 @@ ptb = (
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    await ptb.bot.setWebhook(WEBHOOK_URL) # TODO: get webook url from env vars
+    await ptb.bot.setWebhook(BOT_HOST)
     async with ptb:
             await  ptb.start()
             yield
