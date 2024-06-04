@@ -1,55 +1,59 @@
+import logging
+import asyncio
+
 from http import HTTPStatus
 from fastapi import FastAPI, Request, Response
-
-# import uvicorn
-
 from contextlib import asynccontextmanager
-from telegram import Update
-from telegram.ext import Application, CommandHandler
-from telegram.ext._contexttypes import ContextTypes
 
-from api import app
+import uvicorn
+
+# from api import app
 
 # from bot.ptb import ptb
 # from bot import handlers, commands
 
-from config import TELEGRAM_TOKEN, BOT_HOST
+from .config import settings
 
-# from common.log import logger
+# from database.mongo import MongoDB
+from .database.motormongo_repo import MotorMongoRepository
+from .api.telethon_api import TelethonAPI
+
+from .api.routes import router
 
 
-# Initialize telegram bot -> move to another file
-ptb = (
-    Application.builder()
-    .updater(None)
-    .token(TELEGRAM_TOKEN) # TODO: get token from environmental variables
-    .read_timeout(7)
-    .get_updates_read_timeout(42)
-    .build()
+### logging configuration
+logging.basicConfig(format='[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s', level=logging.WARNING)
+
+### connecting bot 
+telethon_api = TelethonAPI(
+    settings.API_ID,
+    settings.API_HASH,
+    settings.BOT_TOKEN
 )
+mongodb = MotorMongoRepository(settings.DATABASE_URL)
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
-    await ptb.bot.setWebhook(BOT_HOST)
-    async with ptb:
-            await  ptb.start()
-            yield
-            await ptb.stop()
-            
-            
-# Initialize FastAPI app
+async def lifespan(app: FastAPI):
+    await mongodb.connect()
+    yield 
+    await mongodb.close()
+
 app = FastAPI(lifespan = lifespan)
+app.include_router(router)
 
-@app.post("/")
-async def process_update(request: Request):
-    req = await  request.json()
-    update = Update.de_json(req, ptb.bot)
-    await ptb.process_update(update)
-    return Response(status_code=HTTPStatus.OK)
+uvicorn_server = uvicorn.Server(uvicorn.Config(app, host="localhost", port=8000))
 
-# Start Handler:
-async def start(update, _: ContextTypes.DEFAULT_TYPE):
-    # send a message when command /start is issued
-    await update.message.reply_text("starting ...")
 
-ptb.add_handler(CommandHandler("start", start))
+
+async def run_fastapi():
+    # uvicorn.run(app, host="localhost", port=8000)
+    await uvicorn_server.serve()
+    
+async def run_telethon():
+    await telethon_api.run()
+
+if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    tasks = [run_fastapi(), run_telethon()]
+    loop.run_until_complete(asyncio.gather(*tasks))
+    loop.close()

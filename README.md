@@ -20,6 +20,28 @@ nice implementation of python-telegram-bot with fastapi
 
 
 
+### Concepts:
+
+#### Onboarding:
+1. Telegram User is send to backend
+2. Backend checks wether user is already in the database -> using handler (login_user)
+    - In case this returns false:
+        a. User has to enter a password
+        b. password is checked via @post(/password) and the corresponding handler with the database.
+            - deny access in case of wrong password, otherwise continue
+        c. First name is checked for in the spreadsheet
+        d. in case user name is missing , user is asked to specify his firstname
+        e. user added to database
+        f. new entry in spreadsheet is added
+
+
+#### Logging:
+
+        
+
+
+
+
 
 ### Docker configuration:
 ```yaml

@@ -8,6 +8,9 @@ WORKDIR /config
 # Copy all files from bot directory to container
 COPY src/ /config/
 
+# Copy .env file to the container
+COPY .env /config/.env
+
 # Install system dependencies
 RUN apt update && \
     apt install -y build-essential libffi-dev libssl-dev
