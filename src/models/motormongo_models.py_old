@@ -11,8 +11,13 @@ class BaseUserDocument(Document):
     first_name = StringField(required = True)
     last_name  = StringField(required = False)
     
+    # class Meta:
+    #     collection = "users"
+    #     created_at_timestamp = True
+    #     updated_at_timestamp = True
     
-class TelegramUserDocument(BaseUserDocument):
+    
+class BaseTelegramUserDocument(BaseUserDocument):
     id         = IntegerField(required = True, unique = True)
     username   = StringField(required = False, unique = True)
     last_login = DateTimeField()
@@ -20,14 +25,18 @@ class TelegramUserDocument(BaseUserDocument):
     photo_id   = IntegerField()
     lang_code  = StringField(default = "en")
     
+class TelegramUserDocument(BaseTelegramUserDocument):
     class Meta:
-        collection = 'users'
-        created_at_timestamp = True
-        updated_at_timestamp = True
+        collection = "telegram_users"
         
-class FullUserDocument(TelegramUserDocument):
+
+        
+class FullUserDocument(BaseTelegramUserDocument):
     gsheet_name = StringField(required = True, unique = True)
     is_admin    = BooleanField(default = False)
+    
+    class Meta:
+        collection = "full_users"
     
 #---------------------------
 # *      Configuration
@@ -39,10 +48,14 @@ class BasePasswordDocument(EmbeddedDocument):
     def verify_password(self, password: str) -> bool:
         return check_password(password, self.hash_value)
     
+    class Meta:
+        collection = "config"
+    
     
 class ConfigDocument(Document):
     
     password = EmbeddedDocumentField(document_type = BasePasswordDocument)
     admin    = StringField() #EmbeddedDocumentField(document_type = FullUserDocument)
     
-    
+    class Meta:
+        collection = "config"

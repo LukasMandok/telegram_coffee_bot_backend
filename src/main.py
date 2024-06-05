@@ -15,7 +15,9 @@ import uvicorn
 from .config import settings
 
 # from database.mongo import MongoDB
-from .database.motormongo_repo import MotorMongoRepository
+# from .database.motormongo_repo import MotorMongoRepository
+# from .database.mongo_repo import MongoRepository
+from .database.beanie_repo import BeanieRepository
 from .api.telethon_api import TelethonAPI
 
 from .api.routes import router
@@ -30,13 +32,18 @@ telethon_api = TelethonAPI(
     settings.API_HASH,
     settings.BOT_TOKEN
 )
-mongodb = MotorMongoRepository(settings.DATABASE_URL)
+mongodb = BeanieRepository(settings.DATABASE_URL)
+# mongodb = MongoRepository(settings.DATABASE_URL)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await mongodb.connect()
     yield 
     await mongodb.close()
+    
+    # mongodb.connect()
+    # yield 
+    # mongodb.close()
 
 app = FastAPI(lifespan = lifespan)
 app.include_router(router)

@@ -1,7 +1,7 @@
 from fastapi import Depends
 
-from ..models.motormodels import *
-from ..schemas.user import *
+# from ..models.beanie_models import *
+# from ..schemas.user import *
 
 from ..database.base_repo import BaseRepository
 from ..dependencies.dependencies import get_repo

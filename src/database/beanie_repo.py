@@ -1,13 +1,15 @@
-from motormongo import DataBase, get_db
+import motor.motor_asyncio
+from motor.motor_asyncio import AsyncIOMotorClient
+from beanie import init_beanie
 
-# import src.models.motormodels as models
+import src.models.beanie_models as models
 
 from ..config import settings
-from ..common.helpers import hash_password
+# from ..common.helpers import hash_password
 
 from .base_repo import BaseRepository
 
-class MotorMongoRepository(BaseRepository):
+class BeanieRepository(BaseRepository):
     def __init__(self, uri) -> None:
         self.uri = uri
         
@@ -21,10 +23,14 @@ class MotorMongoRepository(BaseRepository):
     async def connect(self):
         print("connecting to mongodb: uri", self.uri)
         # await DataBase.connect(uri = self.uri, db = "fastapi")
-        await DataBase.connect("mongodb://admin:password123@localhost:27017/fastapi", db = "fastapi")
-
-        self.db = await get_db()
-        self.client = self.db.client
+        self.client = AsyncIOMotorClient(self.uri)
+        self.db = self.client["fastapi"]
+        
+        await init_beanie(self.db, document_models=[
+            models.BaseUserDocument,
+            models.TelegramUserDocument,
+            models.FullUserDocument,
+            models.ConfigDocument])
         
         self.ping()
         self.getInfo()
@@ -34,17 +40,26 @@ class MotorMongoRepository(BaseRepository):
         
     async def close(self):
         print("closing mongodb")
-        await DataBase.close()
+        self.client.close()
         
-    # async def setup_defaults(self):
-    #     config, created = await models.ConfigDocument.find_one_or_create(
-    #         query = {}, 
-    #         defaults = {
-    #             'password': {'hash_value' : hash_password(settings.DEFAULT_PASSWORD)},
-    #             'admin': settings.DEFAULT_ADMIN
-    #             }
-    #         )
+    async def setup_defaults(self):
+        password_doc = models.PasswordDocument(
+            password = settings.DEFAULT_PASSWORD
+        )
+        # password_doc.set_password(settings.DEFAULT_PASSWORD)
         
+        # config = await models.ConfigDocument.find_one({})
+        # if config is None:
+        #     config = models.ConfigDocument(password=password_doc, admin=settings.DEFAULT_ADMIN)
+        #     await config.insert()
+        
+        await models.ConfigDocument.find_one({}).upsert(
+            on_insert = models.ConfigDocument(
+                password = password_doc,
+                admin    = settings.DEFAULT_ADMIN
+            )
+        )
+    
     #---------------------------
     #     Helper Methods
     #---------------------------

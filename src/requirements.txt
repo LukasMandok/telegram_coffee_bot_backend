@@ -19,10 +19,12 @@ fastapi #0.103.2
 ### DATABASE
 pydantic
 pydantic-settings
-redis
+# redis
 # pymongo#==4.2.0
 # sqlalchemy
-motormongo
+# motormongo
+pymongo
+beanie
 
 ### GOOGLE API
 google-api-core #==2.7.3

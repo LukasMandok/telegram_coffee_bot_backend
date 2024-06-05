@@ -1,9 +1,9 @@
 from fastapi import Depends
 from ..database.base_repo import BaseRepository
-from ..database.motormongo_repo import MotorMongoRepository
+from ..database.beanie_repo import BeanieRepository
 
-from ..models.motormodels import TelegramUserDocument
+# from ..models.motormongo_models import TelegramUserDocument
 from ..schemas.user import TelegramUser
 
 def get_repo() -> BaseRepository:
-    return MotorMongoRepository
+    return BeanieRepository
