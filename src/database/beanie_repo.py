@@ -1,18 +1,25 @@
-import motor.motor_asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import init_beanie
 
-import src.models.beanie_models as models
+from .base_repo import BaseRepository
+from ..models import beanie_models as models
 
 from ..config import settings
 # from ..common.helpers import hash_password
 
-from .base_repo import BaseRepository
+
 
 class BeanieRepository(BaseRepository):
-    def __init__(self, uri) -> None:
-        self.uri = uri
-        
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            cls._instance = super(BeanieRepository, cls).__new__(cls)
+            cls._instance._init(*args, **kwargs)
+        return cls._instance
+    
+    def _init(self) -> None:
+        self.uri = None
         self.db = None
         self.client = None     
         
@@ -20,20 +27,22 @@ class BeanieRepository(BaseRepository):
     #     Connection
     #---------------------------   
         
-    async def connect(self):
-        print("connecting to mongodb: uri", self.uri)
+    async def connect(self, uri):
+        self.uri = uri
+        
+        print("connecting to mongodb: uri", )
         # await DataBase.connect(uri = self.uri, db = "fastapi")
         self.client = AsyncIOMotorClient(self.uri)
         self.db = self.client["fastapi"]
         
         await init_beanie(self.db, document_models=[
-            models.BaseUserDocument,
-            models.TelegramUserDocument,
-            models.FullUserDocument,
-            models.ConfigDocument])
+            models.BaseUser,
+            models.TelegramUser,
+            models.FullUser,
+            models.Config])
         
-        self.ping()
-        self.getInfo()
+        await self.ping()
+        await self.getInfo()
         
         # load default values
         # self.setup_defaults()        
@@ -64,33 +73,37 @@ class BeanieRepository(BaseRepository):
     #     Helper Methods
     #---------------------------
     
-    def getInfo(self):
+    async def getInfo(self):
         print("-- database:", self.db)
         print("-- collection:", self.db.get_collection("fastapi"))
         
         
-    def ping(self):
+    async def ping(self):
         try: 
             self.client.admin.command('ping')
             print("Sucessfully connected to database.")
         except Exception as e:
             print(e)
             
-    def get_collection(self, collection_name):
+    async def get_collection(self, collection_name):
         return self.db.get_collection(collection_name)
             
     #---------------------------
     #     Access Database
     #---------------------------
     
-    def find_all_users(self):
-        pass
-        # return models.TelegramUserDocument.find_all()
+    ### Users ###
     
-    def find_user_by_id(self, id):
-        pass
-        # return models.TelegramUserDocument.find_one(id)
+    async def find_all_users(self):
+        return models.TelegramUserDocument.find_all()
     
-    def get_password(self):
-        pass
-        # return models.ConfigDocument.find_one()
+    async def find_user_by_id(self, id):
+        return models.TelegramUserDocument.find_one(id)    
+    
+    ### Configuration ###
+    
+    async def get_password(self):
+        return models.ConfigDocument.find_one().password
+    
+    async def get_admins(self):
+        return models.ConfigDocument.find_one().admins

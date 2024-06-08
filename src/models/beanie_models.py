@@ -1,4 +1,4 @@
-from typing import Annotated, Optional  
+from typing import Annotated, Optional, List
 
 from beanie import Document, Indexed, Link
 from pydantic import Field
@@ -6,6 +6,7 @@ from pydantic.functional_validators import field_validator
 
 from datetime import datetime
 
+from . import base_models as base 
 from ..common.helpers import hash_password, check_password
 
 """
@@ -36,7 +37,7 @@ from ..common.helpers import hash_password, check_password
 # *      Users
 #---------------------------
 
-class BaseUserDocument(Document):
+class BaseUser(base.BaseUser, Document):
     first_name: str
     last_name:  Optional[str] = None
     created_at: datetime      = Field(default_factory = datetime.now)
@@ -46,7 +47,7 @@ class BaseUserDocument(Document):
         is_root = True
     
     
-class TelegramUserDocument(BaseUserDocument):
+class TelegramUser(base.TelegramUser, BaseUser):
     id:         int # Indexed(int, unique = True)  is not allowed     
     username:   Indexed(int, unique = True) #Annotated[int, Indexed(unique = True)]
     last_login: datetime
@@ -59,7 +60,7 @@ class TelegramUserDocument(BaseUserDocument):
         use_cache = True
 
         
-class FullUserDocument(TelegramUserDocument):
+class FullUser(base.FullUser, TelegramUser):
     gsheet_name: Indexed(str, unique=True)
     is_admin:    bool = False
     
@@ -70,7 +71,7 @@ class FullUserDocument(TelegramUserDocument):
 # *      Configuration
 #---------------------------
     
-class PasswordDocument(Document):
+class Password(base.Password, Document):
     hash_value: str
     
     @field_validator("hash_value")
@@ -82,9 +83,9 @@ class PasswordDocument(Document):
         return check_password(password, self.hash_value)
         
     
-class ConfigDocument(Document):
-    password: Link[PasswordDocument]
-    admin:    str #EmbeddedDocumentField(document_type = FullUserDocument)
+class Config(base.Config, Document):
+    password: Link[Password]
+    admins:   List[int] #EmbeddedDocumentField(document_type = FullUserDocument)
     
     class Settings:
         name = "config"

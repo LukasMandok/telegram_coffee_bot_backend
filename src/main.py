@@ -7,21 +7,12 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 
-# from api import app
-
-# from bot.ptb import ptb
-# from bot import handlers, commands
-
 from .config import settings
 
-# from database.mongo import MongoDB
-# from .database.motormongo_repo import MotorMongoRepository
-# from .database.mongo_repo import MongoRepository
-from .database.beanie_repo import BeanieRepository
 from .api.telethon_api import TelethonAPI
-
-from .api.routes import router
-
+from .routers import users, admin
+from .dependencies.dependencies import get_repo
+# from .middlewares.middleware import SecurityMiddleware
 
 ### logging configuration
 logging.basicConfig(format='[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s', level=logging.WARNING)
@@ -32,12 +23,13 @@ telethon_api = TelethonAPI(
     settings.API_HASH,
     settings.BOT_TOKEN
 )
-mongodb = BeanieRepository(settings.DATABASE_URL)
+
+mongodb = get_repo()
 # mongodb = MongoRepository(settings.DATABASE_URL)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await mongodb.connect()
+    await mongodb.connect(settings.DATABASE_URL)
     yield 
     await mongodb.close()
     
@@ -45,8 +37,13 @@ async def lifespan(app: FastAPI):
     # yield 
     # mongodb.close()
 
+
+# TODO: define database as global parameter dependency (probably does not work)
 app = FastAPI(lifespan = lifespan)
-app.include_router(router)
+
+app.include_router(users.router)
+
+# app.add_middleware(SecurityMiddleware)
 
 uvicorn_server = uvicorn.Server(uvicorn.Config(app, host="localhost", port=8000))
 

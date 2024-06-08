@@ -1,14 +1,10 @@
 from fastapi import Depends
 
-# from ..models.beanie_models import *
-# from ..schemas.user import *
-
 from ..database.base_repo import BaseRepository
-from ..dependencies.dependencies import get_repo
 
 
-def get_all_users(repo: BaseRepository = Depends(get_repo)):
-    users = repo.find_all_users()
+async def get_all_users(repo: BaseRepository):
+    users = await repo.find_all_users()
 
     # if not users:
     #     raise KeyError("No users found")
@@ -16,15 +12,20 @@ def get_all_users(repo: BaseRepository = Depends(get_repo)):
     return users
 
 
-def check_user(id, repo: BaseRepository = Depends(get_repo)):
-    user = repo.find_user_by_id(id)
+async def check_user(id, repo: BaseRepository):
+    print("called check_user_handler with id:", id)
+    print("!!!!!!!!! repo:", repo)
+    user = await repo.find_user_by_id(id)
+    print("found user:", user)
     if user:
         return True
 
-def check_password(password, repo: BaseRepository = Depends(get_repo)):
-    hashed_password = repo.get_password()
+async def check_password(password, repo: BaseRepository):
+    hashed_password = await repo.get_password()
+    is_correct = hashed_password.verify_password(password)
     
+    return is_correct
     
-def is_admin(id, repo: BaseRepository = Depends(get_repo)):
+async def is_admin(id, repo: BaseRepository):
     # TODO: implement
     return False
