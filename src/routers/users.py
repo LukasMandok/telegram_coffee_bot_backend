@@ -1,8 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 from fastapi_utils.cbv import cbv
 
-
-
 from ..schemas.user import TelegramUser
 
 from ..database.base_repo import BaseRepository
@@ -16,7 +14,7 @@ from ..handlers.handlers import *
 router = APIRouter(
     prefix="/users",
     tags=["users"],
-    dependencies=[],
+    dependencies=[Depends(verify_token)],
     responses={404: {"description": "Not found"}},
 )
 

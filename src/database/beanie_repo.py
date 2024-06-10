@@ -39,21 +39,24 @@ class BeanieRepository(BaseRepository):
             models.BaseUser,
             models.TelegramUser,
             models.FullUser,
+            models.Password,
             models.Config])
+        
+        # IDEA: maybe use asyncio.create_task to run them in the background
         
         await self.ping()
         await self.getInfo()
         
         # load default values
-        # self.setup_defaults()        
+        await self.setup_defaults()        
         
     async def close(self):
         print("closing mongodb")
         self.client.close()
         
     async def setup_defaults(self):
-        password_doc = models.PasswordDocument(
-            password = settings.DEFAULT_PASSWORD
+        password_doc = models.Password(
+            hash_value = settings.DEFAULT_PASSWORD
         )
         # password_doc.set_password(settings.DEFAULT_PASSWORD)
         
@@ -62,13 +65,23 @@ class BeanieRepository(BaseRepository):
         #     config = models.ConfigDocument(password=password_doc, admin=settings.DEFAULT_ADMIN)
         #     await config.insert()
         
-        await models.ConfigDocument.find_one({}).upsert(
-            on_insert = models.ConfigDocument(
+        # TODO: CHange the admins field to work with usernames as well? maybe.
+        print("!!! Setup default config values")
+        # await models.Config.find_one({}).upsert(
+        #     on_insert = models.Config(
+        #         password = password_doc,
+        #         admins   = [settings.DEFAULT_ADMIN]
+        #     )
+        # )
+        if not await models.Config.find_one({}):
+            print("There is no entry in Config yet.")
+            new_config = models.Config(
                 password = password_doc,
-                admin    = settings.DEFAULT_ADMIN
+                admins   = [settings.DEFAULT_ADMIN]
             )
-        )
-    
+            print("new config entry: ", new_config)
+            await password_doc.insert()
+            await new_config.insert()
     #---------------------------
     #     Helper Methods
     #---------------------------
@@ -95,15 +108,18 @@ class BeanieRepository(BaseRepository):
     ### Users ###
     
     async def find_all_users(self):
-        return models.TelegramUserDocument.find_all()
+        return await models.TelegramUser.find_all()
     
-    async def find_user_by_id(self, id):
-        return models.TelegramUserDocument.find_one(id)    
+    async def find_user_by_id(self, user_id):
+        # return models.TelegramUser.find_one( models.TelegramUser.id == id)    
+        return await models.TelegramUser.get(user_id)
     
     ### Configuration ###
     
     async def get_password(self):
-        return models.ConfigDocument.find_one().password
+        config = await models.Config.find_one(fetch_links=True)
+        print("password in config ", config.get_password())
+        return config.get_password()
     
     async def get_admins(self):
-        return models.ConfigDocument.find_one().admins
+        return await models.Config.find_one().admins

@@ -82,11 +82,16 @@ class Password(base.Password, Document):
     def verify_password(self, password: str) -> bool:
         return check_password(password, self.hash_value)
         
-    
+        
 class Config(base.Config, Document):
     password: Link[Password]
     admins:   List[int] #EmbeddedDocumentField(document_type = FullUserDocument)
     
+    def get_password(self):
+        return self.password 
+        #alternative to fetch_links=true in find_one:
+        # return config.fetch_link(Config.password)
+        
     class Settings:
         name = "config"
         
