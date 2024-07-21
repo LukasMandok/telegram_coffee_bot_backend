@@ -40,7 +40,22 @@ nice implementation of python-telegram-bot with fastapi
         
 
 
+### Google Spreadsheet Setup (optional)
 
+1. Goto [Google Cloud API](console.cloud.google.com) and agree to the terms 
+2. Select active apis and services and create a new project there
+3. Press on activate apis and services
+4. Search for Google Sheets API and activate that one
+5. create new login data for the Google Sheets API and use application data as qualification
+6. give your service account a name and an id (e.g. coffee-bot)
+7. Afterwards goto login data on the sidebar and select your newly created service account on the bottom
+8. Goto keys and add a new JSON key on the bottom dropdown and save that newly generated key on your PC
+9. Also copy the email address of your service account.
+
+9. Now go to your personal google account spread sheets and create a new spreadsheet for the coffee bot.
+10. On the top right, you press on the button to add new users and enter your service account mail address, to add this one as a co-worker .
+
+For your application instance to authenticate to your speadsheet, you have to enter the client ID and private secret to your environment variables. 
 
 
 ### Docker configuration:

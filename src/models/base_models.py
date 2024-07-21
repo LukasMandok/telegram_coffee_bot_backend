@@ -46,7 +46,7 @@ class Password(ABC):
         pass
     
     @abstractmethod
-    def verify_password(self, password: str) -> bool:
+    def verify_password(self, plain_password: str) -> bool:
         pass
         
     

@@ -1,3 +1,4 @@
+from pydantic import PrivateAttr
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
@@ -5,7 +6,6 @@ class Settings(BaseSettings):
     API_HASH: str
     BOT_TOKEN: str
     BOT_HOST: str
-    GSHEET_SSID: str
 
     # MONGODB
 
@@ -18,9 +18,28 @@ class Settings(BaseSettings):
     
     DEFAULT_PASSWORD: str
     DEFAULT_ADMIN: str
+    
+    # Google Sheets
+    GSHEET_SSID: str
+    
+    # Google API
+    SERVICE_ACCOUNT_EMAIL: str
+    SERVICE_ACCOUNT_PRIVATE_KEY: str
+    _SERVICE_ACCOUNT_PRIVATE_KEY: str = PrivateAttr()
+    PROJECT_ID: str
+    
+    @property
+    def SERVICE_ACCOUNT_PRIVATE_KEY(self):
+        return self._SERVICE_ACCOUNT_PRIVATE_KEY.replace('\\n', '\n')
 
+    @SERVICE_ACCOUNT_PRIVATE_KEY.setter
+    def SERVICE_ACCOUNT_PRIVATE_KEY(self, value):
+        self._SERVICE_ACCOUNT_PRIVATE_KEY = value
+        
+        
     class Config:
         env_file = './.env'
+
 
 settings = Settings()
 

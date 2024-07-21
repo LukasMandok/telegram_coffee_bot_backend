@@ -1,9 +1,12 @@
-from typing import Optional
+from functools import wraps
+from typing import Callable, Optional, Any, Union
 from typing_extensions import Annotated
 
+from telethon import events
 from fastapi import Header, HTTPException, Depends
 from fastapi.security import APIKeyQuery
 
+from ..handlers import handlers, exceptions
 from ..models.base_models import *
 from ..database.base_repo import BaseRepository
 from ..database.beanie_repo import BeanieRepository
@@ -19,30 +22,52 @@ api_key_query = APIKeyQuery(name="token", auto_error=False)
 # a
 
 
-# async def get_current_user(
-#     api_key: Optional[str] = Depends(api_key_query)
-# ):
+async def verify_user(id: Union[Annotated[int, Header()], int]):
+    verified = await handlers.check_user(id, get_repo())
     
+    if not verified:
+        raise exceptions.VerificationException("User is not registered.")
     
+async def verify_admin(id: Union[Annotated[int, Header()], int]):
+    verified = await handlers.is_admin(id, get_repo())
+    
+    if not verified:
+        raise exceptions.VerificationException("User does not have admin rights.")
     
 
-
-
-
-### Veryfy if user and admin are in database
-
-async def verify_username(id: Annotated[int, Header()]):
-    if not await get_repo().find_user_by_id(id):
-        raise HTTPException(status_code=400, detail="Username is not registered.")
+# NOTE: removed implementation for dependancy injected decorator (not needed due to dependency injection)
+def verify_user_decorator(func: Callable) -> Callable:
+    @wraps(func)
+    async def wrapper(*args, **kwargs):  # id: Annotated[Optional[int], Header()] = None,
+        if args and isinstance(args[1], events.common.EventCommon):
+            event = args[1]
+            sender_id = event.sender_id
+        else:
+            raise ValueError("The first argument must be a Telethon event.")
     
-async def verify_admin(id: Annotated[int, Header()]):
-    if not id in await get_repo().get_admins():
-        raise HTTPException(status_code=400, detail="User is not an admin.")
+        await verify_user(sender_id)
+        
+        return await func(*args, **kwargs)
+    return wrapper
+
+def verify_admin_decorator(func: Callable) -> Callable:
+    @wraps(func)
+    async def wrapper(*args, **kwargs):  # id: Annotated[Optional[int], Header()] = None,
+        if args and isinstance(args[1], events.common.EventCommon):
+            event = args[1]
+            sender_id = event.sender_id
+        else:
+            raise ValueError("The first argument must be a Telethon event.")
     
-    
+        await verify_admin(sender_id)
+        
+        return await func(*args, **kwargs)
+    return wrapper
+
+
     
 ### TODO: Actually verify a meaningfull token
     
 async def verify_token(token: Annotated[str, Header()]):
     if token != "token123":
-        raise HTTPException(status_code=400, detail="Token header invalid")
+        raise exceptions.VerificationException("Token header invalid")

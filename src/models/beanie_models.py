@@ -1,13 +1,13 @@
 from typing import Annotated, Optional, List
 
 from beanie import Document, Indexed, Link
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic.functional_validators import field_validator
 
 from datetime import datetime
 
 from . import base_models as base 
-from ..common.helpers import hash_password, check_password
+from ..common.helpers import hash_password, compare_password
 
 """
 ### IDEAS
@@ -72,22 +72,36 @@ class FullUser(base.FullUser, TelegramUser):
 #---------------------------
     
 class Password(base.Password, Document):
-    hash_value: str
+    hash_value: bytes
     
-    @field_validator("hash_value")
+    @field_validator("hash_value", mode="before")
     @classmethod
-    def set_password(cls, password: str):
+    def set_password(cls, password: str | bytes) -> bytes:
+        # print("#### Password - set_password - called")
+        if isinstance(password, bytes):
+            # print("Password - set_password - obtained type bytes:", password)
+            try:
+                password = password.decode("utf8")
+            except UnicodeDecodeError as e:
+                raise ValueError("Password in database is no valid utf8-byte string")
+            return password
+        
+        elif not isinstance(password, str):
+            raise ValueError("Password must either be a utf8-byte string hash or a plaintext string.")
+        
+        # print("Password - set_password - obtained type str:", password)
         return hash_password(password)
     
-    def verify_password(self, password: str) -> bool:
-        return check_password(password, self.hash_value)
+    def verify_password(self, plain_password: str) -> bool:
+        return compare_password(plain_password, self.hash_value)
         
         
 class Config(base.Config, Document):
     password: Link[Password]
     admins:   List[int] #EmbeddedDocumentField(document_type = FullUserDocument)
     
-    def get_password(self):
+    def get_password(self) -> Link[Password]:
+        print("Config - get_password")
         return self.password 
         #alternative to fetch_links=true in find_one:
         # return config.fetch_link(Config.password)

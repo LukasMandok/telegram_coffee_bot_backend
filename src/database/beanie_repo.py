@@ -1,3 +1,4 @@
+from asyncio import sleep
 from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import init_beanie
 
@@ -35,6 +36,7 @@ class BeanieRepository(BaseRepository):
         self.client = AsyncIOMotorClient(self.uri)
         self.db = self.client["fastapi"]
         
+        print("beanie_repo - init_beanie")
         await init_beanie(self.db, document_models=[
             models.BaseUser,
             models.TelegramUser,
@@ -48,6 +50,7 @@ class BeanieRepository(BaseRepository):
         await self.getInfo()
         
         # load default values
+        print("beanie_repo - setup defaults")
         await self.setup_defaults()        
         
     async def close(self):
@@ -55,6 +58,7 @@ class BeanieRepository(BaseRepository):
         self.client.close()
         
     async def setup_defaults(self):
+        print("setup default password to: ", settings.DEFAULT_PASSWORD)
         password_doc = models.Password(
             hash_value = settings.DEFAULT_PASSWORD
         )
@@ -82,6 +86,10 @@ class BeanieRepository(BaseRepository):
             print("new config entry: ", new_config)
             await password_doc.insert()
             await new_config.insert()
+            
+        else:
+            pass
+        
     #---------------------------
     #     Helper Methods
     #---------------------------
@@ -117,9 +125,15 @@ class BeanieRepository(BaseRepository):
     ### Configuration ###
     
     async def get_password(self):
-        config = await models.Config.find_one(fetch_links=True)
+        print("beanie_repo: get_password - fetching config")
+        config = await models.Config.find_one(fetch_links=True) 
+        print("beanie_repo: get_password - retrieving password")
         print("password in config ", config.get_password())
         return config.get_password()
     
     async def get_admins(self):
-        return await models.Config.find_one().admins
+        config = await models.Config.find_one()
+        print("beanie_repo - config:", config)
+        admins = config.admins
+        print("beanie_repo - admins:", admins)
+        return admins
