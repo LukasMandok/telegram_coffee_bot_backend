@@ -32,7 +32,17 @@ class TelethonAPI:
         self.add_handler(self.test_admin_verification, "/admin")
         self.add_handler(self.digits, events.NewMessage(incoming=True, pattern=re.compile(r'[0-9]+')))
 
-        self.group = {"Lukas":0, "Heiko":0}
+        self.group = {
+            "Lukas":0, "Heiko":0, "Barnie":0, "Klaus":0, "Hans":0,
+            "David":0, "Jens":0, "Jürgen":0, "Ralf":0, "Rainer":0,
+            "Jörg":0, "Johannes":0, "Max":0, "Peter":0, "Karlo":0,
+            "Annie":0, "Marie":0, "Lena":0, "Lara":0, "Ruberta":0,
+            "Susi1":0, "Susi2":0, "Susi3":0, "Susi4":0, "Susi5":0,
+            "Marx1":0, "Marx2":0, "Marx3":0, "Marx4":0, "Marx5":0,
+            "Leon1":0, "Leon2":0, "Leon3":0, "Leon4":0, "Leon5":0
+        }
+        self.current_page = 0
+        self.current_group = None
         
     async def run(self):
         await self.bot.run_until_disconnected()        
@@ -178,8 +188,7 @@ class TelethonAPI:
             message = await self.send_keyboard(chat, "Group View", self.getGroupKeyboard())
             submitted = False
             
-            while True: 
-                current_group = self.group.copy()           
+            while True:          
                 button_event = await conv.wait_event(self.keyboard_callback(user_id))
                 button_data = button_event.data.decode('utf8')
 
@@ -190,23 +199,33 @@ class TelethonAPI:
                     submitted = True
                     break
                 elif button_data == "group_cancel":
+                    # TODO: reset the group to initial state and set current_page to 0
                     await message.edit("Canceled", buttons=None)
                     break
+                
                 elif "group_plus" in button_data:
                     name = button_data.split("_")[2]
                     self.group[name] += 1
-                    
                 elif "group_minus" in button_data:
                     name = button_data.split("_")[2]
                     self.group[name] -= 1 if self.group[name] > 0 else 0
-                
-                if self.group == current_group:
+                    
+                elif "group_next" in button_data:
+                    # TODO: replace this by the actual nummber of maximal pages
+                    self.current_page = min(self.current_page + 1, 2)
+                elif "group_prev" in button_data:
+                    self.current_page = max(self.current_page - 1, 0)
+                    
+                group = self.getGroupKeyboard()
+                if self.current_group == group:
                     continue
                 
-                await message.edit(buttons=self.getGroupKeyboard())
+                self.current_group = group
+                await message.edit(buttons=group)
                 
             if submitted == True:
-                message = "added the following coffes:\n"
+                total = sum(self.group.values())
+                message = f"added **{total}** coffees:\n"
                 for name, value in self.group.items():
                     if value != 0:
                         message += f"\t{name}: {value}\n"
@@ -230,15 +249,43 @@ class TelethonAPI:
     
     def getGroupKeyboard(self) -> list:
         keyboard_group = []
-        for name, value in self.group.items():
+        total = sum(self.group.values())
+        
+        items = list(self.group.items())
+        pages = len(items) // 15
+        # last_page = len(items) % 15
+        
+        i_start =   self.current_page * 15
+        i_end   = ((self.current_page + 1) * 15) if (self.current_page < pages) else None #self.current_page * 15 + last_page
+        
+        for name, value in items[i_start : i_end]:
             keyboard_group.append([
                 Button.inline(str(name), "group_name"),
                 Button.inline(str(value), "group_value"),
                 Button.inline("+", f"group_plus_{name}"),
                 Button.inline("-", f"group_minus_{name}")
             ])
+            
+        if pages > 0:
+            navigation_buttons = []
+            if self.current_page > 0:
+                navigation_buttons.append(
+                    Button.inline("prev", "group_prev")
+                )
+                
+            if self.current_page < pages:
+                navigation_buttons.append(
+                    Button.inline("next", "group_next")
+                )
+    
+            if navigation_buttons != []:
+                keyboard_group.append(navigation_buttons)
+            
         keyboard_group.append([
-            Button.inline("Submit", "group_submit"),
             Button.inline("Cancel", "group_cancel")
         ])
+        
+        if total > 0:
+            keyboard_group[-1].append(Button.inline(f"Submit ({total})", "group_submit"))
+        
         return keyboard_group
