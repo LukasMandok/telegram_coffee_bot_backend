@@ -26,13 +26,13 @@ async def verify_user(id: Union[Annotated[int, Header()], int]):
     verified = await handlers.check_user(id, get_repo())
     
     if not verified:
-        raise exceptions.VerificationException("User is not registered.")
+        raise exceptions.VerificationException("You are not a registered user. Please register and try again.")
     
 async def verify_admin(id: Union[Annotated[int, Header()], int]):
     verified = await handlers.is_admin(id, get_repo())
     
     if not verified:
-        raise exceptions.VerificationException("User does not have admin rights.")
+        raise exceptions.VerificationException("YOu do not have the necessary admin rights to use this option.")
     
 
 # NOTE: removed implementation for dependancy injected decorator (not needed due to dependency injection)

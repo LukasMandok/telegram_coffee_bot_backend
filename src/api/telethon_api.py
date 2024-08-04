@@ -1,5 +1,6 @@
+import asyncio
 from typing import Callable, Optional
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, errors
 from telethon import Button
 from telethon.tl.types import UpdateShortMessage
 
@@ -25,12 +26,16 @@ class TelethonAPI:
             self.api_hash
         ).start(bot_token=self.bot_token)
         
+        # self.known_commands = []
+        
         self.add_handler(self.start_command_handler, '/start')
         self.add_handler(self.group_command_handler, '/group')
         self.add_handler(self.test_password, '/password')
         self.add_handler(self.test_user_verification, "/user")
         self.add_handler(self.test_admin_verification, "/admin")
         self.add_handler(self.digits, events.NewMessage(incoming=True, pattern=re.compile(r'[0-9]+')))
+        
+        self.add_handler(self.unknown_command_handler)
 
         self.group = {
             "Lukas":0, "Heiko":0, "Barnie":0, "Klaus":0, "Hans":0,
@@ -43,9 +48,14 @@ class TelethonAPI:
         }
         self.current_page = 0
         self.current_group = None
+
+        self.latest_messages = []
         
     async def run(self):
-        await self.bot.run_until_disconnected()        
+        print("!!!! start message vanisher")
+        asyncio.create_task(self.message_vanisher()) 
+        
+        await self.bot.run_until_disconnected()       
         
     ### SECTION: handler administration
     
@@ -55,50 +65,162 @@ class TelethonAPI:
         
         if isinstance(event, str):
             event = events.NewMessage(pattern=event)
+            # self.known_commands.append(event)
+        elif event == None:
+            event = events.NewMessage()
             
         if exception_handler is None:
             exception_handler = self.exception_handler
             
-        wrapped_handler = exception_handler(handler)
-        self.bot.add_event_handler(wrapped_handler, event)
+        async def wrapped_handler(event):
+            message = event.message
+            self.add_latest_message(message, True, True)
+            await handler(event)
+            
+            # print("stop propagation")
+            # NOTE: ist es ok, wenn ich die propagation hier stoppe?
+            raise events.StopPropagation
+            
+        wrapped_handler_with_exception = exception_handler(wrapped_handler)
+        self.bot.add_event_handler(wrapped_handler_with_exception, event)
         
     
     def exception_handler(self, func):
         async def wrapper(event, *args, **kwargs): 
-            try:
-                return await func(event, *args, **kwargs)
-            except exceptions.VerificationException as e:
-                print(f"Verification Exception caught: {e}")
-                
+            try: 
+                sender_id = event.sender_id
                 try:
-                    sender_id = event.sender_id
-                    await self.send_message(sender_id, "You are not a registered user.")
-                except Exception as e:
-                    print("Not a valid event given, cannot send message to user: ", e)
-                finally:
+                    return await func(event, *args, **kwargs)
+                except exceptions.VerificationException as e:
+                    print(f"Verification Exception caught: {e}")
+                    await self.send_message(sender_id, e.message, True, True)
+                    raise events.StopPropagation
+                    # return False
+                    
+                except asyncio.TimeoutError as e:
+                    print(f"Timeout Exception caught: {e}")
+                    await self.send_message(sender_id, "Your request has expired. Please start again from the beginning.")
                     return False
+                    
+            except AttributeError as e:
+                print("Not a valid event given.", e)
+            except asyncio.TimeoutError as e:
+                print(f"TimeoutError: {e}")
+            except errors.rpcerrorlist.FloodWaitError as e:
+                print(f"FloodWaitError: {e}")
+            except errors.rpcerrorlist.UserIsBlockedError as e:
+                print(f"UserIsBlockedError: {e}")
                 
         return wrapper
+    
+    
+    # subfunction of message_vanisher to make code more readable
+    async def delete_oldest_message(self):
+        message = self.latest_messages.pop(0)
+        if isinstance(message, list):
+            await asyncio.gather(*(m.delete() for m in message))
+        else:
+            await message.delete()
+    
+    def get_latest_messages_length(self):
+        length = []
+        for m in self.latest_messages:
+            if isinstance(m, list):
+                length.append(len(m))
+            else:
+                length.append(True)
+        return length
+    
+    # NOTE: In theory, this is easier but does not work with consecutive lists
+    # async def message_vanisher(self):
+    #     while True:
+    #         await asyncio.sleep(10)
+            
+    #         while len(self.latest_messages) > 3:
+    #             self.delete_oldest_message()
+            
+    #         if len(self.latest_messages) == 0:
+    #             continue
+            
+    #         i = 0
+    #         while i < len(self.latest_messages):
+    #             if isinstance(self.latest_messages[i], list):
+    #                 while i > 0:
+    #                     if (i < len(self.latest_messages) - 1):
+    #                         self.delete_oldest_message()
+    #                     i -= 1
+    #                 break
+    #             i += 1
+
+    # IDEA: Maybe add an overall timer, that gets reset after each new message and just deletes all messages after 1h or so
+    async def message_vanisher(self):
+        while(True):
+            # print("start loop - length:", len(self.latest_messages), " content:", self.get_latest_messages_length())
+            await asyncio.sleep(10)
+            
+            if len(self.latest_messages) == 0:
+                continue
+            
+            i = 0
+            while( i < len(self.latest_messages)):
+                # delete older messages if list is longer than 3
+                if len(self.latest_messages) > 3:
+                    await self.delete_oldest_message()
+                    continue
+                
+                # Check for lists in the remaining messages and delete everything before a list 
+                if isinstance(self.latest_messages[i], list):
+                    # print("i:", i, "length - 2:", len(self.latest_messages) - 1)
+                    for j in range(i):
+                        if ( j >= len(self.latest_messages) - 2):
+                            break
+                
+                        await self.delete_oldest_message()
+        
+                i += 1                
+                
             
     ### SECTION: Communication
+    
+    # TODO: at timeouts for certain functions using a decorator
+    
+    def add_latest_message(self, message, conv = False, new = False):
+        if new == True:
+            self.latest_messages.append([message])
+        elif conv == True:
+            if len(self.latest_messages) > 0 and isinstance(self.latest_messages[-1], list):
+                self.latest_messages[-1].append(message)
+            else:
+                self.latest_messages.append([message]) 
+        else:
+            self.latest_messages.append(message)
             
-    async def send_message(self, user_id, text):
+            
+    async def send_message(self, user_id, text, vanish = True, conv = False):
         try:
-            await self.bot.send_message(user_id, text)
-            print(f"Message sent to user {user_id}: {text}")
+            message = await self.bot.send_message(user_id, text)
+            if vanish == True:
+                self.add_latest_message(message, conv)
+
+            return message
         except Exception as e:
             print(f"Failed to send message to user {user_id}: {e}")
             
+            
     # Send a keyboard to the user (can be inline or reply) 
     # NOTE: Mybe include this into the send_message method 
-    async def send_keyboard(self, user_id, text, keyboard_layout):
+    async def send_keyboard(self, user_id, text, keyboard_layout, vanish = True, conv = None):
         try:
-            return await self.bot.send_message(
+            message = await self.bot.send_message(
                 user_id,
                 text,
                 buttons=keyboard_layout,
                 parse_mode='html'
             )
+            if vanish == True:
+                self.add_latest_message(message, conv)
+
+            return message
         except Exception as e:
             print(f"Failed to send keyboard to user {user_id}: {e}")
             
@@ -108,8 +230,13 @@ class TelethonAPI:
 
     ### SECTION: Event Handlers
         
-    # TODO: the password don't seem to match at the moment
-    # I need to debug this 
+    async def unknown_command_handler(self, event):
+        sender_id = event.sender_id
+        message = event.message.message
+        
+        await self.send_message(sender_id, f"**{message}** is an unknown command.", True, True)
+
+
     async def test_password(self, event):
         # print(event.stringify())
         
@@ -122,24 +249,28 @@ class TelethonAPI:
             password_correct = await handlers.check_password(password, dep.get_repo())
             print("Pass word is correct:", password_correct)
             
+        # TODO: improve exceptions
         except Exception as e:
             print("password was not provided", e) 
             
+            
     async def digits(self, event):
-        await self.bot.send_message(event.sender_id, f'catches digits: {event.text}')
-        raise events.StopPropagation
+        sender_id = event.sender_id
+        await self.send_message(sender_id, f'catches digits: {event.text}', True, True)
+        
+        # raise events.StopPropagation
             
             
     @dep.verify_user_decorator
     async def test_user_verification(self, event):
         sender_id = event.sender_id
-        await self.send_message(sender_id, "You are a registered user.")
+        await self.send_message(sender_id, "You are a registered user.", True, True)
 
         
     @dep.verify_admin_decorator    
     async def test_admin_verification(self, event):
         sender_id = event.sender_id
-        await self.send_message(sender_id, "You are a registered admin.")
+        await self.send_message(sender_id, "You are a registered admin.", True, True)
     
     
     async def start_command_handler(self, event):
@@ -152,15 +283,17 @@ class TelethonAPI:
         print("user registered:", user_registered)
         
         if user_registered == True:
-            return 
+            pass
         
         else:
             await self.register_conversation(user_id)
-            
-            
+
+
+    # NOTE: add user verification
     async def group_command_handler(self, event):
         user_id = event.sender_id
         await self.group_selection(user_id)
+        
     
     ###### Communication formats:
     @classmethod
@@ -169,27 +302,51 @@ class TelethonAPI:
     
         
     ### conversations:
-    async def register_conversation(self, user_id):
+    async def register_conversation(self, user_id):        
         async with self.bot.conversation(user_id) as conv:
             chat = await conv.get_input_chat()
-            message = await self.send_keyboard(chat, "Do you want to register?", self.keyboard_confirm)
-            
-            button_event: events.CallbackQuery.Event = await conv.wait_event(self.keyboard_callback(user_id))
-            print("register_conversation - press:", button_event)
+
+            # Start registration process
+            message_register = await self.send_keyboard(chat, "Do you want to register?", self.keyboard_confirm, True, True)
+            button_event: events.CallbackQuery.Event = await conv.wait_event(self.keyboard_callback(user_id), timeout = 30)
             data = button_event.data.decode('utf8')
-            
-            await message.edit(f"Received: {data}", buttons=None)
+            if data == "No":
+                await message_register.edit(f"Register process aborted.", buttons=None)
+                return
+            await message_register.edit(f"Start Register process.", buttons=None)
+        
+            # Password request
+            message_password = await self.send_message(chat, "Please enter the password:", True, True)
+            max_tries = 3
+            tries = 0
+            authenticated = False
+            while (tries < max_tries):
+                password_event = await conv.wait_event(events.NewMessage(incoming=True), timeout = 30)
+                password = password_event.message.message
+                await password_event.message.delete()
+                
+                authenticated = await handlers.check_password(password, dep.get_repo())
+                if authenticated == True:
+                    break
+                else:
+                    await self.send_message(chat, "Password incorrect. Please try again.", True, True)
+                    tries += 1
+                    
+            if authenticated == False:
+                await self.send_message(chat, "Too many tries. Aborting registration.", True, True)
+                return
     
-    
+    # TODO: Add user verification
     # TODO: implement this in a more modular way
-    async def group_selection(self, user_id):
+    async def group_selection(self, user_id):    
         async with self.bot.conversation(user_id) as conv:
             chat = await conv.get_input_chat()
-            message = await self.send_keyboard(chat, "Group View", self.getGroupKeyboard())
+                        
+            message = await self.send_keyboard(chat, "Group View", self.getGroupKeyboard(), True, True)
             submitted = False
             
             while True:          
-                button_event = await conv.wait_event(self.keyboard_callback(user_id))
+                button_event = await conv.wait_event(self.keyboard_callback(user_id), timeout = 180)
                 button_data = button_event.data.decode('utf8')
 
                 await button_event.answer()
@@ -230,12 +387,18 @@ class TelethonAPI:
                     if value != 0:
                         message += f"\t{name}: {value}\n"
                 print(message)
-                await self.send_message(chat, message)
+                await self.send_message(chat, message, False)
                 
                 # TODO: do something with content of self.group
                 
             
             # TODO: reset group to initial state
+            
+    
+    ### helper functions
+            
+        
+            
             
     ### keyboards
     
