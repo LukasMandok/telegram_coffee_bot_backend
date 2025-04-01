@@ -195,7 +195,7 @@ class TelethonAPI:
         else:
             self.latest_messages.append(message)
             
-            
+    # NOTE: CHange conv to default True and remove True, True from all function
     async def send_message(self, user_id, text, vanish = True, conv = False):
         try:
             message = await self.bot.send_message(user_id, text)
@@ -228,6 +228,8 @@ class TelethonAPI:
     def keyboard_callback(self, user_id):
         return events.CallbackQuery(func = lambda e: e.sender_id == user_id)
 
+
+
     ### SECTION: Event Handlers
         
     async def unknown_command_handler(self, event):
@@ -238,8 +240,6 @@ class TelethonAPI:
 
 
     async def test_password(self, event):
-        # print(event.stringify())
-        
         # get the message and cut off the /password part
         message = event.message.message
         print("message: ", message)
@@ -255,22 +255,22 @@ class TelethonAPI:
             
             
     async def digits(self, event):
-        sender_id = event.sender_id
-        await self.send_message(sender_id, f'catches digits: {event.text}', True, True)
+        user_id = event.sender_id
+        await self.send_message(user_id, f'catches digits: {event.text}', True, True)
         
         # raise events.StopPropagation
             
             
     @dep.verify_user_decorator
     async def test_user_verification(self, event):
-        sender_id = event.sender_id
-        await self.send_message(sender_id, "You are a registered user.", True, True)
+        user_id = event.sender_id
+        await self.send_message(user_id, "You are a registered user.", True, True)
 
         
     @dep.verify_admin_decorator    
     async def test_admin_verification(self, event):
-        sender_id = event.sender_id
-        await self.send_message(sender_id, "You are a registered admin.", True, True)
+        user_id = event.sender_id
+        await self.send_message(user_id, "You are a registered admin.", True, True)
     
     
     async def start_command_handler(self, event):
@@ -278,16 +278,15 @@ class TelethonAPI:
         user_id = event.sender_id
         print("sender id:", user_id)
         # print(sender.stringify())
+    
+        # Check if user is already registered
+        if await handlers.check_user(user_id, dep.get_repo()) == True:
+            await self.send_message(user_id, "There is nothing more to do. You are already registered.", True, True)
+            return 
         
-        user_registered = await handlers.check_user(user_id, dep.get_repo())
-        print("user registered:", user_registered)
-        
-        if user_registered == True:
-            pass
-        
-        else:
-            await self.register_conversation(user_id)
-
+        # do registration
+        await self.register_conversation(user_id)
+            
 
     # NOTE: add user verification
     async def group_command_handler(self, event):
@@ -296,46 +295,54 @@ class TelethonAPI:
         
     
     ###### Communication formats:
-    @classmethod
-    async def create_group_keyboard(user_list, ):
-        pass
     
         
-    ### conversations:
+    ### SECTION: Conversations
+    
     async def register_conversation(self, user_id):        
         async with self.bot.conversation(user_id) as conv:
             chat = await conv.get_input_chat()
 
-            # Start registration process
+            # Start registration process (TODO: put into its own function)
             message_register = await self.send_keyboard(chat, "Do you want to register?", self.keyboard_confirm, True, True)
             button_event: events.CallbackQuery.Event = await conv.wait_event(self.keyboard_callback(user_id), timeout = 30)
             data = button_event.data.decode('utf8')
             if data == "No":
                 await message_register.edit(f"Register process aborted.", buttons=None)
-                return
+                return False
             await message_register.edit(f"Start Register process.", buttons=None)
-        
+
             # Password request
-            message_password = await self.send_message(chat, "Please enter the password:", True, True)
-            max_tries = 3
-            tries = 0
-            authenticated = False
-            while (tries < max_tries):
-                password_event = await conv.wait_event(events.NewMessage(incoming=True), timeout = 30)
-                password = password_event.message.message
-                await password_event.message.delete()
+            if self.request_authentication(conv) == False:
+                return False
+
+            # Retrieve user info
+            
+
+    async def request_authentication(self, conv):
+        chat = await conv.get_input_chat()
+        
+        message_password = await self.send_message(chat, "Please enter the password:", True, True)
+        max_tries = 3
+        tries = 0
+        authenticated = False
+        while (tries < max_tries):
+            password_event = await conv.wait_event(events.NewMessage(incoming=True), timeout = 30)
+            password = password_event.message.message
+            await password_event.message.delete()
+            
+            authenticated = await handlers.check_password(password, dep.get_repo())
+            if authenticated == True:
+                return True
+            else:
+                await self.send_message(chat, "Password incorrect. Please try again.", True, True)
+                tries += 1
                 
-                authenticated = await handlers.check_password(password, dep.get_repo())
-                if authenticated == True:
-                    break
-                else:
-                    await self.send_message(chat, "Password incorrect. Please try again.", True, True)
-                    tries += 1
-                    
-            if authenticated == False:
-                await self.send_message(chat, "Too many tries. Aborting registration.", True, True)
-                return
+        if authenticated == False:
+            await self.send_message(chat, "Too many tries. Aborting registration.", True, True)
+            return False
     
+
     # TODO: Add user verification
     # TODO: implement this in a more modular way
     async def group_selection(self, user_id):    
