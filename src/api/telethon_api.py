@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from typing import Callable, Optional
 from telethon import TelegramClient, events, errors
 from telethon import Button
@@ -21,7 +22,7 @@ class TelethonAPI:
         print("initialize and start bot: api_id: {}, api_hash: {}, bot_token: {}".format(api_id, api_hash, bot_token))
         
         self.bot = TelegramClient(
-            'bot',
+            'bot_' + str(uuid.uuid4()),
             self.api_id,
             self.api_hash
         ).start(bot_token=self.bot_token)

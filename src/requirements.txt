@@ -4,10 +4,15 @@
 # TODO: check actual requirements
 
 python-dotenv #==0.20.0
+typing-inspect
+bcrypt
+
 gunicorn==20.1.0
 uvicorn #=0.22.0
+asyncio # maybe anyio instead
 
-asnycio # maybe anyio instead
+pytest
+debugpy
 
 ### WEB COMMUNICATION
 # python-telegram-bot
@@ -15,13 +20,13 @@ telethon
 
 httpx #==0.24.1
 fastapi #0.103.2
+fastapi-utils
 
 ### DATABASE
 pydantic
 pydantic-settings
 pymongo
 beanie
-
 
 
 ### GOOGLE API

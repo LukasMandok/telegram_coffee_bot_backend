@@ -1,0 +1,51 @@
+services:
+  # mongodb:
+  #   image: mongo:latest
+  #   ports:
+  #     - "27017:27017"
+  #   environment:
+  #     - MONGO_INITDB_ROOT_USERNAME=admin
+  #     - MONGO_INITDB_ROOT_PASSWORD=password123
+  #     - MONGO_INITDB_DATABASE=fastapi
+  #   volumes:
+  #     - mongodb_data:/data/db
+  #   networks:
+  #     - coffee-network
+
+  coffee-bot:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+      - "5678:5678"
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - BOT_HOST=${BOT_HOST}
+      - API_ID=${API_ID}
+      - API_HASH=${API_HASH}
+      - DATABASE_URL=mongodb://admin:password123@host.docker.internal:27017/fastapi
+    volumes:
+      - ./src:/app/src
+    develop:
+      watch:
+        - action: sync
+          path: ./src
+          target: /app/src
+          ignore:
+            - "**/__pycache__"
+            - "**/*.pyc"
+        - action: rebuild
+          path: src/requirements.txt
+    networks:
+      - coffee-network
+    # depends_on:
+    #   - mongodb
+
+networks:
+  coffee-network:
+    driver: bridge
+
+# volumes:
+#   mongodb_data:
+#     driver: local
