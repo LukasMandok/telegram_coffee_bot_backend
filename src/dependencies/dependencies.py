@@ -22,13 +22,13 @@ api_key_query = APIKeyQuery(name="token", auto_error=False)
 # a
 
 
-async def verify_user(id: Union[Annotated[int, Header()], int]):
+async def _verify_user(id: Union[Annotated[int, Header()], int]):
     verified = await handlers.check_user(id, get_repo())
     
     if not verified:
         raise exceptions.VerificationException("You are not a registered user. Please register and try again.")
     
-async def verify_admin(id: Union[Annotated[int, Header()], int]):
+async def _verify_admin(id: Union[Annotated[int, Header()], int]):
     verified = await handlers.is_admin(id, get_repo())
     
     if not verified:
@@ -36,7 +36,7 @@ async def verify_admin(id: Union[Annotated[int, Header()], int]):
     
 
 # NOTE: removed implementation for dependancy injected decorator (not needed due to dependency injection)
-def verify_user_decorator(func: Callable) -> Callable:
+def verify_user(func: Callable) -> Callable:
     @wraps(func)
     async def wrapper(*args, **kwargs):  # id: Annotated[Optional[int], Header()] = None,
         if args and isinstance(args[1], events.common.EventCommon):
@@ -45,12 +45,12 @@ def verify_user_decorator(func: Callable) -> Callable:
         else:
             raise ValueError("The first argument must be a Telethon event.")
     
-        await verify_user(sender_id)
+        await _verify_user(sender_id)
         
         return await func(*args, **kwargs)
     return wrapper
 
-def verify_admin_decorator(func: Callable) -> Callable:
+def verify_admin(func: Callable) -> Callable:
     @wraps(func)
     async def wrapper(*args, **kwargs):  # id: Annotated[Optional[int], Header()] = None,
         if args and isinstance(args[1], events.common.EventCommon):
@@ -59,7 +59,7 @@ def verify_admin_decorator(func: Callable) -> Callable:
         else:
             raise ValueError("The first argument must be a Telethon event.")
     
-        await verify_admin(sender_id)
+        await _verify_admin(sender_id)
         
         return await func(*args, **kwargs)
     return wrapper

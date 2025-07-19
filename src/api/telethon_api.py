@@ -262,13 +262,13 @@ class TelethonAPI:
         # raise events.StopPropagation
             
             
-    @dep.verify_user_decorator
+    @dep.verify_user
     async def test_user_verification(self, event):
         user_id = event.sender_id
         await self.send_message(user_id, "You are a registered user.", True, True)
 
         
-    @dep.verify_admin_decorator    
+    @dep.verify_admin    
     async def test_admin_verification(self, event):
         user_id = event.sender_id
         await self.send_message(user_id, "You are a registered admin.", True, True)
