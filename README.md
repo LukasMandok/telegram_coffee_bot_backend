@@ -84,3 +84,80 @@ services:
     #   - COMMENT_TEXT="Hello world!"
     restart: unless-stopped
 ```
+
+### Running the Docker Container
+
+To run the Docker container for the backend, follow these steps:
+
+1. **Set Environment Variables**:
+   Ensure the following environment variables are set in a `.env` file or directly in your system:
+   - `BOT_TOKEN`: Your Telegram bot token.
+   - `BOT_HOST`: The host for the bot.
+   - `API_ID`: Your Telegram API ID.
+   - `API_HASH`: Your Telegram API hash.
+   - `DATABASE_URL`: The URL for your MongoDB database.
+
+2. **Build the Docker Image**:
+   Run the following command to build the Docker image:
+   ```bash
+   docker-compose build
+   ```
+
+3. **Start the Container**:
+   Run the following command to start the container:
+   ```bash
+   docker-compose up
+   ```
+
+4. **Access the Application**:
+   - The backend will be accessible on port `8000`.
+   - Ensure MongoDB is running and accessible if required.
+
+5. **Stop the Container**:
+   To stop the container, use:
+   ```bash
+   docker-compose down
+   ```
+
+### Setting up a Virtual Python Environment for  Development
+
+To set up a virtual Python environment for development, follow these steps:
+
+1. **Create a Virtual Environment**:
+   Navigate to the backend directory and run:
+   ```bash
+   python -m venv venv
+   ```
+   This will create a virtual environment in a folder named `venv`.
+
+2. **Activate the Virtual Environment**:
+   - On Windows:
+     ```bash
+     .\venv\Scripts\activate
+     ```
+   - On macOS/Linux:
+     ```bash
+     source venv/bin/activate
+     ```
+
+3. **Install Dependencies**:
+   Once the virtual environment is activated, install the required dependencies:
+   ```bash
+   pip install -r src/requirements.txt
+   ```
+
+4. **Run the Application**:
+   You can now run the Python scripts directly for testing:
+   ```bash
+   python src/main.py
+   ```
+
+5. **Deactivate the Virtual Environment**:
+   When you're done, deactivate the virtual environment by running:
+   ```bash
+   deactivate
+   ```
+
+#### Run unit test
+
+1. **Virtual Eenvironmant

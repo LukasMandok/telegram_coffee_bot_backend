@@ -7,6 +7,7 @@ WORKDIR /app
 
 # Copy all files from bot directory to container
 COPY src/ /app/src
+COPY tests/ /app/tests
 
 # Copy .env file to the container
 COPY .env /app/.env
