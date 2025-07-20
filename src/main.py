@@ -6,19 +6,10 @@ from fastapi import FastAPI, Request, Response
 from contextlib import asynccontextmanager
 
 import uvicorn
-import sys
-import os
 
-# Handle imports for both -m execution and direct execution
-if __name__ == "__main__" and __package__ is None:
-    # Add the project root to sys.path so absolute imports work
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    __package__ = "src"
-
-# Now we can use consistent imports
 from src.config import settings
 from src.api.telethon_api import TelethonAPI
-from src.routers import users, admin
+from src.routers import users, admin, coffee
 from src.dependencies.dependencies import get_repo
 # from .middlewares.middleware import SecurityMiddleware
 
@@ -42,13 +33,13 @@ async def lifespan(app: FastAPI):
         print("✅ Database connected successfully")
     except Exception as e:
         print(f"❌ Database connection failed: {e}")
-        print("� Cannot start application without database connection")
+        print("❌ Cannot start application without database connection")
         raise e
     
     yield 
     
     try:
-        mongodb.close()
+        await mongodb.close()
         print("✅ Database connection closed")
     except Exception as e:
         print(f"⚠️ Error closing database: {e}")
@@ -62,6 +53,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan = lifespan)
 
 app.include_router(users.router)
+app.include_router(coffee.router)
 
 # app.add_middleware(SecurityMiddleware)
 
