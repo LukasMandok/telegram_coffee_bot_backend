@@ -40,4 +40,4 @@ googleapis-common-protos #==1.56.0
 gspread
 
 #### Testing
-unittest
+# unittest is built into Python, no need to install

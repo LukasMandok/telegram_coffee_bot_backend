@@ -1,24 +1,37 @@
 {
     "version": "2.0.0",
     "tasks": [
-      {
+        {
         "label": "docker-run: debug",
         "type": "shell",
         "command": "docker-compose --env-file .env run --rm --service-ports -e DEBUG_MODE=true coffee-bot",
         "isBackground": true,
         "problemMatcher": {
-          "pattern": {
+            "pattern": {
             "regexp": ".*Debugger is listening on.*",
             "file": 1,
             "location": 2,
             "message": 3
-          },
-          "background": {
+            },
+            "background": {
             "activeOnStart": true,
             "beginsPattern": "--- Starting in DEBUG mode ---",
             "endsPattern": ".*Debugger is listening on.*"
-          }
+            }
         }
-      }
+        },
+        {
+            "label": "docker-run: tests",
+            "type": "shell",
+            "command": "docker-compose --env-file .env run --rm coffee-bot python -m pytest tests/ -v",
+            "group": {
+              "kind": "test",
+              "isDefault": true
+            },
+            "presentation": {
+              "reveal": "always",
+              "panel": "dedicated"
+            }
+        } 
     ]
-  }
+}
