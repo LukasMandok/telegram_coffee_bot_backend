@@ -11,6 +11,8 @@ from ..models.base_models import *
 from ..database.base_repo import BaseRepository
 from ..database.beanie_repo import BeanieRepository
 
+# TODO: find a better name for this
+
 
 # TODO: We need to get the instance not a class here
 def get_repo() -> BaseRepository:
@@ -39,11 +41,11 @@ async def _verify_admin(id: Union[Annotated[int, Header()], int]):
 def verify_user(func: Callable) -> Callable:
     @wraps(func)
     async def wrapper(*args, **kwargs):  # id: Annotated[Optional[int], Header()] = None,
-        if args and isinstance(args[1], events.common.EventCommon):
+        if args and hasattr(args[1], 'sender_id'):
             event = args[1]
             sender_id = event.sender_id
         else:
-            raise ValueError("The first argument must be a Telethon event.")
+            raise ValueError("The first argument must be a Telethon event with sender_id.")
     
         await _verify_user(sender_id)
         
@@ -53,11 +55,11 @@ def verify_user(func: Callable) -> Callable:
 def verify_admin(func: Callable) -> Callable:
     @wraps(func)
     async def wrapper(*args, **kwargs):  # id: Annotated[Optional[int], Header()] = None,
-        if args and isinstance(args[1], events.common.EventCommon):
+        if args and hasattr(args[1], 'sender_id'):
             event = args[1]
             sender_id = event.sender_id
         else:
-            raise ValueError("The first argument must be a Telethon event.")
+            raise ValueError("The first argument must be a Telethon event with sender_id.")
     
         await _verify_admin(sender_id)
         
