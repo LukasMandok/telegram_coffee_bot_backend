@@ -26,12 +26,14 @@ async def check_password(password_input, repo: BaseRepository):
     print("handlers - check_password: password_input:", password_input)
     password = await repo.get_password()
     print("handlers - check_password: ", password)
+    if password is None:
+        return False
     is_correct = password.verify_password(password_input)
     
     return is_correct
     
 async def is_admin(id, repo: BaseRepository):
-    admins: list = await repo.get_admins()
+    admins: list = await repo.get_admins() or []
     print("handlerss - is_admin - admins:", admins)
     if id in admins:
         return True
