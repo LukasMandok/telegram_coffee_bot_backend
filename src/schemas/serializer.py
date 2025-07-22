@@ -3,7 +3,7 @@ from schema.user import TelegramUser
 
 def individal_serial(telegramuser: TelegramUser) -> dict:
     return {
-        'id': telegramuser.id,
+        'user_id': telegramuser.user_id,
         'first_name': telegramuser.first_name,
         'last_name': telegramuser.last_name,
         'username': telegramuser.username,

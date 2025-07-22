@@ -46,12 +46,15 @@ class MongoRepository(BaseRepository):
     #     Access Database
     #---------------------------
     
-    def find_all_users(self):
+    async def find_all_users(self):
         pass
     
-    def find_user_by_id(self, id):
+    async def find_user_by_id(self, id):
         pass
     
-    def get_password(self):
+    async def get_password(self):
+        pass
+    
+    async def get_admins(self):
         pass
     

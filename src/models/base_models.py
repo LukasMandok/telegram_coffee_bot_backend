@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Annotated, Optional, List
+from typing import Annotated, Optional, List, TYPE_CHECKING
 from datetime import datetime
 
 #---------------------------
@@ -16,12 +16,12 @@ class BaseUser(ABC):
     
     
 class TelegramUser(BaseUser, ABC):
-    id:         int # should be unique
-    username:   int # should be unique 
-    last_login: datetime
-    phone:      Optional[str] # optional and unique
-    photo_id:   Optional[int]
-    lang_code:  str = "en"
+    user_id:     int # should be unique
+    username:    int # should be unique 
+    last_login:  datetime
+    phone:       Optional[str] # optional and unique
+    photo_id:    Optional[int]
+    lang_code:   str = "en"
     
     # should be in telegram_users collection
     # can use cache if available
@@ -51,8 +51,14 @@ class Password(ABC):
         
     
 class Config(ABC):
-    password: Password  # should be a link
-    admins:   List[int]         # should be a list of integers (user ids)
+    # password should be a link to Password document in Beanie implementation
+    # admins should be a list of integers (user ids)
+    admins: List[int]
+    
+    @abstractmethod
+    async def get_password(self) -> Optional["Password"]:
+        """Get the linked password. Implementation depends on the specific ORM/ODM."""
+        pass
     
     # should be in config collection
         

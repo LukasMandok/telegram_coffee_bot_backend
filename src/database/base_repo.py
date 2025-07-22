@@ -1,22 +1,23 @@
 from abc import ABC, abstractmethod
+from typing import List, Optional, Any
 
 class BaseRepository(ABC):
     @abstractmethod
-    def connect(self):
+    async def connect(self, uri: str) -> None:
         pass
     
     @abstractmethod
-    def close(self):
+    async def close(self) -> None:
         pass
     
     ### Users
     
     @abstractmethod
-    def find_all_users(self):
+    async def find_all_users(self) -> Optional[List[Any]]:
         pass
 
     @abstractmethod
-    def find_user_by_id(self, id):
+    async def find_user_by_id(self, id: int) -> Optional[Any]:
         pass
     
     
@@ -24,10 +25,10 @@ class BaseRepository(ABC):
     ### Configuration
         
     @abstractmethod
-    def get_password(self):
+    async def get_password(self) -> Optional[Any]:
         pass
     
     @abstractmethod
-    def get_admins(self):
+    async def get_admins(self) -> Optional[List[int]]:
         pass
     

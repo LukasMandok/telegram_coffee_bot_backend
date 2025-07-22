@@ -68,14 +68,17 @@ class MotorMongoRepository(BaseRepository):
     #     Access Database
     #---------------------------
     
-    def find_all_users(self):
+    async def find_all_users(self):
         pass
         # return models.TelegramUserDocument.find_all()
     
-    def find_user_by_id(self, id):
+    async def find_user_by_id(self, id):
         pass
         # return models.TelegramUserDocument.find_one(id)
     
-    def get_password(self):
+    async def get_password(self):
         pass
         # return models.ConfigDocument.find_one()
+    
+    async def get_admins(self):
+        pass

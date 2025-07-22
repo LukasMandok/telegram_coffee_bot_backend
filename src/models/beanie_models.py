@@ -1,8 +1,7 @@
-from typing import Annotated, Optional, List
+from typing import Annotated, Optional, List, TYPE_CHECKING
 
 from beanie import Document, Indexed, Link
-from pydantic import Field, model_validator
-from pydantic.functional_validators import field_validator
+from pydantic import Field, field_validator
 
 from datetime import datetime
 
@@ -32,6 +31,16 @@ from ..common.helpers import hash_password, compare_password
 - also possible for previous changes made in the database
 """
 
+# TODO: use pydantic reduces models as projections to save bandwidth, when only requiereing specific parts of a document 
+''' example:
+class ProductShortView(BaseModel):
+    name: str
+    price: float
+
+chocolates = await Product.find(
+    Product.category.name == "Chocolate").project(ProductShortView).to_list()
+'''
+
 
 #---------------------------
 # *      Users
@@ -39,44 +48,44 @@ from ..common.helpers import hash_password, compare_password
 
 class BaseUser(base.BaseUser, Document):
     first_name: str
-    last_name:  Optional[str] = None
-    created_at: datetime      = Field(default_factory = datetime.now)
-    updated_at: datetime      = Field(default_factory = datetime.now)
+    last_name: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
     
     class Settings:
         is_root = True
-    
-    
+
+
 class TelegramUser(base.TelegramUser, BaseUser):
-    id:         int # Indexed(int, unique = True)  is not allowed     
-    username:   Indexed(int, unique = True) #Annotated[int, Indexed(unique = True)]
+    user_id: Annotated[int, Indexed(unique=True)]
+    username: Annotated[int, Indexed(unique=True)]
     last_login: datetime
-    phone:      Optional[Indexed(str, unique = True)] = None
-    photo_id:   int
-    lang_code:  str = "en"
+    phone: Annotated[Optional[str], Indexed(unique=True)] = None
+    photo_id: Optional[int] = None
         
-    class Settings:
+    class Settings(BaseUser.Settings):
         name = "telegram_users"
         use_cache = True
+        is_root = False
 
         
 class FullUser(base.FullUser, TelegramUser):
-    gsheet_name: Indexed(str, unique=True)
-    is_admin:    bool = False
+    gsheet_name: Annotated[str, Indexed(unique=True)]
     
-    class Settings:
+    class Settings(TelegramUser.Settings):
         name = "full_users"
+        is_root = False
     
 #---------------------------
 # *      Configuration
 #---------------------------
     
 class Password(base.Password, Document):
-    hash_value: bytes
+    hash_value: str
     
     @field_validator("hash_value", mode="before")
     @classmethod
-    def set_password(cls, password: str | bytes) -> bytes:
+    def set_password(cls, password: str | bytes) -> str:
         # print("#### Password - set_password - called")
         if isinstance(password, bytes):
             # print("Password - set_password - obtained type bytes:", password)
@@ -84,27 +93,39 @@ class Password(base.Password, Document):
                 password = password.decode("utf8")
             except UnicodeDecodeError as e:
                 raise ValueError("Password in database is no valid utf8-byte string")
-            return password
         
         elif not isinstance(password, str):
             raise ValueError("Password must either be a utf8-byte string hash or a plaintext string.")
         
         # print("Password - set_password - obtained type str:", password)
-        return hash_password(password)
+        # Hash the password and return as string for storage
+        hashed_bytes = hash_password(password)
+        return hashed_bytes.decode('utf-8')
     
     def verify_password(self, plain_password: str) -> bool:
-        return compare_password(plain_password, self.hash_value)
+        # Convert string hash back to bytes for comparison
+        hash_bytes = self.hash_value.encode('utf-8')
+        return compare_password(plain_password, hash_bytes)
         
         
 class Config(base.Config, Document):
     password: Link[Password]
-    admins:   List[int] #EmbeddedDocumentField(document_type = FullUserDocument)
+    admins: List[int]
     
-    def get_password(self) -> Link[Password]:
+    async def get_password(self) -> Optional[Password]:
         print("Config - get_password")
-        return self.password 
-        #alternative to fetch_links=true in find_one:
-        # return config.fetch_link(Config.password)
+        # Use fetch_link to resolve the linked document
+        try:
+            await self.fetch_link(Config.password)
+            # After fetching, the link should be resolved to the actual document
+            password = self.password
+            # Type cast to handle the Link[Password] -> Password conversion
+            if hasattr(password, 'hash_value'):
+                return password  # type: ignore
+            return None
+        except Exception as e:
+            print(f"Error fetching password link: {e}")
+            return None
         
     class Settings:
         name = "config"

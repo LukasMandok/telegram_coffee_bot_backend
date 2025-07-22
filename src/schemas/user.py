@@ -11,7 +11,7 @@ class BaseUser(BaseModel):
     last_name: str
     
 class TelegramUser(BaseUser):
-    id: int
+    user_id: int
     username: str
     last_login: datetime
     phone: str
