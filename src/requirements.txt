@@ -1,43 +1,45 @@
 # Python environment requirements
-# Adapted from:  https://github.com/xstar97/reddit-auto-reply/blob/master/bot/requirements.txt
+# Updated to latest versions as of January 2025
 
-# TODO: check actual requirements
+# Core utilities
+python-dotenv>=1.1.1
+typing-inspect>=0.9.0
+bcrypt>=4.3.0
 
-python-dotenv #==0.20.0
-typing-inspect
-bcrypt
+# Web server
+gunicorn>=23.0.0
+uvicorn>=0.35.0
+asyncio>=3.4.3
 
-gunicorn #==20.1.0
-uvicorn #=0.22.0
-asyncio # maybe anyio instead
+# Testing and type checking
+pytest>=8.4.1
+pytest-asyncio>=1.1.0
+debugpy>=1.8.15
+mypy>=1.8.0
+types-requests  # Type stubs for requests
 
-pytest
-pytest-asyncio
-debugpy
+# Web communication
+telethon>=1.40.0
+httpx>=0.28.1
+fastapi>=0.116.1
+fastapi-utils>=0.8.0
 
-### WEB COMMUNICATION
-# python-telegram-bot
-telethon
+# Database
+pydantic>=2.11.7
+pydantic-settings>=2.10.1
+pymongo>=4.13.2
+beanie>=2.0.0
+motor>=3.7.1
 
-httpx #==0.24.1
-fastapi #0.103.2
-fastapi-utils
+# Google API
+google-api-core>=2.25.1
+google-api-python-client>=2.176.0
+google-auth>=2.40.3
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.2
+googleapis-common-protos>=1.70.0
+gspread>=6.2.1
 
-### DATABASE
-pydantic
-pydantic-settings
-pymongo
-beanie
-
-
-### GOOGLE API
-google-api-core #==2.7.3
-google-api-python-client #==2.47.0
-google-auth #==2.6.6
-google-auth-httplib2 #==0.1.0
-google-auth-oauthlib #==0.5.1
-googleapis-common-protos #==1.56.0
-gspread
-
-#### Testing
-# unittest is built into Python, no need to install
+# Additional dependencies
+psutil>=5.9.8,<6.0.0  # Constrained by fastapi-utils
+cachetools>=5.5.2,<6.0.0  # Constrained by google-auth
