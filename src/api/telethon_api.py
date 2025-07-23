@@ -23,19 +23,24 @@ Note: Telegram-specific models have been moved to bot/telethon_models.py.
 import asyncio
 import uuid
 import re
-from typing import Callable, Optional, Dict, List, Union, Any
-from pydantic import BaseModel, Field, field_validator
-from telethon import TelegramClient, events, errors, Button
+from typing import Callable, Optional, Dict, Union, Any, TYPE_CHECKING
+
+# Runtime imports - actually used at runtime
+from telethon import TelegramClient, events, errors
 from telethon.tl.types import UpdateShortMessage
 
 from ..handlers import handlers, exceptions
 from ..dependencies import dependencies as dep
-from ..bot import commands
-from ..bot.keyboards import KeyboardManager
-from ..bot.message_manager import MessageManager
-from ..bot.commands import CommandManager
-from ..bot.conversations import ConversationState, ConversationTimeout
-from ..bot.telethon_models import GroupMember, MessageModel, BotConfiguration, GroupState, KeyboardButton
+from ..bot.telethon_models import (
+    GroupMember, MessageModel, BotConfiguration, GroupState, KeyboardButton
+)
+from ..bot.conversations import ConversationState
+
+# Type-only imports - only needed for type annotations
+if TYPE_CHECKING:
+    from ..bot.keyboards import KeyboardManager
+    from ..bot.message_manager import MessageManager
+    from ..bot.commands import CommandManager
 
 # --- Pydantic Models for Type Safety and Data Validation ---
 # Models have been moved to bot/telethon_models.py for better organization
@@ -96,10 +101,11 @@ class TelethonAPI:
             }
         )
 
-        # Initialize message manager
-        self.message_manager = MessageManager(self.bot)
+        # Initialize managers with runtime imports to avoid circular dependencies
+        from ..bot.message_manager import MessageManager
+        from ..bot.commands import CommandManager
         
-        # Initialize command manager
+        self.message_manager = MessageManager(self.bot)
         self.command_manager = CommandManager(self)
         
         # Active conversations

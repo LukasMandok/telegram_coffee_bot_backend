@@ -1,12 +1,13 @@
-from fastapi import APIRouter, HTTPException, Query
+from typing import TYPE_CHECKING
+from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi_utils.cbv import cbv
 
 from ..schemas.user import TelegramUser
+from ..dependencies.dependencies import verify_token, get_repo
+from ..handlers.handlers import check_user, check_password, get_all_users
 
-from ..database.base_repo import BaseRepository
-from ..dependencies.dependencies import *
-
-from ..handlers.handlers import *
+if TYPE_CHECKING:
+    from ..database.base_repo import BaseRepository
 
 ### TODO: add secutiry dependancies with scopes to check, if users are authorized to use the requests
 ### those can be added to as dependancies to the APIRouter to be valid for all routes: https://fastapi.tiangolo.com/tutorial/bigger-applications/?h=application
@@ -20,7 +21,7 @@ router = APIRouter(
 
 @cbv(router)
 class BasicUsersViews:
-    repo: BaseRepository = Depends(get_repo)
+    repo: "BaseRepository" = Depends(get_repo)
     
     
 # Move login outside of users, as those should require authentication

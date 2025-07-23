@@ -1,7 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Depends
 
-from ..dependencies.dependencies import *
-from ..handlers.handlers import *
+from ..dependencies.dependencies import verify_admin
 
 router = APIRouter(
     prefix="/users",

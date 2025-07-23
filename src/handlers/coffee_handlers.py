@@ -1,8 +1,15 @@
-from typing import List, Optional, Dict, Any
+"""
+Coffee business logic handlers.
+
+This module contains all the business logic for coffee operations including
+card management, order processing, session handling, and debt tracking.
+"""
+
+from typing import List, Optional, Dict, Any, TYPE_CHECKING
 from decimal import Decimal
 from datetime import datetime
 
-from ..database.base_repo import BaseRepository
+# Runtime imports - actually used in code
 from ..models.coffee_models import (
     CoffeeCard, CoffeeOrder, Payment, UserDebt, 
     CoffeeSession, PaymentMethod
@@ -13,10 +20,12 @@ from ..exceptions.coffee_exceptions import (
     CoffeeCardNotFoundError, InsufficientCoffeeCardCapacityError, UserNotFoundError
 )
 
-from ..utils.typing_utils import Link
+# Type-only imports - only needed for type annotations
+if TYPE_CHECKING:
+    from ..database.base_repo import BaseRepository
 
 async def create_coffee_card(
-    repo: BaseRepository,
+    repo: "BaseRepository",
     name: str,
     total_coffees: int,
     cost_per_coffee: Decimal,

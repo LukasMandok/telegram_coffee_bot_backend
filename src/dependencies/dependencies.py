@@ -1,25 +1,22 @@
 from functools import wraps
-from typing import Callable, Optional, Any, Union
+from typing import Callable, Union, TYPE_CHECKING
 from typing_extensions import Annotated
 
-from telethon import events
-from fastapi import Header, HTTPException, Depends
-from fastapi.security import APIKeyQuery
+from fastapi import Header
 
 from ..handlers import handlers, exceptions
-from ..models.base_models import *
-from ..database.base_repo import BaseRepository
 from ..database.beanie_repo import BeanieRepository
 
-# TODO: find a better name for this
+if TYPE_CHECKING:
+    from ..database.base_repo import BaseRepository
 
 
-# TODO: We need to get the instance not a class here
-def get_repo() -> BaseRepository:
+
+def get_repo() -> "BaseRepository":
     return BeanieRepository()
 
 
-api_key_query = APIKeyQuery(name="token", auto_error=False)
+# api_key_query = APIKeyQuery(name="token", auto_error=False)
 # q: what does this do?
 # a
 
