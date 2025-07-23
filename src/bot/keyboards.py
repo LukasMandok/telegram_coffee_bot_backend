@@ -1,0 +1,144 @@
+"""
+Telegram Keyboard Management
+
+This module handles the generation of inline keyboards for the coffee ordering bot.
+It provides various keyboard layouts for different bot interactions like confirmation,
+group coffee ordering, and pagination.
+"""
+
+from typing import Any, List, TYPE_CHECKING
+from telethon import Button, events
+from pydantic import BaseModel, Field
+from .telethon_models import KeyboardButton
+
+if TYPE_CHECKING:
+    from ..api.telethon_api import GroupState
+
+
+class KeyboardManager:
+    """
+    Manages all keyboard layouts and interactions for the Telegram bot.
+    
+    This class generates various types of inline keyboards used throughout
+    the coffee ordering bot, including confirmation dialogs, group ordering
+    interfaces, and paginated displays.
+    """
+    
+    @staticmethod
+    def get_confirmation_keyboard() -> Any:
+        """
+        Generate a simple Yes/No confirmation keyboard.
+        
+        Returns:
+            List of button rows containing Yes and No buttons
+        """
+        return [
+            [  
+                Button.inline("Yes", b"Yes"), 
+                Button.inline("No", b"No")
+            ],
+        ]
+    
+    @staticmethod
+    def get_group_keyboard(group_state: "GroupState") -> Any:
+        """
+        Generate a paginated group coffee ordering keyboard.
+        
+        Creates an inline keyboard for coffee ordering with:
+        - Member names with +/- buttons for coffee counts
+        - Pagination controls for large groups (>15 members)
+        - Submit button (when orders > 0) and Cancel button
+        
+        Args:
+            group_state: Current state of group coffee ordering
+            
+        Returns:
+            List of button rows for the inline keyboard
+        """
+        keyboard_group = []
+        total = group_state.get_total_coffees()
+        
+        items = list(group_state.members.items())
+        pages = len(items) // 15
+        
+        i_start = group_state.current_page * 15
+        i_end = ((group_state.current_page + 1) * 15) if (group_state.current_page < pages) else None
+        
+        for name, value in items[i_start : i_end]:
+            keyboard_group.append([
+                Button.inline(str(name), "group_name"),
+                Button.inline(str(value), "group_value"),
+                Button.inline("+", f"group_plus_{name}"),
+                Button.inline("-", f"group_minus_{name}")
+            ])
+            
+        if pages > 0:
+            navigation_buttons = []
+            if group_state.current_page > 0:
+                navigation_buttons.append(
+                    Button.inline("prev", "group_prev")
+                )
+                
+            if group_state.current_page < pages:
+                navigation_buttons.append(
+                    Button.inline("next", "group_next")
+                )
+    
+            if navigation_buttons:
+                keyboard_group.append(navigation_buttons)
+            
+        keyboard_group.append([
+            Button.inline("Cancel", "group_cancel")
+        ])
+        
+        if total > 0:
+            keyboard_group[-1].append(Button.inline(f"Submit ({total})", "group_submit"))
+        
+        return keyboard_group
+    
+    @staticmethod
+    def get_pagination_keyboard(current_page: int, total_pages: int) -> Any:
+        """
+        Generate pagination controls for multi-page displays.
+        
+        Args:
+            current_page: Current page number (0-indexed)
+            total_pages: Total number of pages available
+            
+        Returns:
+            List of button rows containing pagination controls
+        """
+        if total_pages <= 1:
+            return []
+            
+        navigation_buttons = []
+        
+        if current_page > 0:
+            navigation_buttons.append(Button.inline("◀ Previous", "page_prev"))
+            
+        # Add page indicator
+        navigation_buttons.append(
+            Button.inline(f"{current_page + 1}/{total_pages}", "page_info")
+        )
+        
+        if current_page < total_pages - 1:
+            navigation_buttons.append(Button.inline("Next ▶", "page_next"))
+            
+        return [navigation_buttons] if navigation_buttons else []
+    
+    @staticmethod
+    def get_keyboard_callback_filter(user_id: int) -> events.CallbackQuery:
+        """
+        Create a callback query event filter for a specific user.
+        
+        This filter ensures that only callback queries from the specified
+        user are processed, providing security and preventing interference
+        from other users.
+        
+        Args:
+            user_id: Telegram user ID to filter callbacks for
+            
+        Returns:
+            CallbackQuery event filter configured for the specific user
+        """
+        return events.CallbackQuery(func=lambda e: e.sender_id == user_id)
