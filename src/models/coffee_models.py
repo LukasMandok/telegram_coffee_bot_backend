@@ -8,10 +8,7 @@ from pydantic import Field, model_validator, field_validator
 
 from . import base_models as base
 from .beanie_models import TelegramUser
-
-from ..handlers import coffee_handlers
 from ..exceptions.coffee_exceptions import InvalidCoffeeCountError, InsufficientCoffeeError
-
 from ..utils.typing_utils import Link
 
 
@@ -34,10 +31,10 @@ class CoffeeCard(Document):
     created_at: datetime = Field(default_factory=datetime.now)
     is_active: bool = Field(default=True, description="Whether the card is still active")
 
-    # Relationships - track both individual orders and group sessions
-    orders: List[BackLink["CoffeeOrder"]] = Field(default_factory=list)
-    sessions: List[BackLink["CoffeeSession"]] = Field(default_factory=list)
-    
+    # Relationships - track both individual orders and group sessions  
+    orders: List[Link["CoffeeOrder"]] = Field(default_factory=list, description="Orders made with this card")
+    sessions: List[Link["CoffeeSession"]] = Field(default_factory=list, description="Sessions using this card")
+
     @field_validator('remaining_coffees')
     @classmethod  # TODO: check if this info.data actually works...
     def validate_remaining_coffees(cls, v, info):

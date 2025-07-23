@@ -32,8 +32,9 @@ from telethon.tl.types import UpdateShortMessage
 from ..handlers import handlers, exceptions
 from ..dependencies import dependencies as dep
 from ..bot.telethon_models import (
-    GroupMember, MessageModel, BotConfiguration, GroupState, KeyboardButton
+    GroupMember, MessageModel, BotConfiguration, GroupState
 )
+from ..bot.keyboards import KeyboardButton
 from ..bot.conversations import ConversationState
 
 # Type-only imports - only needed for type annotations

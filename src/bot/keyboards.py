@@ -9,10 +9,16 @@ group coffee ordering, and pagination.
 from typing import Any, List, TYPE_CHECKING
 from telethon import Button, events
 from pydantic import BaseModel, Field
-from .telethon_models import KeyboardButton
 
 if TYPE_CHECKING:
     from ..api.telethon_api import GroupState
+
+
+class KeyboardButton(BaseModel):
+    """Represents a keyboard button configuration."""
+    text: str = Field(..., description="Button display text")
+    callback_data: str = Field(..., description="Data sent when button is pressed")
+    row: int = Field(default=0, ge=0, description="Button row position")
 
 
 class KeyboardManager:

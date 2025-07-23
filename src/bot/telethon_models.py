@@ -10,13 +10,6 @@ from pydantic import BaseModel, Field, field_validator
 from .conversations import ConversationTimeout
 
 
-class KeyboardButton(BaseModel):
-    """Represents a keyboard button configuration."""
-    text: str = Field(..., description="Button display text")
-    callback_data: str = Field(..., description="Data sent when button is pressed")
-    row: int = Field(default=0, ge=0, description="Button row position")
-
-
 class GroupMember(BaseModel):
     """Represents a coffee group member with their coffee count.
     
