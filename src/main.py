@@ -30,19 +30,19 @@ mongodb = get_repo()
 async def lifespan(app: FastAPI):
     try:
         await mongodb.connect(settings.DATABASE_URL)
-        print("✅ Database connected successfully")
+        print("Database connected successfully")
     except Exception as e:
-        print(f"❌ Database connection failed: {e}")
-        print("❌ Cannot start application without database connection")
+        print(f"Database connection failed: {e}")
+        print("Cannot start application without database connection")
         raise e
     
     yield 
     
     try:
         await mongodb.close()
-        print("✅ Database connection closed")
+        print("Database connection closed")
     except Exception as e:
-        print(f"⚠️ Error closing database: {e}")
+        print(f"Warning: Error closing database: {e}")
     
     # mongodb.connect()
     # yield 
