@@ -9,6 +9,7 @@ from typing import Any, Optional, List, Union, TYPE_CHECKING
 from pydantic import BaseModel
 
 from .telethon_models import MessageModel
+from ..common.log import log_telegram_message_sent, log_telegram_keyboard_sent, log_telegram_api_error, log_telegram_message_deleted
 
 
 class MessageManager:
@@ -49,17 +50,16 @@ class MessageManager:
             The sent message object or None if failed
         """
         try:
-
-            
             telegram_message = await self.bot.send_message(user_id, text)
             message_model = MessageModel.from_telegram_message(telegram_message)
             
             if vanish:
                 self.add_latest_message(message_model, conv)
 
+            log_telegram_message_sent(user_id, "text", text[:50] if text else "")
             return message_model
         except Exception as e:
-            print(f"Failed to send message to user {user_id}: {e}")
+            log_telegram_api_error("send_message", str(e), user_id)
             return None
     
     async def send_keyboard(
@@ -84,7 +84,6 @@ class MessageManager:
             The sent message with keyboard or None if failed
         """
         try:
-            
             telegram_message = await self.bot.send_message(
                 user_id,
                 text,
@@ -96,9 +95,16 @@ class MessageManager:
             if vanish:
                 self.add_latest_message(message_model, conv)
 
+            # Count buttons for logging
+            button_count = 0
+            if keyboard_layout:
+                if hasattr(keyboard_layout, '__len__'):
+                    button_count = len(keyboard_layout)
+                    
+            log_telegram_keyboard_sent(user_id, "inline_keyboard", button_count)
             return message_model
         except Exception as e:
-            print(f"Failed to send keyboard to user {user_id}: {e}")
+            log_telegram_api_error("send_keyboard", str(e), user_id)
             return None
     
     def add_latest_message(

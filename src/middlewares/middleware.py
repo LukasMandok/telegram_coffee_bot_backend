@@ -1,7 +1,8 @@
-from typing import Any, Coroutine
+from typing import Any
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from src.common.log import log_api_request, log_user_login_failed, log_auth_route_bypassed, log_auth_token_received
 
 # NOTE: This one is not used
 class SecurityMiddleware(BaseHTTPMiddleware):
@@ -9,15 +10,15 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             self,
             request: Request,
             call_next: RequestResponseEndpoint
-        ) -> Coroutine[Any, Any, Response]:
+        ) -> Response:
         
-        print("request scope:", request.scope['path'])
+        log_api_request(request.scope['path'], request.method)
         
         ### ISSUE: This is anoying and not flexible enough
         if (request.scope['path'] in ['/users/login', '/docs', '/openapi.json']):
         # or request.scope['path'].startswith('/docs')):
             
-            print("SecurityMiddleware - this route does not require a token")
+            log_auth_route_bypassed(request.scope['path'])
             return await call_next(request)
         
         if request.scope['path'] != '/':
@@ -25,6 +26,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             headers = [True for x in required_headers if x in request.headers]
             
             if len(headers) < len(required_headers):
+                log_user_login_failed(0, f"Missing required headers: {required_headers}")
                 return JSONResponse(
                     status_code=409,
                     content={'error': f'Header {required_headers} is missing'}
@@ -32,7 +34,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             token = request.headers['token']
             # TODO: validate token
 
-            print("SecurityMiddleware - this is the token received:", token)
+            log_auth_token_received()
         response = await call_next(request)
         return response 
     

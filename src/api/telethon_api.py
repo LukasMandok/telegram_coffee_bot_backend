@@ -36,6 +36,10 @@ from ..bot.telethon_models import (
 )
 from ..bot.keyboards import KeyboardButton
 from ..bot.conversations import ConversationState
+from ..common.log import (
+    log_telegram_bot_started, log_telegram_command, log_telegram_callback,
+    log_telegram_message_sent, log_telegram_api_error, log_unexpected_error
+)
 
 # Type-only imports - only needed for type annotations
 if TYPE_CHECKING:
@@ -77,13 +81,13 @@ class TelethonAPI:
             bot_token=bot_token
         )
 
-        print(f"initialize and start bot: api_id: {self.config.api_id}, api_hash: {self.config.api_hash}, bot_token: {self.config.bot_token}")
-
         self.bot: TelegramClient = TelegramClient(
             'bot_' + str(uuid.uuid4()),
             self.config.api_id,
             self.config.api_hash
         ).start(bot_token=self.config.bot_token)
+        
+        log_telegram_bot_started(self.config.api_id)
 
         # Initialize group state using Pydantic model
         # TODO: move this to a place for test initialization
@@ -133,10 +137,8 @@ class TelethonAPI:
         This method starts background tasks and keeps the bot running
         until manually disconnected or an error occurs.
         """
-        print("!!!! start message vanisher")
         asyncio.create_task(self.message_manager.message_vanisher()) 
         
-
         self.bot.run_until_disconnected()
         
     ### SECTION: handler administration
@@ -195,24 +197,24 @@ class TelethonAPI:
                 try:
                     return await func(event, *args, **kwargs)
                 except exceptions.VerificationException as e:
-                    print(f"Verification Exception caught: {e}")
+                    log_telegram_api_error("user_verification", str(e), sender_id)
                     await self.message_manager.send_text(sender_id, e.message, True, True)
                     raise events.StopPropagation
                     # return False
                     
                 except asyncio.TimeoutError as e:
-                    print(f"Timeout Exception caught: {e}")
+                    log_telegram_api_error("conversation_timeout", str(e), sender_id)
                     await self.message_manager.send_text(sender_id, "Your request has expired. Please start again from the beginning.")
                     return False
                     
             except AttributeError as e:
-                print("Not a valid event given.", e)
+                log_telegram_api_error("invalid_event", str(e))
             except asyncio.TimeoutError as e:
-                print(f"TimeoutError: {e}")
+                log_telegram_api_error("timeout", str(e))
             except errors.rpcerrorlist.FloodWaitError as e:
-                print(f"FloodWaitError: {e}")
+                log_telegram_api_error("flood_wait", str(e))
             except errors.rpcerrorlist.UserIsBlockedError as e:
-                print(f"UserIsBlockedError: {e}")
+                log_telegram_api_error("user_blocked", str(e))
                 
         return wrapper
     ### SECTION: Message Management - Moved to bot/message_manager.py

@@ -11,6 +11,10 @@ from telethon import events
 from ..handlers import handlers
 from ..dependencies import dependencies as dep
 from .keyboards import KeyboardManager
+from ..common.log import (
+    log_telegram_callback, log_conversation_started, log_conversation_step,
+    log_conversation_completed, log_conversation_timeout, log_conversation_cancelled
+)
 
 
 class ConversationState(BaseModel):
@@ -84,8 +88,11 @@ class ConversationManager:
                 timeout=30
             )
             data = button_event.data.decode('utf8')
+            log_telegram_callback(user_id, data)
+            
             if data == "No":
                 await message_register.edit("Register process aborted.", buttons=None)
+                log_conversation_cancelled(user_id, "registration", "user_declined")
                 return False
             await message_register.edit("Start Register process.", buttons=None)
 
@@ -226,8 +233,9 @@ class ConversationManager:
                 for name, value in self.api.group.items():
                     if value != 0:
                         result_message += f"\t{name}: {value}\n"
-                print(result_message)
+                
                 await self.api.message_manager.send_text(user_id, result_message, False)
+                log_conversation_completed(user_id, "group_selection")
                 
                 # TODO: do something with content of self.group
                 # This is where you'd call the coffee business logic

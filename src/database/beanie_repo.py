@@ -4,6 +4,10 @@ from beanie import init_beanie
 from .base_repo import BaseRepository
 from ..models import beanie_models as models
 from ..models.coffee_models import CoffeeCard, CoffeeOrder, Payment, UserDebt, CoffeeSession
+from ..common.log import (
+    log_database_connected, log_database_connection_failed, log_database_error, log_database_disconnected,
+    log_user_registration, log_performance_metric, log_app_shutdown, log_setup_database_defaults
+)
 
 from ..config import settings
 # from ..common.helpers import hash_password
@@ -30,37 +34,44 @@ class BeanieRepository(BaseRepository):
     async def connect(self, uri):
         self.uri = uri
 
-        print("connecting to mongodb: uri", )
-        # await DataBase.connect(uri = self.uri, db = "fastapi")
-        self.client = AsyncIOMotorClient(self.uri)
-        self.db = self.client["fastapi"]
+        try:
+            # await DataBase.connect(uri = self.uri, db = "fastapi")
+            self.client = AsyncIOMotorClient(self.uri)
+            self.db = self.client["fastapi"]
 
-        print("beanie_repo - init_beanie")
-        await init_beanie(self.db, document_models=[
-            models.BaseUser,
-            models.TelegramUser,
-            models.FullUser,
-            models.Password,
-            models.Config,
-            # Coffee models
-            CoffeeCard,
-            CoffeeOrder,
-            Payment,
-            UserDebt,
-            CoffeeSession])
+            await init_beanie(self.db, document_models=[
+                models.BaseUser,
+                models.TelegramUser,
+                models.FullUser,
+                models.Password,
+                models.Config,
+                # Coffee models
+                CoffeeCard,
+                CoffeeOrder,
+                Payment,
+                UserDebt,
+                CoffeeSession])
 
-        # IDEA: maybe use asyncio.create_task to run them in the background
+            # IDEA: maybe use asyncio.create_task to run them in the background
 
-        await self.ping()
-        await self.getInfo()
+            await self.ping()
+            await self.getInfo()
 
-        # load default values
-        print("beanie_repo - setup defaults")
-        await self.setup_defaults()
+            # load default values
+            await self.setup_defaults()
+            
+            log_database_connected(self.uri)
+        except Exception as e:
+            log_database_connection_failed(str(e))
+            raise
 
     async def close(self):
-        print("closing mongodb")
-        self.client.close()
+        try:
+            if self.client:
+                self.client.close()
+            log_database_disconnected()
+        except Exception as e:
+            log_database_error("close_connection", str(e))
 
     async def setup_defaults(self):
         print("setup default password to: ", settings.DEFAULT_PASSWORD)
@@ -75,7 +86,6 @@ class BeanieRepository(BaseRepository):
         #     await config.insert()
 
         # TODO: Change the admins field to work with usernames as well? maybe.
-        print("!!! Setup default config values")
         # await models.Config.find_one({}).upsert(
         #     on_insert = models.Config(
         #         password = password_doc,
@@ -83,15 +93,14 @@ class BeanieRepository(BaseRepository):
         #     )
         # )
         if not await models.Config.find_one({}):
-            print("There is no entry in Config yet.")
             new_config = models.Config(
                 password = password_doc,
                 admins   = [settings.DEFAULT_ADMIN]
             )
-            print("new config entry: ", new_config)
             await password_doc.insert()
             await new_config.insert()
-
+            
+            log_setup_database_defaults([settings.DEFAULT_ADMIN])
         else:
             pass
 
@@ -106,10 +115,11 @@ class BeanieRepository(BaseRepository):
 
     async def ping(self):
         try:
-            self.client.admin.command('ping')
-            print("Sucessfully connected to database.")
+            if self.client:
+                await self.client.admin.command('ping')
+            # Database ping success logged in connect method
         except Exception as e:
-            print(e)
+            log_database_error("ping", str(e))
 
     async def get_collection(self, collection_name):
         return self.db.get_collection(collection_name)
@@ -121,7 +131,13 @@ class BeanieRepository(BaseRepository):
     ### Users ###
 
     async def find_all_users(self):
-        return await models.TelegramUser.find_all().to_list()
+        try:
+            users = await models.TelegramUser.find_all().to_list()
+            log_performance_metric("find_all_users", len(users), "records")
+            return users
+        except Exception as e:
+            log_database_error("find_all_users", str(e))
+            return []
 
     async def find_user_by_id(self, user_id: int):
         return models.TelegramUser.find_one( models.TelegramUser.user_id == user_id )  

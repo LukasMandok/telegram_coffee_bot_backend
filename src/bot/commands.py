@@ -21,6 +21,11 @@ from ..exceptions.coffee_exceptions import (
     SessionNotActiveError,
     UserNotFoundError
 )
+from ..common.log import (
+    log_telegram_command, log_telegram_callback, log_coffee_session_started,
+    log_coffee_session_cancelled, log_unexpected_error, log_user_login_success,
+    log_user_login_failed
+)
 
 if TYPE_CHECKING:
     from ..api.telethon_api import TelethonAPI
@@ -54,7 +59,7 @@ class CommandManager:
             event: The NewMessage event containing /start command
         """
         user_id = event.sender_id
-        print("sender id:", user_id)
+        log_telegram_command(user_id, "/start", getattr(event, 'chat_id', None))
 
         # Check if user is already registered
         if await handlers.check_user(user_id, dep.get_repo()):
@@ -77,6 +82,7 @@ class CommandManager:
             event: The NewMessage event containing /group command
         """
         user_id = event.sender_id
+        log_telegram_command(user_id, "/group", getattr(event, 'chat_id', None))
         
         # Use conversation manager for group selection
         await self.conversation_manager.group_selection(user_id)
@@ -90,16 +96,21 @@ class CommandManager:
         """
         # get the message and cut off the /password part
         message = event.message.message
-        print("message: ", message)
+        user_id = event.sender_id
+        log_telegram_command(user_id, "/password", getattr(event, 'chat_id', None))
+        
         try:
             password = message.split(" ")[1]
             
             password_correct = await handlers.check_password(password, dep.get_repo())
-            print("Password is correct:", password_correct)
+            if password_correct:
+                log_user_login_success(user_id)
+            else:
+                log_user_login_failed(user_id, "incorrect_password")
             
         # TODO: improve exceptions
         except Exception as e:
-            print("password was not provided", e)
+            log_user_login_failed(user_id, f"password_not_provided: {str(e)}")
 
     @dep.verify_user
     async def handle_user_verification_command(self, event: events.NewMessage.Event) -> None:

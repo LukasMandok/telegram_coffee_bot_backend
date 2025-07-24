@@ -19,6 +19,13 @@ from ..exceptions.coffee_exceptions import (
     InvalidCoffeeCountError, InsufficientCoffeeError, SessionNotActiveError,
     CoffeeCardNotFoundError, InsufficientCoffeeCardCapacityError, UserNotFoundError
 )
+from ..common.log import (
+    log_coffee_card_created, log_coffee_card_activated, log_coffee_card_deactivated, 
+    log_coffee_card_depleted, log_coffee_order_created, log_coffee_order_failed,
+    log_individual_coffee_order, log_coffee_session_started, log_coffee_session_participant_added,
+    log_coffee_session_updated, log_coffee_session_completed, log_coffee_session_cancelled,
+    log_debt_created, log_payment_recorded, log_unexpected_error
+)
 
 # Type-only imports - only needed for type annotations
 if TYPE_CHECKING:
@@ -48,6 +55,7 @@ async def create_coffee_card(
     )
 
     await card.insert()
+    log_coffee_card_created(name, total_coffees, purchaser_id, cost_per_coffee)
     return card
 
 
@@ -104,6 +112,8 @@ async def create_coffee_order(
         session=None  # Explicitly set as None for individual orders
     )
     await order.insert()
+    
+    log_coffee_order_created(str(order.id), consumer_id, initiator_id, quantity, card.name)
 
     # Update card
     card.remaining_coffees -= quantity
@@ -170,6 +180,7 @@ async def create_or_update_debt(
             orders=[order]
         )
         await debt.insert()
+        log_debt_created(debtor_id, creditor_id, amount, coffee_card.name)
         return debt
 
 
@@ -315,12 +326,12 @@ async def start_coffee_session(
     # QUESTION: return active session or raise error
     session = await get_active_session()
     if session:
-        print(f"Active session already exists: {session.id}. Returning existing session.")
+        log_coffee_session_started(str(session.id), initiator.user_id, [card.name for card in cards])
         return session
 
     for card in cards:
         if card.remaining_coffees < 1:
-            print(f"No coffees available on card {card.id}.")
+            log_coffee_card_depleted(str(card.id), card.name)
             cards.remove(card)
         # else:
         #     await card.fetch_all_links()
@@ -346,11 +357,12 @@ async def add_participant_to_session(
         raise SessionNotActiveError()
 
     if user in session.participants:
-        print(f"User {user.user_id} is already a participant in this session.")
+        log_coffee_session_participant_added(str(session.id), user.user_id, getattr(user, 'username', None))
         return
 
     session.participants.append(user)
     await session.save()
+    log_coffee_session_participant_added(str(session.id), user.user_id, getattr(user, 'username', None))
     
     
 async def update_session_coffee_counts(
@@ -470,7 +482,7 @@ async def process_telegram_keyboard_response(
                 user_coffee_counts[user.user_id] = coffee_count
             else:
                 unknown_users.append(username)
-                print(f"Warning: User {username} not found in database")
+                log_unexpected_error("user_lookup", f"User {username} not found in database during session processing")
     
     if not telegram_users:
         raise UserNotFoundError(message="No valid users found from keyboard responses")

@@ -1,4 +1,3 @@
-import logging
 import asyncio
 
 from http import HTTPStatus
@@ -11,10 +10,8 @@ from src.config import settings
 from src.api.telethon_api import TelethonAPI
 from src.routers import users, admin, coffee
 from src.dependencies.dependencies import get_repo
+from src.common.log import log_app_startup, log_app_shutdown, log_database_connected, log_database_connection_failed, log_database_error
 # from .middlewares.middleware import SecurityMiddleware
-
-### logging configuration
-logging.basicConfig(format='[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s', level=logging.WARNING)
 
 ### connecting bot 
 telethon_api = TelethonAPI(
@@ -28,21 +25,22 @@ mongodb = get_repo()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    log_app_startup()
+    
     try:
         await mongodb.connect(settings.DATABASE_URL)
-        print("Database connected successfully")
+        log_database_connected(settings.DATABASE_URL)
     except Exception as e:
-        print(f"Database connection failed: {e}")
-        print("Cannot start application without database connection")
+        log_database_connection_failed(str(e))
         raise e
     
     yield 
     
     try:
         await mongodb.close()
-        print("Database connection closed")
+        log_app_shutdown()
     except Exception as e:
-        print(f"Warning: Error closing database: {e}")
+        log_database_error("shutdown", str(e))
     
     # mongodb.connect()
     # yield 
