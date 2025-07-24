@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     DEFAULT_PASSWORD: str
     DEFAULT_ADMIN: str
     
+    # Logging
+    LOG_LEVEL: str = "TRACE"  # Default to INFO, can be: TRACE, DEBUG, INFO, WARNING, ERROR, CRITICAL
+    
     # Google Sheets
     GSHEET_SSID: str
     
