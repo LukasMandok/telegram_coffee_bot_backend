@@ -58,7 +58,7 @@ class BaseUser(base.BaseUser, Document):
 
 class TelegramUser(base.TelegramUser, BaseUser):
     user_id: Annotated[int, Indexed(unique=True)]
-    username: Annotated[int, Indexed(unique=True)]
+    username: Annotated[str, Indexed(unique=True)]
     last_login: datetime
     phone: Annotated[Optional[str], Indexed(unique=True)] = None
     photo_id: Optional[int] = None
@@ -116,9 +116,11 @@ class Config(base.Config, Document):
         print("Config - get_password")
         # Use fetch_link to resolve the linked document
         try:
+            # Fetch the linked password document using the correct syntax
             await self.fetch_link(Config.password)
-            # After fetching, the link should be resolved to the actual document
             password = self.password
+            print(f"Config - get_password - fetched password: {password}")
+            print(f"Config - get_password - password hash_value: {getattr(password, 'hash_value', 'NO_HASH_VALUE')}")
             # Type cast to handle the Link[Password] -> Password conversion
             if hasattr(password, 'hash_value'):
                 return password  # type: ignore

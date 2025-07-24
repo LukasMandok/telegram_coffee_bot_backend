@@ -35,7 +35,6 @@ from ..bot.telethon_models import (
     GroupMember, MessageModel, BotConfiguration, GroupState
 )
 from ..bot.keyboards import KeyboardButton
-from ..bot.conversations import ConversationState
 from ..common.log import (
     log_telegram_bot_started, log_telegram_command, log_telegram_callback,
     log_telegram_message_sent, log_telegram_api_error, log_unexpected_error
@@ -112,9 +111,6 @@ class TelethonAPI:
         
         self.message_manager = MessageManager(self.bot)
         self.command_manager = CommandManager(self)
-        
-        # Active conversations
-        self.active_conversations: Dict[int, ConversationState] = {}
 
         # Register all handlers
         self._register_handlers()
@@ -127,6 +123,7 @@ class TelethonAPI:
         self.add_handler(lambda event: self.command_manager.handle_password_command(event), '/password')
         self.add_handler(lambda event: self.command_manager.handle_user_verification_command(event), "/user")
         self.add_handler(lambda event: self.command_manager.handle_admin_verification_command(event), "/admin")
+        self.add_handler(lambda event: self.command_manager.handle_cancel_command(event), "/cancel")
         self.add_handler(lambda event: self.command_manager.handle_digits_command(event), events.NewMessage(incoming=True, pattern=re.compile(r'[0-9]+')))
         self.add_handler(lambda event: self.command_manager.handle_unknown_command(event))
     
@@ -140,6 +137,7 @@ class TelethonAPI:
         asyncio.create_task(self.message_manager.message_vanisher()) 
         
         self.bot.run_until_disconnected()
+        
         
     ### SECTION: handler administration
     

@@ -5,16 +5,24 @@ This module handles multi-step conversation flows including user registration,
 authentication, and group selection processes.
 """
 
-from typing import TYPE_CHECKING, Dict, Any
+import asyncio
+from typing import TYPE_CHECKING, Dict, Any, Callable, Optional
+from functools import wraps
 from pydantic import BaseModel, Field
 from telethon import events
+from telethon.tl.custom.conversation import Conversation
 from ..handlers import handlers
 from ..dependencies import dependencies as dep
 from .keyboards import KeyboardManager
 from ..common.log import (
-    log_telegram_callback, log_conversation_started, log_conversation_step,
+    log_telegram_callback, log_conversation_started, log_conversation_step, log_unexpected_error,
     log_conversation_completed, log_conversation_timeout, log_conversation_cancelled
 )
+
+
+class ConversationCancelledException(Exception):
+    """Exception raised when a conversation is cancelled by the user."""
+    pass
 
 
 class ConversationState(BaseModel):
@@ -23,6 +31,11 @@ class ConversationState(BaseModel):
     step: str = Field(..., description="Current conversation step")
     data: Dict[str, Any] = Field(default_factory=dict, description="Conversation data storage")
     timeout: int = Field(default=30, gt=0, description="Conversation timeout in seconds")
+    conv: Optional[Conversation] = Field(default=None, description="Active Telethon conversation object")
+    cancelled: bool = Field(default=False, description="Whether this conversation has been cancelled")
+    
+    class Config:
+        arbitrary_types_allowed = True  # Allow Telethon Conversation object
 
 
 class ConversationTimeout(BaseModel):
@@ -35,6 +48,82 @@ class ConversationTimeout(BaseModel):
 
 if TYPE_CHECKING:
     from ..api.telethon_api import TelethonAPI
+
+
+def managed_conversation(conversation_type: str, timeout: int = 60):
+    """
+    Decorator to automatically manage conversation state and Telethon conversation objects.
+    
+    This decorator:
+    - Creates and registers conversation state
+    - Creates Telethon conversation object
+    - Passes both as parameters to the decorated function
+    - Automatically cleans up on completion or error
+    - Handles conversation cancellation gracefully
+    
+    Args:
+        conversation_type: Type of conversation (e.g., "registration", "group_selection")
+        timeout: Conversation timeout in seconds
+        
+    Usage:
+        @managed_conversation("registration", 60)
+        async def register_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
+            # Your conversation logic here
+            pass
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        async def wrapper(self, user_id: int, *args, **kwargs) -> Any:
+            # Create and register conversation state
+            conversation_state = self.create_conversation_state(
+                user_id=user_id,
+                conversation_type=conversation_type,
+                timeout=timeout
+            )
+            
+            try:
+                # Create Telethon conversation object
+                async with self.api.bot.conversation(user_id) as conv:
+                    # Update state with conv object
+                    conversation_state.conv = conv
+                    
+                    print(f"Started managed conversation '{conversation_type}' for user {user_id}")
+                    
+                    # Call the decorated function with conv and state
+                    result = await func(self, user_id, conv, conversation_state, *args, **kwargs)
+                    
+                    print(f"Completed managed conversation '{conversation_type}' for user {user_id}")
+                    return result
+            
+            except ConversationCancelledException:
+                # Handle conversation cancellation via /cancel command
+                print(f"Conversation '{conversation_type}' was cancelled by user {user_id}")
+                return False
+                
+            except asyncio.CancelledError:
+                # Handle conversation cancellation (e.g., from /cancel command)
+                print(f"Conversation '{conversation_type}' was cancelled for user {user_id}")
+                # await self.api.message_manager.send_text(
+                #     user_id,
+                #     "❌ Conversation cancelled.",
+                #     True,
+                #     True
+                # )
+                # log_conversation_cancelled(user_id, conversation_type, "conversation_cancelled")
+                return False
+                
+            except Exception as e:
+                # Handle other errors
+                print(f"Error in managed conversation '{conversation_type}' for user {user_id}: {e}")
+                log_unexpected_error(f"managed_conversation_{conversation_type}", str(e), {"user_id": user_id})
+                return False
+                
+            finally:
+                # Always clean up conversation state
+                self.remove_conversation_state(user_id)
+                
+        return wrapper
+    return decorator
 
 
 class ConversationManager:
@@ -53,8 +142,180 @@ class ConversationManager:
             api: The TelethonAPI instance for bot communication
         """
         self.api = api
+        # Manage active conversations within the conversation manager
+        self.active_conversations: Dict[int, ConversationState] = {}
     
-    async def register_conversation(self, user_id: int) -> bool:
+    # === Conversation Managment === 
+    
+    def has_active_conversation(self, user_id: int) -> bool:
+        """
+        Check if there is an active conversation for the given user ID.
+        
+        Args:
+            user_id: Telegram user ID to check
+            
+        Returns:
+            True if an active conversation exists, False otherwise
+        """
+        return user_id in self.active_conversations
+    
+    def get_active_conversations(self) -> Dict[int, ConversationState]:
+        """
+        Get the current active conversations.
+        
+        Returns:
+            Dictionary of active conversations with user_id as key
+        """
+        return self.active_conversations
+    
+    def create_conversation_state(self, user_id: int, conversation_type: str, timeout: int = 60) -> ConversationState:
+        """
+        Create a new conversation state and add it to active conversations.
+        
+        Args:
+            user_id: Telegram user ID
+            conversation_type: Type of conversation (e.g., "registration", "group_selection")
+            timeout: Conversation timeout in seconds
+            
+        Returns:
+            ConversationState: The created conversation state
+        """
+        conversation_state = ConversationState(
+            user_id=user_id,
+            step=f"{conversation_type}_start",
+            timeout=timeout
+        )
+        
+        self.active_conversations[user_id] = conversation_state
+        print(f"Created conversation state for user {user_id}: {conversation_type}")
+        
+        return conversation_state
+    
+    def remove_conversation_state(self, user_id: int) -> bool:
+        """
+        Remove a conversation state from active conversations.
+        
+        Args:
+            user_id: Telegram user ID
+            
+        Returns:
+            bool: True if conversation was removed, False if not found
+        """
+        if user_id in self.active_conversations:
+            del self.active_conversations[user_id]
+            print(f"Removed conversation state for user {user_id}")
+            return True
+        return False
+    
+    def get_conversation_state(self, user_id: int) -> Optional[ConversationState]:
+        """
+        Get the conversation state for a user.
+        
+        Args:
+            user_id: Telegram user ID
+            
+        Returns:
+            ConversationState or None if not found
+        """
+        return self.active_conversations.get(user_id)
+    
+    def update_conversation_step(self, user_id: int, step: str) -> bool:
+        """
+        Update the conversation step for a user.
+        
+        Args:
+            user_id: Telegram user ID
+            step: New conversation step
+            
+        Returns:
+            bool: True if updated successfully, False if conversation not found
+        """
+        if user_id in self.active_conversations:
+            self.active_conversations[user_id].step = step
+            print(f"Updated conversation step for user {user_id} to: {step}")
+            return True
+        return False
+    
+    def cancel_conversation(self, user_id: int) -> bool:
+        """
+        Cancel an active conversation for a user.
+        
+        This method interrupts the conversation by removing it from active conversations
+        and optionally cancelling the Telethon conversation object.
+        
+        Args:
+            user_id: Telegram user ID
+            
+        Returns:
+            bool: True if conversation was cancelled, False if not found
+        """
+        if user_id in self.active_conversations:
+            conversation_state = self.active_conversations[user_id]
+            
+            # Set cancelled flag to prevent further processing
+            conversation_state.cancelled = True
+            
+            # Try to cancel the Telethon conversation object if it exists
+            if conversation_state.conv:
+                try:
+                    # Cancel the conversation - this will cause TimeoutError in wait_event calls
+                    conversation_state.conv.cancel()
+                    print(f"Cancelled Telethon conversation for user {user_id}")
+                except Exception as e:
+                    print(f"Error cancelling Telethon conversation for user {user_id}: {e}")
+            
+            # Remove from active conversations
+            del self.active_conversations[user_id]
+            print(f"Cancelled and removed conversation for user {user_id}")
+
+            log_conversation_cancelled(user_id, conversation_state.step, "user_cancelled")
+            
+            return True
+        
+        print(f"No active conversation found for user {user_id} to cancel")
+        return False
+    
+    # === Messages ===
+
+    async def receive_message(self, conv: Conversation, user_id: int, timeout: int = 45):
+        """
+        Receive a message from a conversation with automatic /cancel detection.
+        
+        This method wraps conv.wait_event(events.NewMessage) and automatically
+        handles /cancel commands by raising ConversationCancelledException.
+        
+        Args:
+            conv: The active Telethon conversation object
+            user_id: The user ID for the conversation
+            timeout: Timeout in seconds for waiting for the message
+            
+        Returns:
+            The message event if successful
+            
+        Raises:
+            ConversationCancelledException: If the user sends /cancel
+            TimeoutError: If no message is received within timeout
+        """
+        message_event = await conv.wait_event(
+            events.NewMessage(incoming=True), 
+            timeout=timeout
+        )
+        
+        # Check if the received message is a cancel command
+        message_text = message_event.message.message.strip()
+        if message_text.lower() == '/cancel':
+            await message_event.message.delete()  # Delete the command for security
+            self.cancel_conversation(user_id)
+            raise ConversationCancelledException("Conversation cancelled by user")
+        
+        return message_event
+
+    
+    
+    # ==== Conversations ====
+    
+    @managed_conversation("registration", 60)
+    async def register_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
         """
         Start the registration conversation with a user.
         
@@ -65,42 +326,119 @@ class ConversationManager:
         
         Args:
             user_id: Telegram user ID to register
+            conv: Active Telethon conversation object (provided by decorator)
+            state: Conversation state object (provided by decorator)
             
         Returns:
             bool: True if registration was successful, False otherwise
         """
-        async with self.api.bot.conversation(user_id) as conv:
-            chat = await conv.get_input_chat()
+        chat = await conv.get_input_chat()
 
-            # Start registration process
-            message_register = await self.api.message_manager.send_keyboard(
-                user_id, 
-                "Do you want to register?", 
-                KeyboardManager.get_confirmation_keyboard(), 
-                True, 
+        # Start registration process
+        message_register = await self.api.message_manager.send_keyboard(
+            user_id, 
+            "Do you want to register?", 
+            KeyboardManager.get_confirmation_keyboard(), 
+            True, 
+            True
+        )
+        if message_register is None:
+            return False
+            
+        button_event: events.CallbackQuery.Event = await conv.wait_event(
+            KeyboardManager.get_keyboard_callback_filter(user_id), 
+            timeout=30
+        )
+        data = button_event.data.decode('utf8')
+        log_telegram_callback(user_id, data)
+        
+        if data == "No":
+            await message_register.edit("Register process aborted.", buttons=None)
+            log_conversation_cancelled(user_id, "registration", "user_declined")
+            return False
+        await message_register.edit("Start Register process.", buttons=None)
+
+        # Update conversation state
+        self.update_conversation_step(user_id, "password_authentication")
+
+        # Password request
+        if not await self.request_authentication(conv):
+            return False
+
+        # Get user information from Telegram
+        log_conversation_step(user_id, "registration", "fetching_user_info")
+        user_entity = await self.api.bot.get_entity(user_id)
+        username = getattr(user_entity, 'username', None)
+        first_name = getattr(user_entity, 'first_name', None)
+        last_name = getattr(user_entity, 'last_name', None)
+        
+        if first_name is None: 
+            log_conversation_step(user_id, "registration", "first_name_not_found")
+            
+            await self.api.message_manager.send_text(user_id, 
+                "Please provide your first name to complete registration.",
+                True,
                 True
             )
-            if message_register is None:
-                return False
-                
-            button_event: events.CallbackQuery.Event = await conv.wait_event(
-                KeyboardManager.get_keyboard_callback_filter(user_id), 
-                timeout=30
-            )
-            data = button_event.data.decode('utf8')
-            log_telegram_callback(user_id, data)
+            first_name_event = await self.receive_message(conv, user_id, 45)
+            first_name = first_name_event.message.message.strip().title()
             
-            if data == "No":
-                await message_register.edit("Register process aborted.", buttons=None)
-                log_conversation_cancelled(user_id, "registration", "user_declined")
-                return False
-            await message_register.edit("Start Register process.", buttons=None)
-
-            # Password request
-            if not await self.request_authentication(conv):
-                return False
-
+        if username is None:
+            # combine lowercase first_name and last_name (if available) as username
+            username = f"{first_name.lower()}_{last_name.lower()}" if last_name else first_name.lower()
+        
+        log_conversation_step(user_id, "registration", f"user_info_retrieved: {first_name} (@{username})")
+        
+        # check if a user with this first_name already exists, and in this case require a last name 
+        if last_name is None:
+            existing_user = await dep.get_repo().find_user_by_id(user_id)
+            if existing_user and existing_user.first_name.lower() == first_name.lower():
+                log_conversation_step(user_id, "registration", "user_with_first_name_exists")
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "A user with the same first name already exists. Please provide a last name.",
+                    True,
+                    True
+                )
+                last_name_event = await self.receive_message(conv, user_id, 45)
+                last_name = last_name_event.message.message.strip().title()
+            
+        # TODO: add a display name (first name and first + last name if user already exists)
+        # alternatively put this only in the group keyboard
+        
+        # Create the user in the database
+        try:
+            log_conversation_step(user_id, "registration", "creating_user_in_database")
+            new_user = await handlers.register_user(
+                user_id=user_id,
+                username=username,
+                first_name=first_name,
+                last_name=last_name,
+                repo=dep.get_repo()
+            )
+            
+            log_conversation_step(user_id, "registration", "user_created_successfully")
+            await self.api.message_manager.send_text(
+                user_id,
+                f"✅ Registration successful! Welcome {first_name}!",
+                True,
+                True
+            )
+            
+            log_conversation_completed(user_id, "registration")
             return True
+            
+        except Exception as e:
+            log_conversation_step(user_id, "registration", f"user_creation_failed: {str(e)}")
+            await self.api.message_manager.send_text(
+                user_id,
+                "❌ Registration failed. Please try again later.",
+                True,
+                True
+            )
+            
+            log_unexpected_error("user_registration", str(e), {"user_id": user_id})
+            return False
             
     async def request_authentication(self, conv) -> bool:
         """
@@ -108,6 +446,7 @@ class ConversationManager:
         
         This handles the password authentication flow with:
         - Multiple retry attempts (up to 3)
+        - Proper timeout handling
         - Automatic message cleanup for security
         - Progressive error messaging
         
@@ -118,49 +457,63 @@ class ConversationManager:
             bool: True if authentication was successful, False otherwise
         """
         chat = await conv.get_input_chat()
+        chat_id = chat.user_id if hasattr(chat, 'user_id') else chat
         
         message_password = await self.api.message_manager.send_text(
-            chat.user_id if hasattr(chat, 'user_id') else chat, 
+            chat_id, 
             "Please enter the password:", 
             True, 
             True
         )
         max_tries = 3
         tries = 0
-        authenticated = False
         
         while tries < max_tries:
-            password_event = await conv.wait_event(
-                events.NewMessage(incoming=True), 
-                timeout=30
-            )
-            password = password_event.message.message
-            await password_event.message.delete()  # Delete password for security
-            
-            authenticated = await handlers.check_password(password, dep.get_repo())
-            if authenticated:
-                return True
-            else:
-                chat_id = chat.user_id if hasattr(chat, 'user_id') else chat
+            try:
+                password_event = await self.receive_message(conv, chat_id, 45)
+                
+                password = password_event.message.message.strip()
+                await password_event.message.delete()  # Delete password for security
+                
+                authenticated = await handlers.check_password(password, dep.get_repo())
+                if authenticated:
+                    await self.api.message_manager.send_text(
+                        chat_id, 
+                        "✅ Password correct!", 
+                        True, 
+                        True
+                    )
+                    return True
+                else:
+                    tries += 1
+                    if tries < max_tries:
+                        await self.api.message_manager.send_text(
+                            chat_id, 
+                            f"❌ Password incorrect. Please try again. ({tries}/{max_tries} attempts used)", 
+                            True, 
+                            True
+                        )
+                    else:
+                        await self.api.message_manager.send_text(
+                            chat_id, 
+                            "❌ Too many incorrect attempts. Registration aborted.", 
+                            True, 
+                            True
+                        )
+                        return False
+                    
+            except TimeoutError:
+                from ..common.log import log_conversation_timeout
+                log_conversation_timeout(chat_id, "registration", "password_authentication")
                 await self.api.message_manager.send_text(
                     chat_id, 
-                    "Password incorrect. Please try again.", 
+                    "⏱️ Password entry timed out. Registration aborted.", 
                     True, 
                     True
                 )
-                tries += 1
+                return False
                 
-        if not authenticated:
-            chat_id = chat.user_id if hasattr(chat, 'user_id') else chat
-            await self.api.message_manager.send_text(
-                chat_id, 
-                "Too many tries. Aborting registration.", 
-                True, 
-                True
-            )
-            return False
-        
-        return False  # Should not reach here, but ensures all paths return
+        return False
     
     async def group_selection(self, user_id: int) -> None:
         """

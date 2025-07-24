@@ -74,6 +74,41 @@ class CommandManager:
         # Use conversation manager for registration
         await self.conversation_manager.register_conversation(user_id)
 
+    async def handle_cancel_command(self, event: events.NewMessage.Event) -> None:
+        """
+        Handle the /cancel command to interrupt active conversations.
+        
+        Args:
+            event: The NewMessage event containing /cancel command
+        """
+        user_id = event.sender_id
+        log_telegram_command(user_id, "/cancel", getattr(event, 'chat_id', None))
+        
+        # Check if user has an active conversation
+        if self.conversation_manager.has_active_conversation(user_id):
+            conversation_cancelled = self.conversation_manager.cancel_conversation(user_id)
+            if conversation_cancelled:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ Current conversation cancelled. You can start over anytime.",
+                    True,
+                    True
+                )
+            else:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ Failed to cancel conversation. Please try again.",
+                    True,
+                    True
+                )
+        else:
+            await self.api.message_manager.send_text(
+                user_id,
+                "ℹ️ No active conversation to cancel.",
+                True,
+                True
+            )
+
     async def handle_group_command(self, event: events.NewMessage.Event) -> None:
         """
         Handle the /group command for group selection.
@@ -148,10 +183,26 @@ class CommandManager:
         """
         Handle unknown commands sent to the bot.
         
+        Only processes messages that clearly look like commands (start with /).
+        This prevents interference with password inputs and other conversation flows.
+        
         Args:
             event: The NewMessage event containing an unknown command
         """
         sender_id = event.sender_id
-        message = event.message.message
+        message = event.message.message.strip()
+        
+        # Only process messages that start with / (actual commands)
+        # This prevents interference with passwords and conversation inputs
+        # if not message.startswith('/'):
+        #     return  # Not a command, don't process
+        
+        if self.conversation_manager.has_active_conversation(sender_id):
+            print(f"Command ignored due to active conversation: {message}")
+            return
+        else:
+            print(f"Processing unknown command: {message}")
+            active_conversations = self.conversation_manager.get_active_conversations()
+            print(f"Active conversation: {active_conversations}")
         
         await self.api.message_manager.send_text(sender_id, f"**{message}** is an unknown command.", True, True)

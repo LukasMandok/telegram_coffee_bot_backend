@@ -17,7 +17,7 @@ class BaseUser(ABC):
     
 class TelegramUser(BaseUser, ABC):
     user_id:     int # should be unique
-    username:    int # should be unique 
+    username:    str # should be unique 
     last_login:  datetime
     phone:       Optional[str] # optional and unique
     photo_id:    Optional[int]
