@@ -60,7 +60,7 @@ class TelegramUser(base.TelegramUser, BaseUser):
     user_id: Annotated[int, Indexed(unique=True)]
     username: Annotated[str, Indexed(unique=True)]
     last_login: datetime
-    phone: Annotated[Optional[str], Indexed(unique=True)] = None
+    phone: Annotated[Optional[str], Indexed()] = None  # Non-unique index for fast searches
     photo_id: Optional[int] = None
         
     class Settings(BaseUser.Settings):
@@ -70,7 +70,7 @@ class TelegramUser(base.TelegramUser, BaseUser):
 
         
 class FullUser(base.FullUser, TelegramUser):
-    gsheet_name: Annotated[str, Indexed(unique=True)]
+    display_name: Annotated[str, Indexed(unique=True, sparse=True)]  # Required unique display name, sparse allows TelegramUser to have null
     
     class Settings(TelegramUser.Settings):
         name = "full_users"

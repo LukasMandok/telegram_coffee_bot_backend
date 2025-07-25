@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from fastapi import Depends, HTTPException
 
 from ..common.log import log_user_login_attempt, log_user_login_success, log_admin_verification
@@ -27,10 +27,14 @@ async def check_user(id, repo: "BaseRepository"):
         return False
     
 async def check_password(password_input, repo: "BaseRepository"):
+    print(f"handlers: check_password - input: '{password_input}'")
     password = await repo.get_password()
+    print(f"handlers: check_password - retrieved password object: {password}")
     if password is None:
+        print("handlers: check_password - no password found in database")
         return False
     is_correct = password.verify_password(password_input)
+    print(f"handlers: check_password - verification result: {is_correct}")
     
     return is_correct
     
@@ -43,7 +47,26 @@ async def is_admin(id, repo: "BaseRepository"):
 
 
 
-async def register_user(id, repo: "BaseRepository"):
-    pass
-
-    # TODO: ask for password and if correct register user in database
+async def register_user(user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en", repo: Optional["BaseRepository"] = None):
+    """Register a new FullUser in the database with smart display name generation."""
+    if repo is None:
+        from ..dependencies.dependencies import get_repo
+        repo = get_repo()
+    
+    try:
+        # Create the full user in the database with smart display name
+        new_user = await repo.create_full_user(
+            user_id=user_id,
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
+            phone=phone,
+            photo_id=photo_id,
+            lang_code=lang_code
+        )
+        return new_user
+    
+    except Exception as e:
+        from ..common.log import log_database_error
+        log_database_error("register_user", str(e), {"user_id": user_id})
+        raise

@@ -28,7 +28,7 @@ class TelegramUser(BaseUser, ABC):
         
 
 class FullUser(TelegramUser, ABC):
-    gsheet_name: str # should be unique
+    display_name: str  # Required when creating a FullUser, but TelegramUser won't have this field
     is_admin:    bool = False
     
     # should be in full_users collection

@@ -11,6 +11,7 @@ from functools import wraps
 from pydantic import BaseModel, Field
 from telethon import events
 from telethon.tl.custom.conversation import Conversation
+from pymongo.errors import DuplicateKeyError
 from ..handlers import handlers
 from ..dependencies import dependencies as dep
 from .keyboards import KeyboardManager
@@ -371,6 +372,26 @@ class ConversationManager:
         username = getattr(user_entity, 'username', None)
         first_name = getattr(user_entity, 'first_name', None)
         last_name = getattr(user_entity, 'last_name', None)
+        phone = getattr(user_entity, 'phone', None)
+        photo_id = getattr(user_entity, 'photo', None)
+        lang_code = getattr(user_entity, 'lang_code', 'en')
+        
+        # Debug logging to see what we're getting from Telegram
+        print(f"DEBUG: Telegram user entity for user_id {user_id}:")
+        print(f"  - username: {username}")
+        print(f"  - first_name: {first_name}")
+        print(f"  - last_name: {last_name}")
+        print(f"  - phone: {phone} (type: {type(phone)})")
+        print(f"  - photo_id: {photo_id}")
+        print(f"  - lang_code: {lang_code}")
+        print(f"  - user_entity type: {type(user_entity)}")
+        print(f"  - user_entity attributes: {dir(user_entity)}")
+        
+        # Extract photo_id if photo exists
+        if photo_id and hasattr(photo_id, 'photo_id'):
+            photo_id = photo_id.photo_id
+        else:
+            photo_id = None
         
         if first_name is None: 
             log_conversation_step(user_id, "registration", "first_name_not_found")
@@ -391,17 +412,17 @@ class ConversationManager:
         
         # check if a user with this first_name already exists, and in this case require a last name 
         if last_name is None:
-            existing_user = await dep.get_repo().find_user_by_id(user_id)
-            if existing_user and existing_user.first_name.lower() == first_name.lower():
-                log_conversation_step(user_id, "registration", "user_with_first_name_exists")
-                await self.api.message_manager.send_text(
-                    user_id,
-                    "A user with the same first name already exists. Please provide a last name.",
-                    True,
-                    True
-                )
-                last_name_event = await self.receive_message(conv, user_id, 45)
-                last_name = last_name_event.message.message.strip().title()
+            # existing_user = await dep.get_repo().find_user_by_id(user_id)
+            # if existing_user and existing_user.first_name.lower() == first_name.lower():
+            log_conversation_step(user_id, "registration", "user_with_first_name_exists")
+            await self.api.message_manager.send_text(
+                user_id,
+                "Please provide you last name.",
+                True,
+                True
+            )
+            last_name_event = await self.receive_message(conv, user_id, 45)
+            last_name = last_name_event.message.message.strip().title()
             
         # TODO: add a display name (first name and first + last name if user already exists)
         # alternatively put this only in the group keyboard
@@ -414,6 +435,9 @@ class ConversationManager:
                 username=username,
                 first_name=first_name,
                 last_name=last_name,
+                phone=phone,
+                photo_id=photo_id,
+                lang_code=lang_code,
                 repo=dep.get_repo()
             )
             
@@ -427,6 +451,30 @@ class ConversationManager:
             
             log_conversation_completed(user_id, "registration")
             return True
+            
+        except DuplicateKeyError as e:
+            # Handle duplicate key error specifically - usually means phone number already exists
+            error_message = str(e)
+            if "phone_1 dup key" in error_message:
+                log_conversation_step(user_id, "registration", f"duplicate_phone_error: {str(e)}")
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ A user with your phone number is already registered. Please contact your admin.",
+                    True,
+                    True
+                )
+            else:
+                # Handle other duplicate key errors (e.g., user_id, username)
+                log_conversation_step(user_id, "registration", f"duplicate_key_error: {str(e)}")
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ This user account is already registered. Please contact your admin if you believe this is an error.",
+                    True,
+                    True
+                )
+            
+            log_unexpected_error("user_registration", str(e), {"user_id": user_id})
+            return False
             
         except Exception as e:
             log_conversation_step(user_id, "registration", f"user_creation_failed: {str(e)}")
