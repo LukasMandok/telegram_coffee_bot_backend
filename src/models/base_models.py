@@ -42,7 +42,7 @@ class Password(ABC):
     
     @classmethod
     @abstractmethod
-    def set_password(cls, password: str) -> str:
+    def set_password(cls, password: str | bytes) -> str:
         pass
     
     @abstractmethod

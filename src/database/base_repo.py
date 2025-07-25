@@ -20,6 +20,10 @@ class BaseRepository(ABC):
     async def find_user_by_id(self, id: int) -> Optional[Any]:
         pass
     
+    @abstractmethod
+    async def create_telegram_user(self, user_id: int, username: str, first_name: str, last_name: Optional[str] = None) -> Any:
+        pass
+    
     
     
     ### Configuration

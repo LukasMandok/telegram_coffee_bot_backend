@@ -6,7 +6,7 @@ from pydantic import Field, field_validator
 from datetime import datetime
 
 from . import base_models as base 
-from ..common.helpers import hash_password, compare_password
+from ..common.helpers import hash_password, compare_password, is_valid_hash
 
 """
 ### IDEAS
@@ -82,25 +82,17 @@ class FullUser(base.FullUser, TelegramUser):
     
 class Password(base.Password, Document):
     hash_value: str
-    
+
     @field_validator("hash_value", mode="before")
     @classmethod
     def set_password(cls, password: str | bytes) -> str:
-        # print("#### Password - set_password - called")
-        if isinstance(password, bytes):
-            # print("Password - set_password - obtained type bytes:", password)
-            try:
-                password = password.decode("utf8")
-            except UnicodeDecodeError as e:
-                raise ValueError("Password in database is no valid utf8-byte string")
-        
-        elif not isinstance(password, str):
-            raise ValueError("Password must either be a utf8-byte string hash or a plaintext string.")
-        
-        # print("Password - set_password - obtained type str:", password)
-        # Hash the password and return as string for storage
-        hashed_bytes = hash_password(password)
-        return hashed_bytes.decode('utf-8')
+        if isinstance(password, str) and is_valid_hash(password):
+            return password  # loaded from DB, already hashed
+        if isinstance(password, (bytes, bytearray)):
+            password = password.decode("utf-8")
+        if isinstance(password, str):
+            return hash_password(password).decode("utf-8")
+        raise ValueError("Password must be bytes or str")
     
     def verify_password(self, plain_password: str) -> bool:
         # Convert string hash back to bytes for comparison
@@ -114,19 +106,19 @@ class Config(base.Config, Document):
     
     async def get_password(self) -> Optional[Password]:
         print("Config - get_password")
-        # Use fetch_link to resolve the linked document
+        # Instead of using Link, query Password collection directly
         try:
-            # Fetch the linked password document using the correct syntax
-            await self.fetch_link(Config.password)
-            password = self.password
-            print(f"Config - get_password - fetched password: {password}")
-            print(f"Config - get_password - password hash_value: {getattr(password, 'hash_value', 'NO_HASH_VALUE')}")
-            # Type cast to handle the Link[Password] -> Password conversion
-            if hasattr(password, 'hash_value'):
-                return password  # type: ignore
-            return None
+            # Query the first (and should be only) password document
+            password = await Password.find_one()
+            print(f"Config - get_password - found password: {password}")
+            if password:
+                print(f"Config - get_password - password hash_value: {getattr(password, 'hash_value', 'NO_HASH_VALUE')}")
+                return password
+            else:
+                print("Config - get_password - no password document found in database")
+                return None
         except Exception as e:
-            print(f"Error fetching password link: {e}")
+            print(f"Error fetching password: {e}")
             return None
         
     class Settings:
