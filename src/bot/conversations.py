@@ -821,3 +821,65 @@ class ConversationManager:
                 # await process_telegram_keyboard_response(user_id, card_id, self.api.group)
                 
             # TODO: reset group to initial state
+
+    @managed_conversation("add_passive_user", 60)
+    async def add_passive_user_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
+        """Admin-only conversation to add a new passive user."""
+        
+        # Get first name (with retry)
+        while True:
+            first_name_event = await self.send_text_and_wait_message(
+                conv, user_id, "**First name** of the new user:", 60
+            )
+            first_name = first_name_event.message.message.strip().title()
+            
+            if first_name and len(first_name) >= 2:
+                break
+            
+            await self.api.message_manager.send_text(
+                user_id, "❌ First name must be at least 2 characters. Try again:", True, True
+            )
+        
+        # Get last name (required)
+        last_name_event = await self.send_text_and_wait_message(
+            conv, user_id, f"**Last name** for **{first_name}**:", 60
+        )
+        last_name = last_name_event.message.message.strip().title()
+        
+        if not last_name or len(last_name) < 2:
+            await self.api.message_manager.send_text(
+                user_id, "❌ Last name is required and must be at least 2 characters.", True, True
+            )
+            return False
+        
+        # Preview with confirmation
+        full_name = f"{first_name} {last_name}"
+        data, message_confirm = await self.send_keyboard_and_wait_response(
+            conv,
+            user_id,
+            f"**{full_name}**\n\nConfirm creation?",
+            KeyboardManager.get_confirmation_keyboard(),
+            30
+        )
+        if data is None:
+            return False
+        
+        if data == "No":
+            await self.send_or_edit_message(user_id, "❌ Creation cancelled.", message_confirm, remove_buttons=True)
+            return False
+        
+        # Create user
+        new_user = await handlers.create_passive_user(
+            first_name=first_name,
+            last_name=last_name,
+            repo=dep.get_repo()
+        )
+        
+        await self.api.message_manager.send_text(
+            user_id,
+            f"✅ **Created:** {full_name}\n**Display name:** {new_user.display_name}",
+            True,
+            True
+        )
+        
+        return True

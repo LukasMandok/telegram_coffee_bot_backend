@@ -66,7 +66,7 @@ class TelegramUser(base.TelegramUser, BaseUser):
         
     class Settings(BaseUser.Settings):
         name = "telegram_users"
-        use_cache = True
+        use_cache = False  # Disable caching to avoid stale data
         is_root = False
 
         
@@ -75,9 +75,18 @@ class FullUser(base.FullUser, TelegramUser):
     
     class Settings(TelegramUser.Settings):
         name = "full_users"
+        use_cache = False  # Disable caching to avoid stale data
+        is_root = False
+
+
+class PassiveUser(base.PassiveUser, BaseUser):
+    display_name: Annotated[str, Indexed(unique=True)]  # Required unique display name
+    
+    class Settings(BaseUser.Settings):
+        name = "passive_users"
         is_root = False
     
-#---------------------------
+#-----------------------------
 # *      Configuration
 #-----------------------------
     

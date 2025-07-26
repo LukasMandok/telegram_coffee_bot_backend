@@ -45,6 +45,7 @@ class BeanieRepository(BaseRepository):
                 models.BaseUser,
                 models.TelegramUser,
                 models.FullUser,
+                models.PassiveUser,
                 models.Password,
                 models.Config,
                 # Coffee models
@@ -116,6 +117,7 @@ class BeanieRepository(BaseRepository):
         except Exception as e:
             log_database_error("ping", str(e))
 
+
     async def get_collection(self, collection_name):
         return self.db.get_collection(collection_name)
 
@@ -127,14 +129,54 @@ class BeanieRepository(BaseRepository):
 
     async def find_all_users(self):
         try:
-            users = await models.TelegramUser.find_all().to_list()
-            log_performance_metric("find_all_users", len(users), "records")
-            return users
+            # Get both telegram users and passive users
+            # telegram_users = await models.TelegramUser.find_all().to_list()
+            full_users = await models.FullUser.find_all().to_list()
+            passive_users = await models.PassiveUser.find_all().to_list()
+            
+            all_users =  full_users + passive_users  # telegram_users +
+            log_performance_metric("find_all_users", len(all_users), "records")
+            return all_users
+
         except Exception as e:
             log_database_error("find_all_users", str(e))
             return []
 
     async def find_user_by_id(self, id: int):
+        print(f"DEBUG: find_user_by_id called with id={id}")
+        
+        # First check FullUser collection (registered users)
+        print(f"DEBUG: Checking FullUser collection for user_id={id}")
+        full_user = await models.FullUser.find_one(models.FullUser.user_id == id)
+        if full_user:
+            print(f"DEBUG: Found FullUser: {full_user}")
+            print(f"DEBUG: FullUser type: {type(full_user)}")
+            print(f"DEBUG: FullUser has display_name: {hasattr(full_user, 'display_name')}")
+            return full_user
+        
+        print(f"DEBUG: No FullUser found, checking TelegramUser collection")
+        # Fall back to TelegramUser collection (basic users)
+        telegram_user = await models.TelegramUser.find_one(models.TelegramUser.user_id == id)
+        if telegram_user:
+            print(f"DEBUG: Found TelegramUser: {telegram_user}")
+            print(f"DEBUG: TelegramUser type: {type(telegram_user)}")
+            print(f"DEBUG: TelegramUser has display_name: {hasattr(telegram_user, 'display_name')}")
+        else:
+            print(f"DEBUG: No TelegramUser found either")
+        
+        return telegram_user
+    
+    async def find_user_by_display_name(self, display_name: str):
+        """Find a user (FullUser or PassiveUser) by display name."""
+        # Check FullUser first
+        full_user = await models.FullUser.find_one(models.FullUser.display_name == display_name)
+        if full_user:
+            return full_user
+        
+        # Check PassiveUser
+        passive_user = await models.PassiveUser.find_one(models.PassiveUser.display_name == display_name)
+        return passive_user
+
     async def is_user_admin(self, user_id: int) -> bool:
         """Check if a user is an admin by looking up their user_id in config."""
         try:
@@ -178,9 +220,11 @@ class BeanieRepository(BaseRepository):
             log_database_error("create_telegram_user", str(e), {"user_id": user_id, "username": username})
             raise
 
+    # TODO: implement this for multiple users with the same forname to check all last names against each other
     async def _generate_unique_display_name(self, first_name: str, last_name: Optional[str] = None) -> str:
         """
         Generate a unique display name by progressively adding characters from last name.
+        Works for both FullUser and PassiveUser types.
         
         Logic:
         1. Try just first_name
@@ -195,7 +239,11 @@ class BeanieRepository(BaseRepository):
         """
         candidate_name = first_name
         
-        existing_user = await models.FullUser.find_one(models.FullUser.display_name == candidate_name)
+        # Check for conflicts in both FullUser and PassiveUser collections
+        existing_full_user = await models.FullUser.find_one(models.FullUser.display_name == candidate_name)
+        existing_passive_user = await models.PassiveUser.find_one(models.PassiveUser.display_name == candidate_name)
+        
+        existing_user = existing_full_user or existing_passive_user
         
         if not existing_user:
             return candidate_name
@@ -270,6 +318,101 @@ class BeanieRepository(BaseRepository):
             
         except Exception as e:
             log_database_error("create_full_user", str(e), {"user_id": user_id, "username": username})
+            raise
+
+    async def create_passive_user(self, first_name: str, last_name: Optional[str] = None):
+        """Create a new PassiveUser with smart display name generation."""
+        try:
+            print(f"DEBUG: Creating passive user: {first_name} {last_name or ''}")
+            
+            # Generate unique display name
+            display_name = await self._generate_unique_display_name(first_name, last_name)
+            print(f"DEBUG: Generated display name: '{display_name}'")
+            
+            new_user = models.PassiveUser(
+                first_name=first_name,
+                last_name=last_name,
+                display_name=display_name,
+                created_at=datetime.now(),
+                updated_at=datetime.now()
+            )
+            
+            await new_user.insert()
+            print(f"Created passive user: {display_name}")
+            return new_user
+            
+        except Exception as e:
+            log_database_error("create_passive_user", str(e), {"first_name": first_name, "last_name": last_name})
+            raise
+
+    async def find_passive_user_by_name(self, first_name: str, last_name: Optional[str] = None):
+        """Find a passive user by first name and last name."""
+        try:
+            print(f"DEBUG: Searching for passive user: first_name='{first_name}', last_name='{last_name}'")
+            
+            # Debug: List all passive users
+            all_passive_users = await models.PassiveUser.find_all().to_list()
+            print(f"DEBUG: All passive users in database:")
+            for user in all_passive_users:
+                print(f"  - first_name='{user.first_name}', last_name='{user.last_name}', display_name='{user.display_name}'")
+            
+            # Simple approach: find by first_name and last_name directly
+            result = await models.PassiveUser.find(
+                models.PassiveUser.first_name == first_name,
+                models.PassiveUser.last_name == last_name
+            ).first_or_none()
+            
+            print(f"DEBUG: Search result: {result}")
+            return result
+        except Exception as e:
+            log_database_error("find_passive_user_by_name", str(e), {"first_name": first_name, "last_name": last_name})
+            return None
+
+    # TODO: this has to ckecked later, that the depbts and all other information correctly transfer.
+    async def convert_passive_to_full_user(self, passive_user, user_id: int, username: str, first_name: Optional[str] = None, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en"):
+        """Convert a PassiveUser to a FullUser by transferring data and deleting the passive user."""
+        try:
+            print(f"DEBUG: Converting passive user '{passive_user.display_name}' to full user")
+            
+            # Use provided names or fall back to passive user's names
+            final_first_name = first_name if first_name is not None else passive_user.first_name
+            final_last_name = last_name if last_name is not None else passive_user.last_name
+            
+            print(f"DEBUG: Using names - first: '{final_first_name}', last: '{final_last_name}'")
+            
+            # Use the existing display name from the passive user (it's already unique and correct)
+            display_name = passive_user.display_name
+            print(f"DEBUG: Using existing display name: '{display_name}'")
+            
+            # Create new FullUser with data from PassiveUser
+            new_full_user = models.FullUser(
+                user_id=user_id,
+                username=username,
+                first_name=final_first_name,
+                last_name=final_last_name,
+                phone=phone,
+                photo_id=photo_id,
+                display_name=display_name,  # Use the existing display name from passive user
+                last_login=datetime.now(),
+                created_at=passive_user.created_at,  # Preserve original creation date
+                updated_at=datetime.now()
+            )
+            
+            # Set lang_code after creation
+            new_full_user.lang_code = lang_code
+            
+            # Insert new full user
+            await new_full_user.insert()
+            
+            # Delete the passive user
+            await passive_user.delete()
+            
+            print(f"Successfully converted passive user to full user: {new_full_user.display_name}")
+            log_user_registration(user_id, username)
+            return new_full_user
+            
+        except Exception as e:
+            log_database_error("convert_passive_to_full_user", str(e), {"user_id": user_id, "passive_user_id": str(passive_user.id)})
             raise
 
     ### Configuration ###

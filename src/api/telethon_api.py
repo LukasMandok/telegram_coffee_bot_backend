@@ -123,6 +123,7 @@ class TelethonAPI:
         self.add_handler(lambda event: self.command_manager.handle_password_command(event), '/password')
         self.add_handler(lambda event: self.command_manager.handle_user_verification_command(event), "/user")
         self.add_handler(lambda event: self.command_manager.handle_admin_verification_command(event), "/admin")
+        self.add_handler(lambda event: self.command_manager.handle_add_passive_user_command(event), "/add_user")
         self.add_handler(lambda event: self.command_manager.handle_cancel_command(event), "/cancel")
         self.add_handler(lambda event: self.command_manager.handle_digits_command(event), events.NewMessage(incoming=True, pattern=re.compile(r'[0-9]+')))
         self.add_handler(lambda event: self.command_manager.handle_unknown_command(event))

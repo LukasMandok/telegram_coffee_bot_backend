@@ -29,9 +29,15 @@ class TelegramUser(BaseUser, ABC):
 
 class FullUser(TelegramUser, ABC):
     display_name: str  # Required when creating a FullUser, but TelegramUser won't have this field
-    is_admin:    bool = False
     
     # should be in full_users collection
+
+
+class PassiveUser(BaseUser, ABC):
+    display_name: str  # Required unique display name for passive users
+    
+    # should be in passive_users collection
+    # These users don't have Telegram accounts but can have coffee orders/debts managed by admins
     
 #---------------------------
 # *      Configuration

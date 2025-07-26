@@ -21,6 +21,10 @@ class BaseRepository(ABC):
         pass
     
     @abstractmethod
+    async def find_user_by_display_name(self, display_name: str) -> Optional[Any]:
+        pass
+    
+    @abstractmethod
     async def create_telegram_user(self, user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en") -> Any:
         pass
     

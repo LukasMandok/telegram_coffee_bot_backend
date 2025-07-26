@@ -169,6 +169,30 @@ class CommandManager:
         user_id = event.sender_id
         await self.api.message_manager.send_text(user_id, "You are a registered admin.", True, True)
 
+    @dep.verify_admin
+    async def handle_add_passive_user_command(self, event: events.NewMessage.Event) -> None:
+        """
+        Admin-only command to add a new passive user.
+        
+        Args:
+            event: The NewMessage event containing /add_user command
+        """
+        user_id = event.sender_id
+        log_telegram_command(user_id, "/add_user", getattr(event, 'chat_id', None))
+        
+        # # Check if user already has an active conversation
+        # if self.conversation_manager.has_active_conversation(user_id):
+        #     await self.api.message_manager.send_text(
+        #         user_id,
+        #         "❌ You already have an active conversation. Please finish it first or use /cancel.",
+        #         True,
+        #         True
+        #     )
+        #     return
+        
+        # Start the conversation for adding passive users
+        await self.conversation_manager.add_passive_user_conversation(user_id)
+
     async def handle_digits_command(self, event: events.NewMessage.Event) -> None:
         """
         Handle digit messages (temporary handler for testing).
