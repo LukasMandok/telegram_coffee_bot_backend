@@ -135,8 +135,14 @@ class BeanieRepository(BaseRepository):
             return []
 
     async def find_user_by_id(self, id: int):
-        return await models.TelegramUser.find_one(models.TelegramUser.user_id == id)
-        # return await models.TelegramUser.get(id)
+    async def is_user_admin(self, user_id: int) -> bool:
+        """Check if a user is an admin by looking up their user_id in config."""
+        try:
+            admins = await self.get_admins()
+            return user_id in admins if admins else False
+        except Exception as e:
+            log_database_error("is_user_admin", str(e), {"user_id": user_id})
+            return False
     
     async def create_telegram_user(self, user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en"):
         """Create a new TelegramUser in the database."""
@@ -156,11 +162,13 @@ class BeanieRepository(BaseRepository):
                 last_name=last_name,
                 phone=phone,  # Now it's safe to include None values
                 photo_id=photo_id,
-                lang_code=lang_code,
                 last_login=datetime.now(),
                 created_at=datetime.now(),
                 updated_at=datetime.now()
             )
+            
+            # Set lang_code after creation since it might be inherited
+            new_user.lang_code = lang_code
             
             await new_user.insert()
             log_user_registration(user_id, username)
@@ -279,12 +287,44 @@ class BeanieRepository(BaseRepository):
             return None
 
     async def get_admins(self):
-        config = await models.Config.find_one()
-        if config:
-            print("beanie_repo - config:", config)
-            admins = config.admins
-            print("beanie_repo - admins:", admins)
-            return admins
-        else:
-            print("beanie_repo - no config found")
+        """Get the list of admin user IDs from config."""
+        try:
+            config = await models.Config.find_one()
+            if config and config.admins:
+                return config.admins
             return []
+        except Exception as e:
+            log_database_error("get_admins", str(e))
+            return []
+
+    async def add_admin(self, user_id: int) -> bool:
+        """Add a user to the admin list."""
+        try:
+            config = await models.Config.find_one()
+            if config:
+                if user_id not in config.admins:
+                    config.admins.append(user_id)
+                    await config.save()
+                    print(f"Added user {user_id} to admin list")
+                    return True
+                else:
+                    print(f"User {user_id} is already an admin")
+                    return True
+            return False
+        except Exception as e:
+            log_database_error("add_admin", str(e), {"user_id": user_id})
+            return False
+
+    async def remove_admin(self, user_id: int) -> bool:
+        """Remove a user from the admin list."""
+        try:
+            config = await models.Config.find_one()
+            if config and user_id in config.admins:
+                config.admins.remove(user_id)
+                await config.save()
+                print(f"Removed user {user_id} from admin list")
+                return True
+            return False
+        except Exception as e:
+            log_database_error("remove_admin", str(e), {"user_id": user_id})
+            return False

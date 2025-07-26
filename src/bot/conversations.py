@@ -311,6 +311,126 @@ class ConversationManager:
         
         return message_event
 
+    async def receive_button_response(self, conv: Conversation, user_id: int, timeout: int = 60) -> Optional[str]:
+        """
+        Receive a button callback response from a conversation.
+        
+        This method wraps conv.wait_event for button callbacks and automatically
+        handles the response, logging, and data extraction.
+        
+        Args:
+            conv: The active Telethon conversation object
+            user_id: The user ID for the conversation
+            timeout: Timeout in seconds for waiting for the button response
+            
+        Returns:
+            str: The button data if successful, None if failed
+            
+        Raises:
+            TimeoutError: If no button response is received within timeout
+        """
+        try:
+            button_event = await conv.wait_event(
+                KeyboardManager.get_keyboard_callback_filter(user_id),
+                timeout=timeout
+            )
+            await button_event.answer()
+            data = button_event.data.decode('utf8')
+            log_telegram_callback(user_id, data)
+            return data
+        except Exception as e:
+            # Let the caller handle the exception
+            raise e
+
+    async def send_keyboard_and_wait_response(self, conv: Conversation, user_id: int, message_text: str, keyboard, timeout: int = 60) -> tuple[Optional[str], Optional[Any]]:
+        """
+        Send a keyboard message and wait for a button response in one operation.
+        
+        This method combines sending a keyboard message and waiting for the button response,
+        which is a very common pattern in conversation flows.
+        
+        Args:
+            conv: The active Telethon conversation object
+            user_id: The user ID for the conversation
+            message_text: The text message to send with the keyboard
+            keyboard: The keyboard to send
+            timeout: Timeout in seconds for waiting for the button response
+            
+        Returns:
+            tuple: (button_data, message_object) - Both the button response data and the original message object
+                   (None, None) if sending the message failed
+                   (None, message_object) if button response failed but message was sent
+        """
+        # Send the keyboard message
+        message = await self.api.message_manager.send_keyboard(
+            user_id,
+            message_text,
+            keyboard,
+            True,
+            True
+        )
+        
+        if message is None:
+            return None, None
+            
+        try:
+            # Wait for button response
+            data = await self.receive_button_response(conv, user_id, timeout)
+            return data, message
+        except Exception as e:
+            # Return the message object even if button response failed
+            # so caller can still use it for error handling
+            return None, message
+
+    async def send_or_edit_message(self, user_id: int, text: str, message_to_edit: Optional[Any] = None, remove_buttons: bool = False):
+        """
+        Edit an existing message or send a new text message if editing is not possible.
+        
+        This is a common pattern where we want to update an existing message if we have it,
+        or send a new message if we don't.
+        
+        Args:
+            user_id: The user ID to send the message to
+            text: The text content for the message
+            message_to_edit: The existing message object to edit (if available)
+            remove_buttons: Whether to remove buttons when editing (set buttons=None)
+        """
+        if message_to_edit:
+            try:
+                if remove_buttons:
+                    await message_to_edit.edit(text, buttons=None)
+                else:
+                    await message_to_edit.edit(text)
+            except Exception as e:
+                # If editing fails, fall back to sending new message
+                print(f"Failed to edit message, sending new one: {e}")
+                await self.api.message_manager.send_text(user_id, text, True, True)
+        else:
+            await self.api.message_manager.send_text(user_id, text, True, True)
+
+    async def send_text_and_wait_message(self, conv: Conversation, user_id: int, text: str, timeout: int = 45):
+        """
+        Send a text message and wait for a text message response in one operation.
+        
+        This method combines sending a text message and waiting for the user's text response,
+        which is a common pattern in conversation flows for collecting user input.
+        
+        Args:
+            conv: The active Telethon conversation object
+            user_id: The user ID for the conversation
+            text: The text message to send
+            timeout: Timeout in seconds for waiting for the message response
+            
+        Returns:
+            The message event if successful
+            
+        Raises:
+            ConversationCancelledException: If the user sends /cancel
+            TimeoutError: If no message is received within timeout
+        """
+        await self.api.message_manager.send_text(user_id, text, True, True)
+        return await self.receive_message(conv, user_id, timeout)
+
     
     
     # ==== Conversations ====
@@ -336,28 +456,22 @@ class ConversationManager:
         chat = await conv.get_input_chat()
 
         # Start registration process
-        message_register = await self.api.message_manager.send_keyboard(
+        data, message_register = await self.send_keyboard_and_wait_response(
+            conv, 
             user_id, 
             "Do you want to register?", 
             KeyboardManager.get_confirmation_keyboard(), 
-            True, 
-            True
+            30
         )
-        if message_register is None:
+        if data is None:
             return False
-            
-        button_event: events.CallbackQuery.Event = await conv.wait_event(
-            KeyboardManager.get_keyboard_callback_filter(user_id), 
-            timeout=30
-        )
-        data = button_event.data.decode('utf8')
-        log_telegram_callback(user_id, data)
         
         if data == "No":
-            await message_register.edit("Register process aborted.", buttons=None)
+            await self.send_or_edit_message(user_id, "Register process aborted.", message_register, remove_buttons=True)
             log_conversation_cancelled(user_id, "registration", "user_declined")
             return False
-        await message_register.edit("Start Register process.", buttons=None)
+            
+        await self.send_or_edit_message(user_id, "Start Register process.", message_register, remove_buttons=True)
 
         # Update conversation state
         self.update_conversation_step(user_id, "password_authentication")
@@ -385,7 +499,6 @@ class ConversationManager:
         print(f"  - photo_id: {photo_id}")
         print(f"  - lang_code: {lang_code}")
         print(f"  - user_entity type: {type(user_entity)}")
-        print(f"  - user_entity attributes: {dir(user_entity)}")
         
         # Extract photo_id if photo exists
         if photo_id and hasattr(photo_id, 'photo_id'):
@@ -396,12 +509,11 @@ class ConversationManager:
         if first_name is None: 
             log_conversation_step(user_id, "registration", "first_name_not_found")
             
-            await self.api.message_manager.send_text(user_id, 
+            first_name_event = await self.send_text_and_wait_message(
+                conv, user_id, 
                 "Please provide your first name to complete registration.",
-                True,
-                True
+                45
             )
-            first_name_event = await self.receive_message(conv, user_id, 45)
             first_name = first_name_event.message.message.strip().title()
             
         if username is None:
@@ -415,19 +527,88 @@ class ConversationManager:
             # existing_user = await dep.get_repo().find_user_by_id(user_id)
             # if existing_user and existing_user.first_name.lower() == first_name.lower():
             log_conversation_step(user_id, "registration", "user_with_first_name_exists")
-            await self.api.message_manager.send_text(
-                user_id,
+            last_name_event = await self.send_text_and_wait_message(
+                conv, user_id,
                 "Please provide you last name.",
-                True,
-                True
+                45
             )
-            last_name_event = await self.receive_message(conv, user_id, 45)
             last_name = last_name_event.message.message.strip().title()
             
-        # TODO: add a display name (first name and first + last name if user already exists)
-        # alternatively put this only in the group keyboard
         
-        # Create the user in the database
+        # Check if a passive user with the same name already exists
+        # TODO: maybe a search only for the last name 
+        log_conversation_step(user_id, "registration", "checking_for_existing_passive_user")
+        print(f"DEBUG: Checking for passive user with name: '{first_name}' '{last_name}'")
+        existing_passive_user = await handlers.find_passive_user_by_name(
+            first_name=first_name,
+            last_name=last_name,
+            repo=dep.get_repo()
+        )
+        print(f"DEBUG: Found existing passive user: {existing_passive_user}")
+        
+        if existing_passive_user:
+            # Ask if user wants to take over the passive user account
+            log_conversation_step(user_id, "registration", "passive_user_found")
+            data, message_takeover = await self.send_keyboard_and_wait_response(
+                conv,
+                user_id,
+                f"Found existing user: **{existing_passive_user.first_name} {existing_passive_user.last_name}**\n\nDo you want to take over this user?",
+                KeyboardManager.get_confirmation_keyboard(),
+                60
+            )
+            if data is None:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ Takeover confirmation timed out. Registration cancelled.",
+                    True,
+                    True
+                )
+                return False
+            
+            if data == "Yes":
+                await self.send_or_edit_message(user_id, "✅ Taking over existing user...", message_takeover, remove_buttons=True)
+                log_conversation_step(user_id, "registration", "converting_passive_to_full_user")
+                
+                try:
+                    # Convert passive user to full user
+                    new_user = await handlers.convert_passive_to_full_user(
+                        passive_user=existing_passive_user,
+                        user_id=user_id,
+                        username=username,
+                        first_name=first_name,
+                        last_name=last_name,
+                        phone=phone,
+                        photo_id=photo_id,
+                        lang_code=lang_code,
+                        repo=dep.get_repo()
+                    )
+                    
+                    log_conversation_step(user_id, "registration", "passive_user_converted_successfully")
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        f"✅ User takeover successful! Thanks for registering, {first_name}!\nYour display name: **{new_user.display_name}**",
+                        True,
+                        True
+                    )
+                    
+                    log_conversation_completed(user_id, "registration")
+                    return True
+                    
+                except Exception as e:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ Failed to take over existing user. Please try again or contact admin.",
+                        True,
+                        True
+                    )
+                    return False
+            else:
+                # User declined takeover
+                log_conversation_step(user_id, "registration", "user_declined_takeover")
+                await self.send_or_edit_message(user_id, "❌ You declined the user takeover. Ask an admin, if you need help.", message_takeover, remove_buttons=True)
+                return False
+        
+        # Create the user in the database (normal registration or after declining takeover)
         try:
             log_conversation_step(user_id, "registration", "creating_user_in_database")
             new_user = await handlers.register_user(
@@ -593,14 +774,10 @@ class ConversationManager:
             current_keyboard = None
             
             while True:          
-                button_event = await conv.wait_event(
-                    KeyboardManager.get_keyboard_callback_filter(user_id), 
-                    timeout=180
-                )
-                button_data = button_event.data.decode('utf8')
-
-                await button_event.answer()
-                                            
+                button_data = await self.receive_button_response(conv, user_id, 180)
+                
+                if button_data is None:
+                    break                   
                 if button_data == "group_submit":
                     await message.edit("Submitted", buttons=None)
                     submitted = True

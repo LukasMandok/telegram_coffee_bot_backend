@@ -88,7 +88,7 @@ class MessageManager:
                 user_id,
                 text,
                 buttons=keyboard_layout,
-                parse_mode='html'
+                # parse_mode='html'
             )
             message_model = MessageModel.from_telegram_message(telegram_message)
             

@@ -2,6 +2,9 @@ from typing import TYPE_CHECKING, Optional
 from fastapi import Depends, HTTPException
 
 from ..common.log import log_user_login_attempt, log_user_login_success, log_admin_verification
+from ..dependencies.dependencies import get_repo
+
+from ..common.log import log_database_error
 
 if TYPE_CHECKING:
     from ..database.base_repo import BaseRepository
@@ -39,18 +42,32 @@ async def check_password(password_input, repo: "BaseRepository"):
     return is_correct
     
 async def is_admin(id, repo: "BaseRepository"):
-    admins: list = await repo.get_admins() or []
-    is_admin_user = id in admins
+    """Check if a user is an admin by looking up their user_id in config."""
+    is_admin_user = await repo.is_user_admin(id)
     log_admin_verification(id, is_admin_user)
     
     return is_admin_user
+
+
+async def get_admin_list(repo: "BaseRepository"):
+    """Get the list of all admin user IDs."""
+    return await repo.get_admins()
+
+
+async def add_admin(user_id: int, repo: "BaseRepository"):
+    """Add a user to the admin list."""
+    return await repo.add_admin(user_id)
+
+
+async def remove_admin(user_id: int, repo: "BaseRepository"):
+    """Remove a user from the admin list."""
+    return await repo.remove_admin(user_id)
 
 
 
 async def register_user(user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en", repo: Optional["BaseRepository"] = None):
     """Register a new FullUser in the database with smart display name generation."""
     if repo is None:
-        from ..dependencies.dependencies import get_repo
         repo = get_repo()
     
     try:

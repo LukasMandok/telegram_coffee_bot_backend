@@ -53,14 +53,15 @@ class BaseUser(base.BaseUser, Document):
     updated_at: datetime = Field(default_factory=datetime.now)
     
     class Settings:
-        is_root = True
+        is_root = False  # Don't use shared collection
+        name = "base_users"  # This collection won't be used directly
 
 
 class TelegramUser(base.TelegramUser, BaseUser):
     user_id: Annotated[int, Indexed(unique=True)]
     username: Annotated[str, Indexed(unique=True)]
     last_login: datetime
-    phone: Annotated[Optional[str], Indexed()] = None  # Non-unique index for fast searches
+    phone: Annotated[Optional[str], Indexed(unique=True, sparse=True)] = None  # Unique but sparse to allow nulls
     photo_id: Optional[int] = None
         
     class Settings(BaseUser.Settings):
@@ -78,7 +79,7 @@ class FullUser(base.FullUser, TelegramUser):
     
 #---------------------------
 # *      Configuration
-#---------------------------
+#-----------------------------
     
 class Password(base.Password, Document):
     hash_value: str
