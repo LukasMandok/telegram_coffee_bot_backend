@@ -109,18 +109,6 @@ class CommandManager:
                 True
             )
 
-    async def handle_group_command(self, event: events.NewMessage.Event) -> None:
-        """
-        Handle the /group command for group selection.
-        
-        Args:
-            event: The NewMessage event containing /group command
-        """
-        user_id = event.sender_id
-        log_telegram_command(user_id, "/group", getattr(event, 'chat_id', None))
-        
-        # Use conversation manager for group selection
-        await self.conversation_manager.group_selection(user_id)
 
     async def handle_password_command(self, event: events.NewMessage.Event) -> None:
         """
@@ -192,6 +180,30 @@ class CommandManager:
         
         # Start the conversation for adding passive users
         await self.conversation_manager.add_passive_user_conversation(user_id)
+
+    @dep.verify_user
+    async def handle_group_command(self, event: events.NewMessage.Event) -> None:
+        """
+        Handle the /group command to start group coffee ordering.
+        
+        Args:
+            event: The NewMessage event containing /group command
+        """
+        user_id = event.sender_id
+        log_telegram_command(user_id, "/group", getattr(event, 'chat_id', None))
+
+        # Check if user already has an active conversation
+        if self.conversation_manager.has_active_conversation(user_id):
+            await self.api.message_manager.send_text(
+                user_id,
+                "❌ You already have an active conversation. Please finish it first or use /cancel.",
+                True,
+                True
+            )
+            return
+        
+        # Start the group selection conversation
+        await self.conversation_manager.group_selection(user_id)
 
     async def handle_digits_command(self, event: events.NewMessage.Event) -> None:
         """

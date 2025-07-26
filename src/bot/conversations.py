@@ -789,16 +789,16 @@ class ConversationManager:
                 
                 elif "group_plus" in button_data:
                     name = button_data.split("_")[2]
-                    self.api.group[name] += 1
+                    self.api.group_state.add_coffee(name)
                 elif "group_minus" in button_data:
                     name = button_data.split("_")[2]
-                    self.api.group[name] -= 1 if self.api.group[name] > 0 else 0
+                    self.api.group_state.remove_coffee(name)
                     
                 elif "group_next" in button_data:
-                    # TODO: replace this by the actual number of maximal pages
-                    self.api.current_page = min(self.api.current_page + 1, 2)
+                    total_pages = (len(self.api.group_state.members) - 1) // 10 + 1
+                    self.api.group_state.current_page = min(self.api.group_state.current_page + 1, total_pages - 1)
                 elif "group_prev" in button_data:
-                    self.api.current_page = max(self.api.current_page - 1, 0)
+                    self.api.group_state.current_page = max(self.api.group_state.current_page - 1, 0)
                     
                 group_keyboard = KeyboardManager.get_group_keyboard(self.api.group_state)
                 if current_keyboard != group_keyboard:
@@ -806,9 +806,9 @@ class ConversationManager:
                     await message.edit("Group View", buttons=group_keyboard)
                 
             if submitted:
-                total = sum(self.api.group.values())
+                total = self.api.group_state.get_total_coffees()
                 result_message = f"added **{total}** coffees:\n"
-                for name, value in self.api.group.items():
+                for name, value in self.api.group_state.members.items():
                     if value != 0:
                         result_message += f"\t{name}: {value}\n"
                 
