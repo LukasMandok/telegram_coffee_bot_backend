@@ -5,7 +5,11 @@ import logging
 import sys
 import os
 from typing import Optional, Dict, Any
-from decimal import Decimal
+
+# Simple request context tracking
+import uuid
+from contextvars import ContextVar
+
 
 # Custom TRACE level (lower than DEBUG)
 TRACE_LEVEL = 5
@@ -132,9 +136,7 @@ uvicorn_logger.setLevel(logging.WARNING)
 telethon_logger = logging.getLogger("telethon")
 telethon_logger.setLevel(logging.WARNING)
 
-# Simple request context tracking
-import uuid
-from contextvars import ContextVar
+
 
 request_id: ContextVar[Optional[str]] = ContextVar('request_id', default=None)
 current_user_id: ContextVar[Optional[int]] = ContextVar('current_user_id', default=None)
@@ -224,7 +226,7 @@ def log_admin_verification(user_id: int, is_admin: bool, level: Optional[int] = 
 
 # === COFFEE CARD MANAGEMENT ===
 
-def log_coffee_card_created(card_name: str, total_coffees: int, purchaser_id: int, cost_per_coffee: Decimal, level: int = logging.INFO):
+def log_coffee_card_created(card_name: str, total_coffees: int, purchaser_id: int, cost_per_coffee: float, level: int = logging.INFO):
     logger.log(level,
         "[COFFEE] New coffee card created: name='%s', total_coffees=%d, purchaser_id=%s, cost_per_coffee=€%.2f", 
         card_name, total_coffees, purchaser_id, cost_per_coffee
@@ -290,22 +292,22 @@ def log_coffee_session_cancelled(session_id: str, reason: str, level: int = logg
 
 # === DEBT MANAGEMENT ===
 
-def log_debt_created(debtor_id: int, creditor_id: int, amount: Decimal, card_name: str, level: int = logging.INFO):
+def log_debt_created(debtor_id: int, creditor_id: int, amount: float, card_name: str, level: int = logging.INFO):
     logger.log(level,
         "[DEBT] New debt created: debtor_id=%s owes creditor_id=%s €%.2f for card '%s'", 
         debtor_id, creditor_id, amount, card_name
     )
 
-def log_debt_updated(debt_id: str, old_amount: Decimal, new_amount: Decimal, level: int = logging.INFO):
+def log_debt_updated(debt_id: str, old_amount: float, new_amount: float, level: int = logging.INFO):
     logger.log(level, "[DEBT] Debt updated: debt_id=%s, old_amount=€%.2f, new_amount=€%.2f", debt_id, old_amount, new_amount)
 
-def log_payment_recorded(payment_id: str, payer_id: int, recipient_id: int, amount: Decimal, method: str, level: int = logging.INFO):
+def log_payment_recorded(payment_id: str, payer_id: int, recipient_id: int, amount: float, method: str, level: int = logging.INFO):
     logger.log(level,
         "[PAYMENT] Payment recorded: payment_id=%s, payer_id=%s paid recipient_id=%s €%.2f via %s", 
         payment_id, payer_id, recipient_id, amount, method
     )
 
-def log_debt_settled(debt_id: str, amount: Decimal, level: int = logging.INFO):
+def log_debt_settled(debt_id: str, amount: float, level: int = logging.INFO):
     logger.log(level, "[DEBT] Debt settled: debt_id=%s, amount=€%.2f", debt_id, amount)
 
 

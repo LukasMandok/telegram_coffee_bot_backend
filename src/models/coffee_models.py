@@ -5,9 +5,11 @@ from enum import Enum
 
 from beanie import Document, BackLink, after_event, Update, before_event
 from pydantic import Field, model_validator, field_validator
+# from bson import Decimal128
 
 from . import base_models as base
-from .beanie_models import TelegramUser
+from .beanie_models import TelegramUser, FullUser
+from ..bot.telethon_models import GroupState
 from ..exceptions.coffee_exceptions import InvalidCoffeeCountError, InsufficientCoffeeError
 from ..utils.typing_utils import Link
 
@@ -25,9 +27,9 @@ class CoffeeCard(Document):
     name: str = Field(..., description="Name/identifier of the coffee card")
     total_coffees: int = Field(..., ge=0, description="Total number of coffees on the card")
     remaining_coffees: int = Field(..., ge=0, description="Remaining coffees on the card")
-    cost_per_coffee: Decimal = Field(..., gt=0, description="Cost per coffee in EUR")
-    total_cost: Decimal = Field(..., gt=0, description="Total cost of the card")
-    purchaser: Link[TelegramUser] = Field(..., description="User who bought the card")
+    cost_per_coffee: float = Field(..., gt=0, description="Cost per coffee in EUR")
+    total_cost: float = Field(..., gt=0, description="Total cost of the card")
+    purchaser: Link[FullUser] = Field(..., description="User who bought the card")
     created_at: datetime = Field(default_factory=datetime.now)
     is_active: bool = Field(default=True, description="Whether the card is still active")
 
@@ -41,6 +43,19 @@ class CoffeeCard(Document):
         if 'total_coffees' in info.data and v > info.data['total_coffees']:
             raise ValueError('Remaining coffees cannot exceed total coffees')
         return v
+    
+    # @field_validator('cost_per_coffee', 'total_cost', mode='before')
+    # @classmethod
+    # def convert_decimal128_to_float(cls, v: Any) -> float:
+    #     """Convert MongoDB Decimal128 to Python float for backward compatibility."""
+    #     if isinstance(v, Decimal128):
+    #         return float(str(v))
+    #     elif isinstance(v, (int, float, str)):
+    #         return float(v)
+    #     else:
+    #         raise ValueError(f"Cannot convert {type(v)} to float")
+    
+
     
     def remove_coffee(self) -> bool:
         """Use one coffee from the card. Returns True if successful."""
@@ -113,16 +128,16 @@ class CoffeeSession(Document):
         """Get total coffees ordered in this session."""
         return sum(self.coffee_counts.values())
     
-    async def get_total_cost(self) -> Decimal:
+    async def get_total_cost(self) -> float:
         """Calculate total cost for this session."""
         await self.fetch_link(self.coffee_cards)
         
         if not self.coffee_cards:
-            return Decimal(0)
+            return 0.0
             
         # For multiple cards, use the cost from the first card (or implement more complex logic)
         cost_per_coffee = self.coffee_cards[0].cost_per_coffee # type: ignore
-        return Decimal(await self.get_total_coffees()) * cost_per_coffee
+        return float(await self.get_total_coffees()) * cost_per_coffee
 
     async def validate_coffee_counts(self, counts: Dict[int, int]) -> bool:
         """Validate coffee counts without persisting."""
@@ -149,7 +164,7 @@ class Payment(Document):
     
     payer: Link[TelegramUser] = Field(..., description="User making the payment")
     recipient: Link[TelegramUser] = Field(..., description="User receiving the payment")
-    amount: Decimal = Field(..., gt=0, description="Payment amount in EUR")
+    amount: float = Field(..., gt=0, description="Payment amount in EUR")
     payment_method: PaymentMethod = Field(default=PaymentMethod.MANUAL, description="Method of payment")
     
     # Related orders
@@ -168,7 +183,7 @@ class UserDebt(Document):
 
     debtor: Link[TelegramUser] = Field(..., description="User who owes money")
     creditor: Link[TelegramUser] = Field(..., description="User who is owed money")
-    total_amount: Decimal = Field(..., ge=0, description="Total debt amount")
+    total_amount: float = Field(..., ge=0, description="Total debt amount")
     coffee_card: Link[CoffeeCard] = Field(..., description="Card the debt is related to")
     
     # Track individual orders that contribute to this debt
