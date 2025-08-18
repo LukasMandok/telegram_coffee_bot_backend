@@ -20,6 +20,10 @@ from ..common.log import (
     log_conversation_completed, log_conversation_timeout, log_conversation_cancelled
 )
 
+if TYPE_CHECKING:
+    from ..api.telethon_api import TelethonAPI
+
+
 
 class ConversationCancelledException(Exception):
     """Exception raised when a conversation is cancelled by the user."""
@@ -45,10 +49,6 @@ class ConversationTimeout(BaseModel):
     registration: int = Field(default=60, gt=0, description="Registration timeout in seconds") 
     password: int = Field(default=45, gt=0, description="Password input timeout in seconds")
     group_selection: int = Field(default=180, gt=0, description="Group selection timeout in seconds")
-
-
-if TYPE_CHECKING:
-    from ..api.telethon_api import TelethonAPI
 
 
 def managed_conversation(conversation_type: str, timeout: int = 60):

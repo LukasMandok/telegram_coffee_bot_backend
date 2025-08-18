@@ -4,9 +4,12 @@ Utility decorators for the Telegram bot.
 This module contains useful decorators for common functionality
 like timeouts, error handling, and other cross-cutting concerns.
 """
+from typing import TYPE_CHECKING
 
 import asyncio
 from typing import Callable
+from functools import wraps
+
 
 
 def with_timeout(timeout_seconds: int):
