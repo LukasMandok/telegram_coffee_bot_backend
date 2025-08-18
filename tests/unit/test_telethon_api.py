@@ -17,7 +17,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         """Set up test fixtures before each test method."""
-        self.api_id = os.getenv("API_ID", "12345")
+        self.api_id = int(os.getenv("API_ID", "12345"))
         self.api_hash = os.getenv("API_HASH", "test_api_hash")
         self.bot_token = os.getenv("BOT_TOKEN", "test_bot_token")
         
@@ -33,7 +33,15 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
         self.mock_bot.add_event_handler = MagicMock()
         self.mock_bot.send_message = AsyncMock()
         self.mock_bot.run_until_disconnected = AsyncMock()
-        self.mock_telegram_client.return_value.start.return_value = self.mock_bot
+        
+        # Mock the start method to return the mock bot
+        mock_client_instance = MagicMock()
+        mock_client_instance.start = MagicMock(return_value=mock_client_instance)
+        self.mock_telegram_client.return_value = mock_client_instance
+        
+        # Make the client instance act as the bot for our tests
+        for attr in ['add_event_handler', 'send_message', 'run_until_disconnected']:
+            setattr(mock_client_instance, attr, getattr(self.mock_bot, attr))
 
     def tearDown(self):
         """Clean up patches after each test method."""
@@ -54,6 +62,11 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
         mock_event.message.message = message_text
         mock_event.message.text = message_text
         mock_event.text = message_text
+        
+        # Add id attribute for MessageModel creation
+        mock_event.message.id = 123
+        mock_event.message.from_id = sender_id
+        
         return mock_event
 
     def test_initialization(self):
@@ -134,7 +147,7 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
     async def test_exception_handler_verification_exception(self):
         """Test that VerificationException is properly handled."""
         telethon_api = self.create_telethon_api()
-        telethon_api.send_message = AsyncMock()
+        telethon_api.send_text = AsyncMock()
         
         # Create a mock event
         mock_event = self.create_mock_event()
@@ -152,7 +165,7 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
             await wrapped_handler(mock_event)
         
         # Verify send_message was called with error message
-        telethon_api.send_message.assert_called_once_with(
+        telethon_api.send_text.assert_called_once_with(
             12345, "Test verification error", True, True
         )
 
@@ -229,7 +242,10 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
         
         # Should be added to the same list
         self.assertEqual(len(telethon_api.latest_messages), 1)
-        self.assertEqual(len(telethon_api.latest_messages[0]), 2)
+        latest_list = telethon_api.latest_messages[0]
+        self.assertIsInstance(latest_list, list)
+        if isinstance(latest_list, list):  # Type guard for mypy
+            self.assertEqual(len(latest_list), 2)
         
         # Test adding regular message
         mock_message3 = MagicMock()
@@ -265,13 +281,25 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
         telethon_api = self.create_telethon_api()
         telethon_api.add_latest_message = MagicMock()
         
-        await telethon_api.send_message(12345, "Test message", vanish=True, conv=True)
+        # Mock the bot.send_message to return a proper message object
+        mock_telegram_message = MagicMock()
+        mock_telegram_message.id = 123
+        mock_telegram_message.text = "Test message"
+        mock_telegram_message.from_id = 12345
+        self.mock_bot.send_message.return_value = mock_telegram_message
+
+        result = await telethon_api.send_text(12345, "Test message", vanish=True, conv=True)
         
         # Verify bot.send_message was called
         self.mock_bot.send_message.assert_called_once_with(12345, "Test message")
         
         # Verify message was added to latest messages
         telethon_api.add_latest_message.assert_called_once()
+        
+        # Verify result is a MessageModel
+        self.assertIsNotNone(result)
+        if result:
+            self.assertEqual(result.text, "Test message")
 
     async def test_delete_oldest_message(self):
         """Test deleting the oldest message."""
@@ -304,7 +332,7 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_command_handler(self):
         """Test unknown command handler."""
         telethon_api = self.create_telethon_api()
-        telethon_api.send_message = AsyncMock()
+        telethon_api.send_text = AsyncMock()
         
         # Create mock event
         mock_event = self.create_mock_event(message_text="/unknown")
@@ -312,7 +340,7 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
         await telethon_api.unknown_command_handler(mock_event)
         
         # Verify send_message was called with unknown command message
-        telethon_api.send_message.assert_called_once_with(
+        telethon_api.send_text.assert_called_once_with(
             12345, "**/unknown** is an unknown command.", True, True
         )
 
@@ -323,7 +351,7 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
         mock_check_user.return_value = True
         
         telethon_api = self.create_telethon_api()
-        telethon_api.send_message = AsyncMock()
+        telethon_api.send_text = AsyncMock()
         
         # Create mock event
         mock_event = self.create_mock_event()
@@ -331,8 +359,8 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
         await telethon_api.start_command_handler(mock_event)
         
         # Verify send_message was called with already registered message
-        telethon_api.send_message.assert_called_once()
-        args = telethon_api.send_message.call_args[0]
+        telethon_api.send_text.assert_called_once()
+        args = telethon_api.send_text.call_args[0]
         self.assertEqual(args[0], 12345)
         self.assertIn("already registered", args[1])
 
@@ -404,7 +432,7 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
         
         telethon_api.latest_messages = [[mock_message1, mock_message2]]
         
-        # Just call the method - the AsyncMock delete methods should work properly
+        # Call the delete method
         await telethon_api.delete_oldest_message()
         
         # Verify both delete methods were called
@@ -445,7 +473,7 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
     async def test_digits_handler(self):
         """Test digits handler."""
         telethon_api = self.create_telethon_api()
-        telethon_api.send_message = AsyncMock()
+        telethon_api.send_text = AsyncMock()
         
         # Create mock event with digits
         mock_event = self.create_mock_event()
@@ -454,7 +482,7 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
         await telethon_api.digits(mock_event)
         
         # Verify send_message was called with digit response
-        telethon_api.send_message.assert_called_once_with(
+        telethon_api.send_text.assert_called_once_with(
             12345, "catches digits: 12345", True, True
         )
 
@@ -464,7 +492,7 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
         mock_verify_user.return_value = None  # No exception raised
         
         telethon_api = self.create_telethon_api()
-        telethon_api.send_message = AsyncMock()
+        telethon_api.send_text = AsyncMock()
         
         # Create mock event
         mock_event = self.create_mock_event()
@@ -475,7 +503,7 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
         mock_verify_user.assert_called_once_with(12345)
         
         # Verify send_message was called
-        telethon_api.send_message.assert_called_once_with(
+        telethon_api.send_text.assert_called_once_with(
             12345, "You are a registered user.", True, True
         )
 
@@ -485,7 +513,7 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
         mock_verify_admin.return_value = None  # No exception raised
         
         telethon_api = self.create_telethon_api()
-        telethon_api.send_message = AsyncMock()
+        telethon_api.send_text = AsyncMock()
         
         # Create mock event
         mock_event = self.create_mock_event()
@@ -496,7 +524,7 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
         mock_verify_admin.assert_called_once_with(12345)
         
         # Verify send_message was called
-        telethon_api.send_message.assert_called_once_with(
+        telethon_api.send_text.assert_called_once_with(
             12345, "You are a registered admin.", True, True
         )
 
@@ -518,8 +546,9 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
         telethon_api = self.create_telethon_api()
         telethon_api.add_latest_message = MagicMock()
         
-        # Mock keyboard layout
-        mock_keyboard = [["Yes", "No"]]
+        # Mock keyboard layout with proper Button objects
+        from telethon import Button
+        mock_keyboard = [[Button.inline("Yes", b"yes"), Button.inline("No", b"no")]]
         
         await telethon_api.send_keyboard(12345, "Test question", mock_keyboard, vanish=True, conv=True)
         
@@ -589,7 +618,7 @@ class TestTelethonAPI(unittest.IsolatedAsyncioTestCase):
         """Test sending a message without vanish option."""
         telethon_api = self.create_telethon_api()
         
-        await telethon_api.send_message(12345, "Test message", vanish=False, conv=False)
+        await telethon_api.send_text(12345, "Test message", vanish=False, conv=False)
         
         # Verify bot.send_message was called
         self.mock_bot.send_message.assert_called_once_with(12345, "Test message")
