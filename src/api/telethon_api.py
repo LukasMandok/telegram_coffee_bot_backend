@@ -40,11 +40,14 @@ from ..common.log import (
     log_telegram_message_sent, log_telegram_api_error, log_unexpected_error
 )
 
+from ..bot.message_manager import MessageManager
+from ..bot.commands import CommandManager
+from ..bot.group_keyboard_manager import GroupKeyboardManager
+from ..bot.session_manager import SessionManager
+
 # Type-only imports - only needed for type annotations
 if TYPE_CHECKING:
     from ..bot.keyboards import KeyboardManager
-    from ..bot.message_manager import MessageManager
-    from ..bot.commands import CommandManager
 
 # --- Pydantic Models for Type Safety and Data Validation ---
 # Models have been moved to bot/telethon_models.py for better organization
@@ -88,29 +91,11 @@ class TelethonAPI:
         
         log_telegram_bot_started(self.config.api_id)
 
-        # Initialize group state using Pydantic model
-        # TODO: move this to a place for test initialization
-        # TODO: this should be initialized from the database
-        # TODO: this should contain user objects instead of this list to be converted into a keyboard layout or a json dict to the RestAPI, but in a different Bot class
-        # IDEA: Isnt there also a GroupMember Class, which can be used for this?
-        self.group_state = GroupState(
-            members={
-                "Lukas":0, "Heiko":0, "Barnie":0, "Klaus":0, "Hans":0,
-                "David":0, "Jens":0, "Jürgen":0, "Ralf":0, "Rainer":0,
-                "Jörg":0, "Johannes":0, "Max":0, "Peter":0, "Karlo":0,
-                "Annie":0, "Marie":0, "Lena":0, "Lara":0, "Ruberta":0,
-                "Susi1":0, "Susi2":0, "Susi3":0, "Susi4":0, "Susi5":0,
-                "Marx1":0, "Marx2":0, "Marx3":0, "Marx4":0, "Marx5":0,
-                "Leon1":0, "Leon2":0, "Leon3":0, "Leon4":0, "Leon5":0
-            }
-        )
-
         # Initialize managers with runtime imports to avoid circular dependencies
-        from ..bot.message_manager import MessageManager
-        from ..bot.commands import CommandManager
-        
         self.message_manager = MessageManager(self.bot)
         self.command_manager = CommandManager(self)
+        self.group_keyboard_manager = GroupKeyboardManager(self)
+        self.session_manager = SessionManager(self)
 
         # Register all handlers
         self._register_handlers()

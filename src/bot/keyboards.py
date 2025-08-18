@@ -45,62 +45,63 @@ class KeyboardManager:
             ],
         ]
     
-    @staticmethod
-    def get_group_keyboard(group_state: "GroupState") -> Any:
-        """
-        Generate a paginated group coffee ordering keyboard.
+    # @staticmethod
+    # def get_group_keyboard(group_state: "GroupState", current_page: int = 0) -> Any:
+    #     """
+    #     Generate a paginated group coffee ordering keyboard.
         
-        Creates an inline keyboard for coffee ordering with:
-        - Member names with +/- buttons for coffee counts
-        - Pagination controls for large groups (>15 members)
-        - Submit button (when orders > 0) and Cancel button
+    #     Creates an inline keyboard for coffee ordering with:
+    #     - Member names with +/- buttons for coffee counts
+    #     - Pagination controls for large groups (>15 members)
+    #     - Submit button (when orders > 0) and Cancel button
         
-        Args:
-            group_state: Current state of group coffee ordering
+    #     Args:
+    #         group_state: Current state of group coffee ordering
+    #         current_page: Current page for pagination (overrides group_state.current_page if provided)
             
-        Returns:
-            List of button rows for the inline keyboard
-        """
-        keyboard_group = []
-        total = group_state.get_total_coffees()
+    #     Returns:
+    #         List of button rows for the inline keyboard
+    #     """
+    #     keyboard_group = []
+    #     total = group_state.get_total_coffees()
         
-        items = list(group_state.members.items())
-        pages = len(items) // 15
+    #     items = list(group_state.members.items())
+    #     pages = len(items) // 15
         
-        i_start = group_state.current_page * 15
-        i_end = ((group_state.current_page + 1) * 15) if (group_state.current_page < pages) else None
+    #     i_start = current_page * 15
+    #     i_end = ((current_page + 1) * 15) if (current_page < pages) else None
         
-        for name, value in items[i_start : i_end]:
-            keyboard_group.append([
-                Button.inline(str(name), "group_name"),
-                Button.inline(str(value), "group_value"),
-                Button.inline("+", f"group_plus_{name}"),
-                Button.inline("-", f"group_minus_{name}")
-            ])
+    #     for name, value in items[i_start : i_end]:
+    #         keyboard_group.append([
+    #             Button.inline(str(name), "group_name"),
+    #             Button.inline(str(value), "group_value"),
+    #             Button.inline("+", f"group_plus_{name}"),
+    #             Button.inline("-", f"group_minus_{name}")
+    #         ])
             
-        if pages > 0:
-            navigation_buttons = []
-            if group_state.current_page > 0:
-                navigation_buttons.append(
-                    Button.inline("prev", "group_prev")
-                )
+    #     if pages > 0:
+    #         navigation_buttons = []
+    #         if current_page > 0:
+    #             navigation_buttons.append(
+    #                 Button.inline("prev", "group_prev")
+    #             )
                 
-            if group_state.current_page < pages:
-                navigation_buttons.append(
-                    Button.inline("next", "group_next")
-                )
+    #         if current_page < pages:
+    #             navigation_buttons.append(
+    #                 Button.inline("next", "group_next")
+    #             )
     
-            if navigation_buttons:
-                keyboard_group.append(navigation_buttons)
+    #         if navigation_buttons:
+    #             keyboard_group.append(navigation_buttons)
             
-        keyboard_group.append([
-            Button.inline("Cancel", "group_cancel")
-        ])
+    #     keyboard_group.append([
+    #         Button.inline("Cancel", "group_cancel")
+    #     ])
         
-        if total > 0:
-            keyboard_group[-1].append(Button.inline(f"Submit ({total})", "group_submit"))
+    #     if total > 0:
+    #         keyboard_group[-1].append(Button.inline(f"Submit ({total})", "group_submit"))
         
-        return keyboard_group
+    #     return keyboard_group
     
     @staticmethod
     def get_pagination_keyboard(current_page: int, total_pages: int) -> Any:

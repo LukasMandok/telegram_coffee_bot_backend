@@ -1,6 +1,5 @@
-from typing import Optional, List, Dict, TYPE_CHECKING, Sequence, Self
+from typing import Optional, List, Dict, TYPE_CHECKING, Sequence, Self, Any
 from datetime import datetime
-from decimal import Decimal
 from enum import Enum
 
 from beanie import Document, BackLink, after_event, Update, before_event
@@ -93,6 +92,7 @@ class CoffeeOrder(Document):
 class CoffeeSession(Document):
     """Represents a group coffee ordering session."""
     initiator: Link[TelegramUser] = Field(..., description="User who started the session")
+    submitted_by: Optional[Link[TelegramUser]] = Field(None, description="User who submitted the session")
     
     # Support multiple coffee cards for large sessions
     coffee_cards: List[Link[CoffeeCard]] = Field(default_factory=list, description="Cards used for this session")
@@ -105,9 +105,10 @@ class CoffeeSession(Document):
     completed_date: Optional[datetime] = Field(None, description="When the session was completed")
     is_active: bool = Field(default=True)
     
+    # Integrated group state with coffee counts
+    group_state: GroupState = Field(default_factory=lambda: GroupState(members={}), description="Group state with member coffee counts")
+    
     # Generated orders from this session
-    coffee_counts: Dict[int, int] = Field(default_factory=dict, description="Coffee count per user (keyed by user_id)")
-
     orders: List[Link[CoffeeOrder]] = Field(default_factory=list)
         
     class Settings:
@@ -126,7 +127,7 @@ class CoffeeSession(Document):
 
     async def get_total_coffees(self) -> int:
         """Get total coffees ordered in this session."""
-        return sum(self.coffee_counts.values())
+        return self.group_state.get_total_coffees()
     
     async def get_total_cost(self) -> float:
         """Calculate total cost for this session."""
@@ -139,7 +140,7 @@ class CoffeeSession(Document):
         cost_per_coffee = self.coffee_cards[0].cost_per_coffee # type: ignore
         return float(await self.get_total_coffees()) * cost_per_coffee
 
-    async def validate_coffee_counts(self, counts: Dict[int, int]) -> bool:
+    async def validate_coffee_counts(self, counts: Dict[str, int]) -> bool:
         """Validate coffee counts without persisting."""
         if any(count < 0 for count in counts.values()):
             raise InvalidCoffeeCountError("Coffee counts cannot be negative")
@@ -156,6 +157,14 @@ class CoffeeSession(Document):
         """Add a coffee card to this session."""
         if coffee_card not in self.coffee_cards:
             self.coffee_cards.append(coffee_card)
+    
+    def add_coffee_for_member(self, member_name: str) -> None:
+        """Add one coffee for a group member."""
+        self.group_state.add_coffee(member_name)
+    
+    def remove_coffee_for_member(self, member_name: str) -> None:
+        """Remove one coffee for a group member."""
+        self.group_state.remove_coffee(member_name)
     
 
 # TODO: check
@@ -200,7 +209,11 @@ class UserDebt(Document):
     async def get_user_debts(cls, user_id: int) -> Sequence["UserDebt"]:
         """Get all debts for a specific user (as debtor)."""
         # Find the user first, then query by the Link reference
-        user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
+        # Try FullUser first, then TelegramUser
+        # Import here to avoid circular imports
+        user = await FullUser.find_one(FullUser.user_id == user_id)
+        if not user:
+            user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
         if not user:
             return []
         return await cls.find(cls.debtor == user, fetch_links=True).to_list()
@@ -209,7 +222,11 @@ class UserDebt(Document):
     async def get_user_credits(cls, user_id: int) -> Sequence["UserDebt"]:
         """Get all amounts owed to a specific user (as creditor)."""
         # Find the user first, then query by the Link reference
-        user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
+        # Try FullUser first, then TelegramUser
+        # Import here to avoid circular imports
+        user = await FullUser.find_one(FullUser.user_id == user_id)
+        if not user:
+            user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
         if not user:
             return []
         return await cls.find(cls.creditor == user, fetch_links=True).to_list()

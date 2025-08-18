@@ -8,13 +8,19 @@ authentication, and group selection processes.
 import asyncio
 from typing import TYPE_CHECKING, Dict, Any, Callable, Optional
 from functools import wraps
-from pydantic import BaseModel, Field
-from telethon import events
+from pydantic import BaseModel, Field, ValidationError
+import pydantic_core
+from telethon import events, Button
 from telethon.tl.custom.conversation import Conversation
 from pymongo.errors import DuplicateKeyError
+
 from ..handlers import handlers
+from ..handlers.coffee import create_coffee_card
+from ..handlers.paypal import create_paypal_link, validate_paypal_link
 from ..dependencies import dependencies as dep
 from .keyboards import KeyboardManager
+
+            
 from ..common.log import (
     log_telegram_callback, log_conversation_started, log_conversation_step, log_unexpected_error,
     log_conversation_completed, log_conversation_timeout, log_conversation_cancelled
@@ -746,81 +752,131 @@ class ConversationManager:
     
     async def group_selection(self, user_id: int) -> None:
         """
-        Start the group selection conversation with a user.
+        Start the group selection conversation with a user using integrated session management.
         
         This handles the interactive coffee ordering interface with:
-        - Dynamic keyboard updates based on user selections
-        - Pagination for large member lists
-        - Real-time coffee count updates
-        - Submit/cancel functionality
+        - Session-based group management with integrated GroupState
+        - Real-time synchronization across all participants
+        - Per-participant pagination state
+        - Dynamic keyboard updates via GroupKeyboardManager
         
         Args:
             user_id: Telegram user ID for the conversation
         """
+        try:
+            # Use SessionManager to start or join a session
+            session, is_new_session = await self.api.session_manager.start_or_join_session(user_id)
+            
+            if is_new_session:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "☕ **New coffee session started!**\n"
+                    "Other users can join by typing `/group`",
+                    True, True
+                )
+            else:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "👥 **Joined existing coffee session!**\n"
+                    f"Session has {len(session.participants)} participants",
+                    True, True
+                )
+            
+        except ValueError as e:
+            await self.api.message_manager.send_text(
+                user_id,
+                f"❌ Failed to start/join session: {str(e)}",
+                True, True
+            )
+            return
+        except Exception as e:
+            await self.api.message_manager.send_text(
+                user_id,
+                f"❌ Unexpected error: {str(e)}",
+                True, True
+            )
+            return
+        
+        # Start the interactive group selection interface
         async with self.api.bot.conversation(user_id) as conv:
             chat = await conv.get_input_chat()
-                        
-            message = await self.api.message_manager.send_keyboard(
-                user_id, 
-                "Group View", 
-                KeyboardManager.get_group_keyboard(self.api.group_state), 
-                True, 
-                True
+            
+            # TODO: maybe use the session_manager insteaad?
+            # Use GroupKeyboardManager to create and send the keyboard
+            message = await self.api.group_keyboard_manager.create_and_send_keyboard(
+                user_id, session, initial_page=0
             )
-            if message is None:
+            
+            if not message:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ Failed to create group selection interface",
+                    True, True
+                )
                 return
                 
             submitted = False
-            current_keyboard = None
-            
-            while True:          
+            canceled = False
+
+            while True:
                 button_data = await self.receive_button_response(conv, user_id, 180)
                 
                 if button_data is None:
                     break                   
                 if button_data == "group_submit":
-                    await message.edit("Submitted", buttons=None)
+                    await message.edit("✅ **Submitted!**", buttons=None)
                     submitted = True
                     break
                 elif button_data == "group_cancel":
-                    # TODO: reset the group to initial state and set current_page to 0
-                    await message.edit("Canceled", buttons=None)
+                    await message.edit("❌ **Cancelled**", buttons=None)
+                    canceled = True
                     break
                 
                 elif "group_plus" in button_data:
                     name = button_data.split("_")[2]
-                    self.api.group_state.add_coffee(name)
+                    # Update session and sync all keyboards
+                    await self.api.session_manager.update_session_member_coffee(
+                        name, 'add'
+                    )
                 elif "group_minus" in button_data:
                     name = button_data.split("_")[2]
-                    self.api.group_state.remove_coffee(name)
+                    # Update session and sync all keyboards
+                    await self.api.session_manager.update_session_member_coffee(
+                        name, 'remove'
+                    )
                     
                 elif "group_next" in button_data:
-                    total_pages = (len(self.api.group_state.members) - 1) // 10 + 1
-                    self.api.group_state.current_page = min(self.api.group_state.current_page + 1, total_pages - 1)
-                elif "group_prev" in button_data:
-                    self.api.group_state.current_page = max(self.api.group_state.current_page - 1, 0)
-                    
-                group_keyboard = KeyboardManager.get_group_keyboard(self.api.group_state)
-                if current_keyboard != group_keyboard:
-                    current_keyboard = group_keyboard
-                    await message.edit("Group View", buttons=group_keyboard)
+                    await self.api.group_keyboard_manager.handle_pagination(
+                        session, user_id, 'next'
+                    )
+                elif "group_prev" in button_data:  
+                    await self.api.group_keyboard_manager.handle_pagination(
+                        session, user_id, 'prev'
+                    )
+                
+            # Unregister the keyboard when conversation ends
+            self.api.group_keyboard_manager.unregister_keyboard(user_id, str(session.id))
                 
             if submitted:
-                total = self.api.group_state.get_total_coffees()
-                result_message = f"added **{total}** coffees:\n"
-                for name, value in self.api.group_state.members.items():
-                    if value != 0:
-                        result_message += f"\t{name}: {value}\n"
-                
-                await self.api.message_manager.send_text(user_id, result_message, False)
+                # Use SessionManager to complete the session
+                await self.api.session_manager.complete_session(session, user_id)
                 log_conversation_completed(user_id, "group_selection")
                 
-                # TODO: do something with content of self.group
-                # This is where you'd call the coffee business logic
-                # from ..bot.commands import process_telegram_keyboard_response
-                # await process_telegram_keyboard_response(user_id, card_id, self.api.group)
+            elif canceled:
+                log_conversation_cancelled(user_id, "group_selection", "user_cancelled")
+                # Just unregister this user's keyboard, don't affect the session
+
                 
-            # TODO: reset group to initial state
+                # TODO: finalize implementation of cancel
+                
+                # remove user as participant from active session
+                try:
+                    await session.remove_participant(user_id)
+                except ValueError as e:
+                    print(f"Failed to remove participant {user_id} from session: {e}")
+                    
+                #
+                
 
     @managed_conversation("add_passive_user", 60)
     async def add_passive_user_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:

@@ -113,32 +113,42 @@ class BotConfiguration(BaseModel):
         return self.timeouts.registration
 
 
+class GroupMemberData(BaseModel):
+    """Represents a group member with coffee count and user ID."""
+    coffee: int = Field(default=0, description="Number of coffees ordered")
+    user_id: Optional[int] = Field(default=None, description="Telegram user ID if known")
+
 class GroupState(BaseModel):
     """Represents the current state of the coffee group ordering system."""
-    members: Dict[str, int] = Field(default_factory=dict, description="Member names and coffee counts")
-    current_page: int = Field(default=0, ge=0, description="Current pagination page")
-    current_group: Optional[str] = Field(default=None, description="Currently selected group name")
+    members: Dict[str, GroupMemberData] = Field(default_factory=dict, description="Member names and their data")
+    
+    def add_member(self, member_name: str, user_id: Optional[int] = None) -> None:
+        """Add a new member to the group with zero coffee count."""
+        if member_name not in self.members:
+            self.members[member_name] = GroupMemberData(coffee=0, user_id=user_id)
+        else:
+            raise ValueError(f"Member {member_name} already exists in the group")
     
     def get_total_coffees(self) -> int:
         """Calculate total coffee orders across all members."""
-        return sum(self.members.values())
+        return sum(member.coffee for member in self.members.values())
     
     def reset_orders(self) -> None:
         """Reset all coffee orders to zero."""
-        for member in self.members:
-            self.members[member] = 0
+        for member_data in self.members.values():
+            member_data.coffee = 0
             
     def add_coffee(self, member_name: str) -> bool:
         """Add a coffee for a member. Returns True if successful."""
         if member_name in self.members:
-            self.members[member_name] += 1
+            self.members[member_name].coffee += 1
             return True
         return False
     
     def remove_coffee(self, member_name: str) -> bool:
         """Remove a coffee for a member. Returns True if successful."""
-        if member_name in self.members and self.members[member_name] > 0:
-            self.members[member_name] -= 1
+        if member_name in self.members and self.members[member_name].coffee > 0:
+            self.members[member_name].coffee -= 1
             return True
         return False
     
@@ -172,17 +182,15 @@ class GroupState(BaseModel):
             Dictionary with group statistics and information
         """
         total_coffees = self.get_total_coffees()
-        members_with_orders = sum(1 for count in self.members.values() if count > 0)
+        members_with_orders = sum(1 for member_data in self.members.values() if member_data.coffee > 0)
         
         return {
             "total_members": len(self.members),
             "total_coffees": total_coffees,
             "members_with_orders": members_with_orders,
-            "current_page": self.current_page,
-            "current_group": self.current_group,
             "members_summary": [
-                {"name": name, "coffee_count": count}
-                for name, count in self.members.items()
-                if count > 0
+                {"name": name, "coffee_count": member_data.coffee, "user_id": member_data.user_id}
+                for name, member_data in self.members.items()
+                if member_data.coffee > 0
             ]
         }
