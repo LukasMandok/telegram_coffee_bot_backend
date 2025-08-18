@@ -11,6 +11,7 @@ from src.api.telethon_api import TelethonAPI
 from src.routers import users, admin, coffee
 from src.dependencies.dependencies import get_repo
 from src.common.log import log_app_startup, log_app_shutdown, log_database_connected, log_database_connection_failed, log_database_error
+from src.temp_debug_setup import run_debug_setup_if_enabled
 # from .middlewares.middleware import SecurityMiddleware
 
 ### connecting bot 
@@ -30,6 +31,10 @@ async def lifespan(app: FastAPI):
     try:
         await mongodb.connect(settings.DATABASE_URL)
         log_database_connected(settings.DATABASE_URL)
+        
+        # Run debug setup after database connection is established
+        await run_debug_setup_if_enabled()
+        
     except Exception as e:
         log_database_connection_failed(str(e))
         raise e

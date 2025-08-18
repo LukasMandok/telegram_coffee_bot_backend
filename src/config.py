@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     _SERVICE_ACCOUNT_PRIVATE_KEY: str = PrivateAttr()
     PROJECT_ID: str
     
+    DEBUG_MODE: bool = False  # Enable debug mode for development/testing
+    
     @property
     def SERVICE_ACCOUNT_PRIVATE_KEY(self):
         return self._SERVICE_ACCOUNT_PRIVATE_KEY.replace('\\n', '\n')
