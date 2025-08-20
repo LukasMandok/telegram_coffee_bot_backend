@@ -79,56 +79,31 @@ def managed_conversation(conversation_type: str, timeout: int = 60):
             pass
     """
     def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        async def wrapper(self, user_id: int, *args, **kwargs) -> Any:
+        async def wrapper(self, user_id: int, *args, **kwargs):
             # Create and register conversation state
-            conversation_state = self.create_conversation_state(
-                user_id=user_id,
-                conversation_type=conversation_type,
-                timeout=timeout
-            )
-            
+            state = self.create_conversation_state(user_id, conversation_type, timeout)
             try:
-                # Create Telethon conversation object
+                # Open a Telethon conversation and pass it into the wrapped function
                 async with self.api.bot.conversation(user_id) as conv:
-                    # Update state with conv object
-                    conversation_state.conv = conv
-                    
-                    print(f"Started managed conversation '{conversation_type}' for user {user_id}")
-                    
-                    # Call the decorated function with conv and state
-                    result = await func(self, user_id, conv, conversation_state, *args, **kwargs)
-                    
-                    print(f"Completed managed conversation '{conversation_type}' for user {user_id}")
-                    return result
-            
-            except ConversationCancelledException:
-                # Handle conversation cancellation via /cancel command
-                print(f"Conversation '{conversation_type}' was cancelled by user {user_id}")
-                return False
-                
-            except asyncio.CancelledError:
-                # Handle conversation cancellation (e.g., from /cancel command)
-                print(f"Conversation '{conversation_type}' was cancelled for user {user_id}")
-                # await self.api.message_manager.send_text(
-                #     user_id,
-                #     "❌ Conversation cancelled.",
-                #     True,
-                #     True
-                # )
-                # log_conversation_cancelled(user_id, conversation_type, "conversation_cancelled")
-                return False
-                
+                    state.conv = conv
+                    try:
+                        result = await func(self, user_id, conv, state, *args, **kwargs)
+                        return result
+                    except ConversationCancelledException:
+                        # Let the caller handle cancellation messaging if needed
+                        log_conversation_cancelled(user_id, conversation_type)
+                        return False
             except Exception as e:
-                # Handle other errors
-                print(f"Error in managed conversation '{conversation_type}' for user {user_id}: {e}")
+                # Log unexpected errors and return False to the caller
                 log_unexpected_error(f"managed_conversation_{conversation_type}", str(e), {"user_id": user_id})
                 return False
-                
             finally:
-                # Always clean up conversation state
-                self.remove_conversation_state(user_id)
-                
+                # Clean up conversation state in all cases
+                try:
+                    self.remove_conversation_state(user_id)
+                except Exception:
+                    pass
+
         return wrapper
     return decorator
 
@@ -547,8 +522,7 @@ class ConversationManager:
         print(f"DEBUG: Checking for passive user with name: '{first_name}' '{last_name}'")
         existing_passive_user = await handlers.find_passive_user_by_name(
             first_name=first_name,
-            last_name=last_name,
-            repo=dep.get_repo()
+            last_name=last_name
         )
         print(f"DEBUG: Found existing passive user: {existing_passive_user}")
         
@@ -585,8 +559,7 @@ class ConversationManager:
                         last_name=last_name,
                         phone=phone,
                         photo_id=photo_id,
-                        lang_code=lang_code,
-                        repo=dep.get_repo()
+                        lang_code=lang_code
                     )
                     
                     log_conversation_step(user_id, "registration", "passive_user_converted_successfully")
@@ -624,8 +597,7 @@ class ConversationManager:
                 last_name=last_name,
                 phone=phone,
                 photo_id=photo_id,
-                lang_code=lang_code,
-                repo=dep.get_repo()
+                lang_code=lang_code
             )
             
             log_conversation_step(user_id, "registration", "user_created_successfully")
@@ -710,7 +682,7 @@ class ConversationManager:
                 password = password_event.message.message.strip()
                 await password_event.message.delete()  # Delete password for security
                 
-                authenticated = await handlers.check_password(password, dep.get_repo())
+                authenticated = await handlers.check_password(password)
                 if authenticated:
                     await self.api.message_manager.send_text(
                         chat_id, 
@@ -738,7 +710,6 @@ class ConversationManager:
                         return False
                     
             except TimeoutError:
-                from ..common.log import log_conversation_timeout
                 log_conversation_timeout(chat_id, "registration", "password_authentication")
                 await self.api.message_manager.send_text(
                     chat_id, 
@@ -927,8 +898,7 @@ class ConversationManager:
         # Create user
         new_user = await handlers.create_passive_user(
             first_name=first_name,
-            last_name=last_name,
-            repo=dep.get_repo()
+            last_name=last_name
         )
         
         await self.api.message_manager.send_text(

@@ -287,7 +287,7 @@ class BeanieRepository(BaseRepository):
         new_user_display_name = f"{first_name} {last_name[:letters_needed]}."
         return new_user_display_name
 
-    async def create_full_user(self, user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en"):
+    async def create_full_user(self, user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en") -> models.FullUser:
         """Create a new FullUser with smart display name generation."""
         try:
             print(f"DEBUG: Creating full user with phone: {phone} (type: {type(phone)})")
@@ -320,7 +320,7 @@ class BeanieRepository(BaseRepository):
             log_database_error("create_full_user", str(e), {"user_id": user_id, "username": username})
             raise
 
-    async def create_passive_user(self, first_name: str, last_name: Optional[str] = None):
+    async def create_passive_user(self, first_name: str, last_name: Optional[str] = None) -> models.PassiveUser:
         """Create a new PassiveUser with smart display name generation."""
         try:
             print(f"DEBUG: Creating passive user: {first_name} {last_name or ''}")
@@ -345,16 +345,16 @@ class BeanieRepository(BaseRepository):
             log_database_error("create_passive_user", str(e), {"first_name": first_name, "last_name": last_name})
             raise
 
-    async def find_passive_user_by_name(self, first_name: str, last_name: Optional[str] = None):
+    async def find_passive_user_by_name(self, first_name: str, last_name: Optional[str] = None) -> models.PassiveUser | None:
         """Find a passive user by first name and last name."""
         try:
             print(f"DEBUG: Searching for passive user: first_name='{first_name}', last_name='{last_name}'")
             
             # Debug: List all passive users
-            all_passive_users = await models.PassiveUser.find_all().to_list()
-            print(f"DEBUG: All passive users in database:")
-            for user in all_passive_users:
-                print(f"  - first_name='{user.first_name}', last_name='{user.last_name}', display_name='{user.display_name}'")
+            # all_passive_users = await models.PassiveUser.find_all().to_list()
+            # print(f"DEBUG: All passive users in database:")
+            # for user in all_passive_users:
+            #     print(f"  - first_name='{user.first_name}', last_name='{user.last_name}', display_name='{user.display_name}'")
             
             # Simple approach: find by first_name and last_name directly
             result = await models.PassiveUser.find(
@@ -362,14 +362,13 @@ class BeanieRepository(BaseRepository):
                 models.PassiveUser.last_name == last_name
             ).first_or_none()
             
-            print(f"DEBUG: Search result: {result}")
             return result
         except Exception as e:
             log_database_error("find_passive_user_by_name", str(e), {"first_name": first_name, "last_name": last_name})
             return None
 
     # TODO: this has to ckecked later, that the depbts and all other information correctly transfer.
-    async def convert_passive_to_full_user(self, passive_user, user_id: int, username: str, first_name: Optional[str] = None, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en"):
+    async def convert_passive_to_full_user(self, passive_user, user_id: int, username: str, first_name: Optional[str] = None, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en") -> models.FullUser:
         """Convert a PassiveUser to a FullUser by transferring data and deleting the passive user."""
         try:
             print(f"DEBUG: Converting passive user '{passive_user.display_name}' to full user")
@@ -406,8 +405,7 @@ class BeanieRepository(BaseRepository):
             
             # Delete the passive user
             await passive_user.delete()
-            
-            print(f"Successfully converted passive user to full user: {new_full_user.display_name}")
+
             log_user_registration(user_id, username)
             return new_full_user
             

@@ -2,8 +2,8 @@ from typing import TYPE_CHECKING, Optional
 from fastapi import Depends, HTTPException
 
 from ..common.log import log_user_login_attempt, log_user_login_success, log_admin_verification
-from ..dependencies.dependencies import get_repo
-
+from ..dependencies.dependencies import get_repo, repo
+from .paypal import create_paypal_link, validate_paypal_link
 from ..common.log import log_database_error
 
 if TYPE_CHECKING:
@@ -18,8 +18,8 @@ async def get_all_users(repo: "BaseRepository"):
     
     return users
 
-
-async def check_user(user_id: int, repo: "BaseRepository"):
+@repo
+async def check_user(repo: "BaseRepository", user_id: int):
     log_user_login_attempt(user_id)
     user = await repo.find_user_by_id(user_id)
     
@@ -30,8 +30,9 @@ async def check_user(user_id: int, repo: "BaseRepository"):
         return True
     else:
         return False
-    
-async def check_password(password_input, repo: "BaseRepository"):
+
+@repo
+async def check_password(repo: "BaseRepository", password_input):
     print(f"handlers: check_password - input: '{password_input}'")
     password = await repo.get_password()
     print(f"handlers: check_password - retrieved password object: {password}")
@@ -43,34 +44,32 @@ async def check_password(password_input, repo: "BaseRepository"):
     
     return is_correct
     
-async def is_admin(id, repo: "BaseRepository"):
+@repo
+async def is_admin(repo: "BaseRepository", id):
     """Check if a user is an admin by looking up their user_id in config."""
     is_admin_user = await repo.is_user_admin(id)
     log_admin_verification(id, is_admin_user)
     return is_admin_user
 
 
+@repo
 async def get_admin_list(repo: "BaseRepository"):
     """Get the list of all admin user IDs."""
     return await repo.get_admins()
 
-
-async def add_admin(user_id: int, repo: "BaseRepository"):
+@repo
+async def add_admin(repo: "BaseRepository", user_id: int):
     """Add a user to the admin list."""
     return await repo.add_admin(user_id)
 
-
-async def remove_admin(user_id: int, repo: "BaseRepository"):
+@repo
+async def remove_admin(repo: "BaseRepository", user_id: int):
     """Remove a user from the admin list."""
     return await repo.remove_admin(user_id)
 
-
-
-async def register_user(user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en", repo: Optional["BaseRepository"] = None):
+@repo
+async def register_user(repo: "BaseRepository", user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en"):
     """Register a new FullUser in the database with smart display name generation."""
-    if repo is None:
-        repo = get_repo()
-    
     try:
         # Create the full user in the database with smart display name
         new_user = await repo.create_full_user(
@@ -88,12 +87,9 @@ async def register_user(user_id: int, username: str, first_name: str, last_name:
         log_database_error("register_user", str(e), {"user_id": user_id})
         raise
 
-
-async def create_passive_user(first_name: str, last_name: Optional[str] = None, repo: Optional["BaseRepository"] = None):
+@repo
+async def create_passive_user(repo: "BaseRepository", first_name: str, last_name: Optional[str] = None):
     """Create a new PassiveUser in the database with smart display name generation."""
-    if repo is None:
-        repo = get_repo()
-    
     try:
         # Create the passive user in the database with smart display name
         new_user = await repo.create_passive_user(
@@ -106,24 +102,18 @@ async def create_passive_user(first_name: str, last_name: Optional[str] = None, 
         log_database_error("create_passive_user", str(e), {"first_name": first_name, "last_name": last_name})
         raise
 
-
-async def find_passive_user_by_name(first_name: str, last_name: Optional[str] = None, repo: Optional["BaseRepository"] = None):
+@repo
+async def find_passive_user_by_name(repo: "BaseRepository", first_name: str, last_name: Optional[str] = None):
     """Find a passive user by name."""
-    if repo is None:
-        repo = get_repo()
-    
     try:
         return await repo.find_passive_user_by_name(first_name, last_name)
     except Exception as e:
         log_database_error("find_passive_user_by_name", str(e), {"first_name": first_name, "last_name": last_name})
         return None
 
-
-async def convert_passive_to_full_user(passive_user, user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en", repo: Optional["BaseRepository"] = None):
+@repo
+async def convert_passive_to_full_user(repo: "BaseRepository", passive_user, user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en"):
     """Convert a PassiveUser to a FullUser."""
-    if repo is None:
-        repo = get_repo()
-    
     try:
         return await repo.convert_passive_to_full_user(
             passive_user=passive_user,

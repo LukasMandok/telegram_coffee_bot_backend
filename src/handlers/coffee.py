@@ -14,6 +14,8 @@ from ..models.coffee_models import (
     CoffeeSession, PaymentMethod
 )
 
+from ..dependencies.dependencies import repo
+
 from ..bot.group_state_helpers import initialize_group_state_from_db
 from ..models.beanie_models import TelegramUser, FullUser
 from ..exceptions.coffee_exceptions import (
@@ -32,6 +34,7 @@ from ..common.log import (
 if TYPE_CHECKING:
     from ..database.base_repo import BaseRepository
 
+@repo 
 async def create_coffee_card(
     repo: "BaseRepository",
     name: str,

@@ -6,15 +6,26 @@ from fastapi import Header
 
 from ..handlers import handlers, exceptions
 from ..database.beanie_repo import BeanieRepository
+from ..database.base_repo import BaseRepository
 
-if TYPE_CHECKING:
-    from ..database.base_repo import BaseRepository
 
 
 
 def get_repo() -> "BaseRepository":
     return BeanieRepository()
 
+def repo(func: Callable) -> Callable:
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        # If a BaseRepository instance is already the first positional arg,
+        # call the wrapped function with the original args. Otherwise obtain
+        # a repo from get_repo() and inject it as the first argument.
+        if args and isinstance(args[0], BaseRepository):
+            return await func(*args, **kwargs)
+        else:
+            return await func(get_repo(), *args, **kwargs)
+    
+    return wrapper
 
 # api_key_query = APIKeyQuery(name="token", auto_error=False)
 # q: what does this do?
@@ -22,13 +33,13 @@ def get_repo() -> "BaseRepository":
 
 
 async def _verify_user(id: Union[Annotated[int, Header()], int]):
-    verified = await handlers.check_user(id, get_repo())
+    verified = await handlers.check_user(id)
     
     if not verified:
         raise exceptions.VerificationException("You are not a registered user. Please register and try again.")
     
 async def _verify_admin(id: Union[Annotated[int, Header()], int]):
-    verified = await handlers.is_admin(id, get_repo())
+    verified = await handlers.is_admin(id)
     
     if not verified:
         raise exceptions.VerificationException("YOu do not have the necessary admin rights to use this option.")

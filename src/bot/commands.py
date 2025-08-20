@@ -11,9 +11,8 @@ from ..models.beanie_models import TelegramUser
 from .conversations import ConversationManager
 from ..handlers import handlers
 from ..dependencies import dependencies as dep
-from ..handlers.coffee_handlers import (
-    start_coffee_session,
-    update_session_coffee_counts
+from ..handlers.coffee import (
+    get_user_active_session           
 )
 from ..exceptions.coffee_exceptions import (
     InvalidCoffeeCountError, 
@@ -62,7 +61,7 @@ class CommandManager:
         log_telegram_command(user_id, "/start", getattr(event, 'chat_id', None))
 
         # Check if user is already registered
-        if await handlers.check_user(user_id, dep.get_repo()):
+        if await handlers.check_user(user_id):
             await self.api.message_manager.send_text(
                 user_id, 
                 "There is nothing more to do. You are already registered.", 
@@ -125,7 +124,7 @@ class CommandManager:
         try:
             password = message.split(" ")[1]
             
-            password_correct = await handlers.check_password(password, dep.get_repo())
+            password_correct = await handlers.check_password(password)
             if password_correct:
                 log_user_login_success(user_id)
             else:

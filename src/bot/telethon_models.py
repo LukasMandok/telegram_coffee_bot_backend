@@ -5,11 +5,11 @@ This module contains Pydantic models that are specifically related to Telegram
 functionality, message handling, and bot configuration.
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, TYPE_CHECKING
 from pydantic import BaseModel, Field, field_validator
-from .conversations import ConversationTimeout
+from ..common.configuration import ConversationTimeout
 
-
+# TODO: use this instead of GroupMemberData
 class GroupMember(BaseModel):
     """Represents a coffee group member with their coffee count.
     
