@@ -909,3 +909,248 @@ class ConversationManager:
         )
         
         return True
+
+    async def setup_paypal_link_subconversation(self, conv: Conversation, user_id: int, user, show_current: bool = True) -> bool:
+        """
+        Reusable subconversation to set up or change PayPal link for a user.
+        
+        Args:
+            conv: Active conversation
+            user_id: User ID
+            user: FullUser object
+            show_current: Whether to show current link and offer change/keep options
+            
+        Returns:
+            True if PayPal link was set up successfully, False otherwise
+        """
+        # If user has existing link and we should show it, offer options
+        if user.paypal_link and show_current:
+            from telethon import Button
+            
+            current_link_text = (
+                f"💳 **Current PayPal Link**\n\n"
+                f"Your current PayPal link: {user.paypal_link}\n\n"
+                f"What would you like to do?"
+            )
+            
+            keyboard = [
+                [Button.inline("🔄 Change Link", b"change_link")],
+                [Button.inline("✅ Keep Current", b"keep_current")],
+                [Button.inline("❌ Cancel", b"cancel")]
+            ]
+            
+            data, message = await self.send_keyboard_and_wait_response(
+                conv, user_id, current_link_text, keyboard, 60
+            )
+            
+            if data is None or data == "cancel":
+                await self.send_or_edit_message(user_id, "❌ PayPal setup cancelled.", message, remove_buttons=True)
+                return False
+            
+            if data == "keep_current":
+                await self.send_or_edit_message(
+                    user_id, 
+                    f"✅ Keeping your current PayPal link: {user.paypal_link}", 
+                    message, 
+                    remove_buttons=True
+                )
+                return True
+            
+            # If "change_link" is selected, continue to setup
+            await self.send_or_edit_message(
+                user_id, 
+                "🔄 **Changing PayPal Link**\n\nLet's set up your new PayPal link.", 
+                message, 
+                remove_buttons=True
+            )
+        else:
+            # Show setup message
+            if user.paypal_link:
+                setup_message = "💳 **PayPal Link Update**\n\nLet's update your PayPal link."
+            else:
+                setup_message = (
+                    "💳 **PayPal Setup Required**\n\n"
+                    "To proceed, we need your PayPal information for payments."
+                )
+            
+            await self.api.message_manager.send_text(
+                user_id, 
+                f"{setup_message}\n\n"
+                "Please provide either:\n"
+                "• Your PayPal username (e.g., `LukasMandok`)\n"
+                "• Your full PayPal.me link (e.g., `https://paypal.me/LukasMandok`)\n\n"
+                "ℹ️ Don't know your PayPal.me link? Check: https://www.paypal.com/myaccount/profile/",
+                True, True
+            )
+        
+        max_attempts = 3
+        attempts = 0
+        
+        while attempts < max_attempts:
+            paypal_event = await self.send_text_and_wait_message(
+                conv, user_id, "Enter your PayPal username or PayPal.me link:", 60
+            )
+            paypal_input = paypal_event.message.message.strip()
+
+            if not paypal_input:
+                await self.api.message_manager.send_text(
+                    user_id, "❌ PayPal information is required to proceed.", True, True
+                )
+                return False
+
+            try:
+                # Validate & format the PayPal input BEFORE assigning to the model or saving
+                formatted = create_paypal_link(paypal_input)
+                is_valid = validate_paypal_link(formatted)
+
+                if not is_valid:
+                    # Treat as validation failure; do NOT assign or save
+                    raise ValueError("PayPal link is not valid or doesn't exist")
+
+                # Only assign and save when validated
+                user.paypal_link = formatted
+                await user.save()
+
+                await self.api.message_manager.send_text(
+                    user_id, f"✅ PayPal link validated and saved: {user.paypal_link}", True, True
+                )
+                return True
+
+            except Exception:
+                # Field validation failed or other error; do NOT persist invalid value
+                attempts += 1
+                remaining = max_attempts - attempts
+
+                if remaining > 0:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ The PayPal link you entered is not valid or does not exist.\n\n"
+                        "Please check:\n"
+                        "• Is your username correct?\n"
+                        "• Does your PayPal.me link exist?\n"
+                        "• Visit: https://www.paypal.com/myaccount/profile/\n\n"
+                        f"You have {remaining} attempt(s) remaining.",
+                        True, True
+                    )
+                else:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ Maximum attempts reached. PayPal setup failed.\n"
+                        "Please try again later or contact support.",
+                        True, True
+                    )
+                    return False
+        
+        return False
+
+
+
+    @managed_conversation("create_coffee_card", 120)
+    async def create_coffee_card_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
+        """Conversation to create a new coffee card with PayPal link setup."""
+        
+        # Get the user (must be FullUser to create coffee cards)
+        user = await dep.get_repo().find_user_by_id(user_id)
+        if not user or not hasattr(user, 'display_name'):
+            await self.api.message_manager.send_text(
+                user_id, "❌ Only registered users with display names can create coffee cards.", True, True
+            )
+            return False
+        
+        # Check if user has PayPal link, if not, set it up
+        if not user.paypal_link:
+            paypal_setup_success = await self.setup_paypal_link_subconversation(conv, user_id, user, show_current=False)
+            if not paypal_setup_success:
+                return False
+        
+        # Initialize default values
+        state.data.update({
+            'total_coffees': 100,
+            'cost_per_coffee': 0.8,
+            'card_name': f"{user.display_name}'s Coffee Card"
+        })
+        
+        # Show initial overview and get confirmation
+        while True:
+            total_cost = state.data['total_coffees'] * state.data['cost_per_coffee']
+            
+            overview_text = (
+                f"☕ **Create New Coffee Card**\n\n"
+                f"**Total Coffees:** {state.data['total_coffees']}\n"
+                f"**Cost per Coffee:** {state.data['cost_per_coffee']:.2f} €\n"
+                f"**Total Cost:** {total_cost:.2f} €\n\n"
+                f"**PayPal Link:** {user.paypal_link}\n\n"
+                f"Confirm creation?"
+            )
+            
+            keyboard = [
+                [Button.inline("✅ Yes, Create Card", b"confirm_create")],
+                [Button.inline("📝 Adjust Coffees", b"adjust_coffees"), Button.inline("💰 Adjust Price", b"adjust_price")],
+                [Button.inline("❌ Cancel", b"cancel")]
+            ]
+            
+            data, message = await self.send_keyboard_and_wait_response(
+                conv, user_id, overview_text, keyboard, 60
+            )
+            
+            if data is None or data == "cancel":
+                await self.send_or_edit_message(user_id, "❌ Coffee card creation cancelled.", message, remove_buttons=True)
+                return False
+            
+            if data == "confirm_create":
+                break
+            
+            elif data == "adjust_coffees":
+                await self.send_or_edit_message(user_id, "Enter new number of coffees:", message, remove_buttons=True)
+                
+                coffees_event = await self.receive_message(conv, user_id, 60)
+                try:
+                    new_coffees = int(coffees_event.message.message.strip())
+                    if new_coffees <= 0:
+                        raise ValueError("Must be positive")
+                    state.data['total_coffees'] = new_coffees
+                except ValueError:
+                    await self.api.message_manager.send_text(
+                        user_id, "❌ Invalid number. Using previous value.", True, True
+                    )
+            
+            elif data == "adjust_price":
+                await self.send_or_edit_message(user_id, "Enter new price per coffee in €:", message, remove_buttons=True)
+                
+                price_event = await self.receive_message(conv, user_id, 60)
+                try:
+                    new_price = float(price_event.message.message.strip())
+                    if new_price <= 0:
+                        raise ValueError("Must be positive")
+                    state.data['cost_per_coffee'] = new_price
+                except ValueError:
+                    await self.api.message_manager.send_text(
+                        user_id, "❌ Invalid price. Using previous value.", True, True
+                    )
+        
+        # Create the coffee card
+        try:            
+            card = await create_coffee_card(
+                name=state.data['card_name'],
+                total_coffees=state.data['total_coffees'],
+                cost_per_coffee=state.data['cost_per_coffee'],
+                purchaser_id=user_id
+            )
+            
+            final_message = (
+                f"✅ **Coffee Card Created!**\n\n"
+                f"**Total Coffees:** {card.total_coffees}\n"
+                f"**Cost per Coffee:** {card.cost_per_coffee:.2f} €\n"
+                f"**Total Cost:** {card.total_cost:.2f} €\n\n"
+                f"💳 **Payment:** {user.paypal_link}\n\n"
+                f"Your coffee card is now active and ready to use!"
+            )
+            
+            await self.send_or_edit_message(user_id, final_message, message, remove_buttons=True)
+            return True
+            
+        except Exception as e:
+            await self.send_or_edit_message(
+                user_id, f"❌ Failed to create coffee card: {str(e)}", message, remove_buttons=True
+            )
+            return False

@@ -1,4 +1,4 @@
-from typing import Annotated, Optional, List, TYPE_CHECKING
+from typing import Annotated, Optional, List, Dict, TYPE_CHECKING
 
 from beanie import Document, Indexed, Link
 from pydantic import Field, field_validator
@@ -7,6 +7,7 @@ from datetime import datetime
 
 from . import base_models as base 
 from ..common.helpers import hash_password, compare_password, is_valid_hash
+from ..handlers.paypal import create_paypal_link, validate_paypal_link
 
 """
 ### IDEAS
@@ -72,6 +73,37 @@ class TelegramUser(base.TelegramUser, BaseUser):
         
 class FullUser(base.FullUser, TelegramUser):
     display_name: Annotated[str, Indexed(unique=True, sparse=True)]  # Required unique display name, sparse allows TelegramUser to have null
+    paypal_link: Optional[str] = Field(None, description="PayPal payment link for coffee card purchases")
+    
+    # TODO: check if I can keep using this validator, or if it does not make any sense
+    # as it also writes invalide data to the database
+    @field_validator('paypal_link', mode='before')
+    @classmethod
+    def validate_and_format_paypal_link(cls, v: Optional[str]) -> Optional[str]:
+        """
+        Validate and format PayPal link automatically.
+        
+        This validator:
+        1. Formats various PayPal input formats into proper paypal.me links
+        2. Validates that the PayPal link actually exists
+        3. Makes PayPal handling consistent across the application
+        """
+        if not v:
+            return None
+            
+        v = v.strip()
+        if not v:
+            return None
+        
+        # Format the PayPal link using the existing logic
+        formatted_link = create_paypal_link(v)
+        
+        # Validate the link exists (synchronous validation)
+        is_valid = validate_paypal_link(formatted_link)
+        if not is_valid:
+            raise ValueError(f"PayPal link is not valid or doesn't exist: {formatted_link}")
+        
+        return formatted_link
     
     class Settings(TelegramUser.Settings):
         name = "full_users"
@@ -114,6 +146,8 @@ class Config(base.Config, Document):
     password: Link[Password]
     admins: List[int]
     
+    user_settings: Dict[int, Link["UserSettings"]] = Field(default_factory=dict, description="List of user settings links")
+    
     async def get_password(self) -> Optional[Password]:
         print("Config - get_password")
         # Instead of using Link, query Password collection directly
@@ -134,3 +168,10 @@ class Config(base.Config, Document):
     class Settings:
         name = "config"
         
+class UserSettings(Document):
+    """Stores user-specific settings."""
+    
+    class Settings:
+        name = "user_settings"
+        use_cache = False  # Disable caching for user settings
+        is_root = False  # Don't use shared collection

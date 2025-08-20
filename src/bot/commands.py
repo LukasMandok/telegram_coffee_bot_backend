@@ -204,6 +204,76 @@ class CommandManager:
         # Start the group selection conversation
         await self.conversation_manager.group_selection(user_id)
 
+    @dep.verify_user
+    async def handle_new_coffee_card_command(self, event: events.NewMessage.Event) -> None:
+        """
+        Handle the /new_coffee_card command to create a new coffee card.
+        
+        Args:
+            event: The NewMessage event containing /new_coffee_card command
+        """
+        user_id = event.sender_id
+        log_telegram_command(user_id, "/new_coffee_card", getattr(event, 'chat_id', None))
+
+        # Check if user already has an active conversation
+        if self.conversation_manager.has_active_conversation(user_id):
+            await self.api.message_manager.send_text(
+                user_id,
+                "❌ You already have an active conversation. Please finish it first or use /cancel.",
+                True,
+                True
+            )
+            return
+        
+        # Start the coffee card creation conversation
+        await self.conversation_manager.create_coffee_card_conversation(user_id)
+
+    @dep.verify_user
+    async def handle_paypalme_command(self, event: events.NewMessage.Event) -> None:
+        """
+        Handle the /paypalme command to set up or change PayPal link.
+        
+        Args:
+            event: The NewMessage event containing /paypalme command
+        """
+        user_id = event.sender_id
+        log_telegram_command(user_id, "/paypalme", getattr(event, 'chat_id', None))
+
+        # Check if user already has an active conversation
+        if self.conversation_manager.has_active_conversation(user_id):
+            await self.api.message_manager.send_text(
+                user_id,
+                "❌ You already have an active conversation. Please finish it first or use /cancel.",
+                True,
+                True
+            )
+            return
+        
+        # Get the user (must be FullUser to have PayPal links)
+        user = await dep.get_repo().find_user_by_id(user_id)
+        # Register conversation state so other handlers (unknown commands) ignore input
+        self.conversation_manager.create_conversation_state(user_id, "paypalme", timeout=120)
+        try:
+            # Start a conversation and use the PayPal setup subconversation directly
+            async with self.api.bot.conversation(user_id) as conv:
+                setup_success = await self.conversation_manager.setup_paypal_link_subconversation(
+                    conv, user_id, user, show_current=True
+                )
+                
+                if not setup_success:
+                    await self.api.message_manager.send_text(
+                        user_id, 
+                        "❌ PayPal setup was not completed.\n"
+                        "You can try again anytime with `/paypalme`", 
+                        True, True
+                    )
+        finally:
+            # Ensure the conversation state is removed
+            try:
+                self.conversation_manager.remove_conversation_state(user_id)
+            except Exception:
+                pass
+
     async def handle_digits_command(self, event: events.NewMessage.Event) -> None:
         """
         Handle digit messages (temporary handler for testing).
@@ -241,3 +311,116 @@ class CommandManager:
             print(f"Active conversation: {active_conversations}")
         
         await self.api.message_manager.send_text(sender_id, f"**{message}** is an unknown command.", True, True)
+
+    @dep.verify_user
+    async def handle_complete_session_command(self, event: events.NewMessage.Event) -> None:
+        """
+        Handle the /complete_session command to finalize a coffee session.
+        
+        Args:
+            event: The NewMessage event containing /complete_session command
+        """
+        user_id = event.sender_id
+        log_telegram_command(user_id, "/complete_session", getattr(event, 'chat_id', None))
+        
+        try:
+            # session = await get_user_active_session(user_id)
+            session = await self.api.session_manager.get_active_session()
+            
+            if session is None:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ You don't have an active coffee session.",
+                    True, True
+                )
+                return
+            
+            completed = await self.api.session_manager.complete_session(user_id)
+            # Complete the session (store user_id before completing)
+            if not completed:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ No active session to complete.",
+                    True, True
+                )
+                return
+                        
+            # Notify all participants who have made orders
+            for name, group_member_data in session.group_state.members.items():
+                # todo: also check, that they were not part of the session (as a participant)
+                if group_member_data.coffee > 0 and group_member_data.user_id is not None:
+                    await session.fetch_link(session.initiator)
+                    initiator_display_name = session.initiator.display_name # type: ignore
+                    
+                    await self.api.message_manager.send_text(
+                        group_member_data.user_id,
+                        f"{initiator_display_name} has ordered {group_member_data.coffee} coffees for you.\n",
+                        True, True
+                    )
+            
+            # # Also notify the initiator if they haven't made an order
+            # if initiator_user_id not in notified_users:
+            #     await self.api.message_manager.send_text(
+            #         initiator_user_id,
+            #         f"✅ **Session Completed!**\n"
+            #         f"Total: {total_coffees} coffees\n"
+            #         f"Session ID: `{completed_session.id}`",
+            #         True, True
+            #     )
+                
+        except Exception as e:
+            await self.api.message_manager.send_text(
+                user_id,
+                f"❌ Failed to complete session: {str(e)}",
+                True, True
+            )
+
+    @dep.verify_user
+    async def handle_cancel_session_command(self, event: events.NewMessage.Event) -> None:
+        """
+        Handle the /cancel_session command to cancel a coffee session.
+        
+        Args:
+            event: The NewMessage event containing /cancel_session command
+        """
+        user_id = event.sender_id
+        log_telegram_command(user_id, "/cancel_session", getattr(event, 'chat_id', None))
+        
+        try:            
+            session = await get_user_active_session(user_id)
+            
+            if session is None:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ You don't have an active coffee session.",
+                    True, True
+                )
+                return
+            
+            # Cancel the session
+            await self.api.session_manager.cancel_session()
+            
+            # Notify the user who cancelled
+
+            await self.api.message_manager.send_text(
+                user_id,
+                f"❌ **Session Cancelled**\n"
+                f"Coffee session `{session.id}` has been cancelled.",
+                True, True
+            )
+            
+            # Also notify the user who cancelled (in case they have no orders)
+            if user_id not in session.coffee_counts:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    f"❌ **Session Cancelled**\n"
+                    f"Coffee session `{session.id}` has been cancelled.",
+                    True, True
+                )
+                
+        except Exception as e:
+            await self.api.message_manager.send_text(
+                user_id,
+                f"❌ Failed to cancel session: {str(e)}",
+                True, True
+            )
