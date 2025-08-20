@@ -102,6 +102,27 @@ class SessionManager:
         # TODO: notify telegram users about the new session, and that they can join.
         
         await session.insert()
+
+        # Notify all group members that a new session has been started and
+        # that someone is entering coffees; send silently where possible.
+        try:
+            initiator_user_id = getattr(initiator, 'user_id', None)
+            for name, member in group_state.members.items():
+                if member.user_id is None:
+                    continue
+                # don't notify the initiator about their own session
+                if initiator_user_id is not None and member.user_id == initiator_user_id:
+                    continue
+                # send silently and don't vanish so users keep the message
+                await self.api.message_manager.send_text(
+                    member.user_id,
+                    f"{initiator_display_name} started a new coffee session and is entering coffees. You can join with /group.",
+                    vanish=True,
+                    conv=False,
+                    silent=True
+                )
+        except Exception as e:
+            print(f"❌ Failed to notify members about new session: {e}")
         
         return session
 
@@ -305,28 +326,37 @@ class SessionManager:
         
         # Notify all participants with active keyboards
         session_id = str(self.session.id)
+        # Capture list of participant ids before cleaning up keyboards
+        participant_ids = []
         if session_id in self.api.group_keyboard_manager.active_keyboards:
-            for participant_user_id in self.api.group_keyboard_manager.active_keyboards[session_id].keys():
-                if participant_user_id == submitted_by_user_id:
-                    # Send completion message to submitter
-                    await self.api.message_manager.send_text(
-                        participant_user_id,
-                        f"✅ **Session Completed!**\n"
-                        f"Your order has been submitted and the session is now closed.\n"
-                        f"Total: {total_coffees} coffees\n"
-                        f"Session ID: `{self.session.id}`",
-                        True, True
-                    )
-                else:
-                    # Send notification to other participants
-                    await self.api.message_manager.send_text(
-                        participant_user_id,
-                        f"🔒 **Session Completed by Another User**\n"
-                        f"The coffee session has been finalized.\n"
-                        f"Total: {total_coffees} coffees\n"
-                        f"Session ID: `{self.session.id}`",
-                        True, True
-                    )
+            participant_ids = list(self.api.group_keyboard_manager.active_keyboards[session_id].keys())
+
+        # Close all keyboards immediately for this session so UI is consistent
+        await self.api.group_keyboard_manager.cleanup_session_keyboards(session_id)
+
+        # Send notifications to participants captured earlier
+        for participant_user_id in participant_ids:
+            if participant_user_id == submitted_by_user_id:
+                # Send completion message to submitter (persistent)
+                await self.api.message_manager.send_text(
+                    participant_user_id,
+                    f"✅ **Session Completed!**\n"
+                    f"Your order has been submitted and the session is now closed.\n"
+                    f"Total: {total_coffees} coffees\n"
+                    f"Session ID: `{self.session.id}`",
+                    vanish=True,
+                    conv=True,
+                    silent=False
+                )
+            else:
+                # Send notification to other participants (silent)
+                await self.api.message_manager.send_text(
+                    participant_user_id,
+                    f"🔒 **Session Completed by Another User**\n",
+                    vanish=True,
+                    conv=False,
+                    silent=True
+                )
 
         # Build summary using central helper and send to all FullUsers
         try:
@@ -336,10 +366,13 @@ class SessionManager:
             for user in full_users:
                 user_id_to_notify = user.user_id
                 try:
+                    # send summary persistently so it doesn't vanish and silently
                     await self.api.message_manager.send_text(
                         user_id_to_notify,
                         summary_text,
-                        True, True
+                        vanish=False,
+                        conv=False,
+                        silent=True
                     )
                 except Exception as e:
                     print(f"❌ Failed to send session summary to FullUser {user_id_to_notify}: {e}")
@@ -376,9 +409,10 @@ class SessionManager:
                 await self.api.message_manager.send_text(
                     participant_user_id,
                     f"❌ **Session Cancelled**\n"
-                    f"The coffee session has been cancelled.\n"
-                    f"Session ID: `{self.session.id}`",
-                    True, True
+                    f"The coffee session has been cancelled.\n",
+                    vanish=True,
+                    conv=False,
+                    silent=True
                 )
         
         # Clean up keyboards
@@ -445,7 +479,7 @@ class SessionManager:
         participant_count = len(self.session.participants)
         
         summary = (
-            f"📊 **Session Summary:**\n"
+            f"📊 **Coffee Order:**\n"
             f"• Participants: {participant_count}\n"
             f"• Total Coffees: {total_coffees}\n\n"
         )

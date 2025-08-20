@@ -34,8 +34,9 @@ class MessageManager:
         self, 
         user_id: int, 
         text: str, 
-        vanish: bool = True, 
-        conv: bool = False
+    vanish: bool = True, 
+    conv: bool = False,
+    silent: bool = False
     ) -> Optional["MessageModel"]:
         """
         Send a text message to a user and optionally add it to latest_messages.
@@ -50,7 +51,7 @@ class MessageManager:
             The sent message object or None if failed
         """
         try:
-            telegram_message = await self.bot.send_message(user_id, text)
+            telegram_message = await self.bot.send_message(user_id, text, silent=silent)
             message_model = MessageModel.from_telegram_message(telegram_message)
             
             if vanish:
@@ -67,8 +68,9 @@ class MessageManager:
         user_id: int,
         text: str,
         keyboard_layout: Any,
-        vanish: bool = True,
-        conv: bool = False
+    vanish: bool = True,
+    conv: bool = False,
+    silent: bool = False
     ) -> Optional["MessageModel"]:
         """
         Send a keyboard to the user and optionally add it to latest_messages.
@@ -88,6 +90,7 @@ class MessageManager:
                 user_id,
                 text,
                 buttons=keyboard_layout,
+                silent=silent,
                 # parse_mode='html'
             )
             message_model = MessageModel.from_telegram_message(telegram_message)
