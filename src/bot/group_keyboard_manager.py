@@ -69,9 +69,11 @@ class GroupKeyboardManager:
         i_end = ((current_page + 1) * 15) if (current_page < pages) else None
         
         for name, value in items[i_start : i_end]:
+            # value is a GroupMember; display only the coffee_count
+            coffee_count = getattr(value, 'coffee_count', 0)
             keyboard_group.append([
                 Button.inline(str(name), "group_name"),
-                Button.inline(str(value), "group_value"),
+                Button.inline(str(coffee_count), "group_value"),
                 Button.inline("+", f"group_plus_{name}"),
                 Button.inline("-", f"group_minus_{name}")
             ])
@@ -122,7 +124,6 @@ class GroupKeyboardManager:
         message = await self.api.message_manager.send_keyboard(
             user_id, 
             f"☕ **Group Coffee Order**\n"
-            f"Session: `{session.id}`\n"
             f"Total: {await session.get_total_coffees()} coffees\n"
             "Select coffee quantities for each person:", 
             keyboard, 
@@ -205,7 +206,6 @@ class GroupKeyboardManager:
                     participant_user_id,
                     active_keyboard.message_id,
                     f"☕ **Group Coffee Order**\n"
-                    f"Session: `{session.id}`\n"
                     f"Total: {await session.get_total_coffees()} coffees\n"
                     "Select coffee quantities for each person:",
                     buttons=keyboard
@@ -281,7 +281,6 @@ class GroupKeyboardManager:
                 user_id,
                 active_keyboard.message_id,
                 f"☕ **Group Coffee Order**\n"
-                f"Session: `{session.id}`\n"
                 f"Total: {await session.get_total_coffees()} coffees\n"
                 "Select coffee quantities for each person:",
                 buttons=keyboard

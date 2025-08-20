@@ -8,7 +8,7 @@ instead of using hardcoded member lists.
 from typing import Dict, List, Union
 from ..models.beanie_models import FullUser, PassiveUser
 from ..dependencies.dependencies import get_repo
-from .telethon_models import GroupState, GroupMemberData
+from .telethon_models import GroupState, GroupMember
 
 # TODO: implement log states here
 
@@ -26,12 +26,12 @@ async def initialize_group_state_from_db() -> GroupState:
     repo = get_repo()
     all_users = await repo.find_all_users() or []
     
-    # Create members dictionary with display_name as key and GroupMemberData as value
+    # Create members dictionary with display_name as key and GroupMember as value
     members = {}
     for user in all_users:
         if hasattr(user, 'display_name') and user.display_name:
-            user_id = getattr(user, 'user_id', None) if hasattr(user, 'user_id') else None
-            members[user.display_name] = GroupMemberData(coffee=0, user_id=user_id)
+            user_id = user.user_id if hasattr(user, 'user_id') else None
+            members[user.display_name] = GroupMember(name=user.display_name, user_id=user_id, coffee_count=0)
         else:
             raise ValueError(f"User {user.id} has no display name")
     
@@ -69,11 +69,11 @@ async def refresh_group_state_members(group_state: GroupState) -> GroupState:
     new_members = {}
     for display_name in current_db_users:
         if display_name in group_state.members:
-            # Keep existing coffee count
+            # Keep existing GroupMember object
             new_members[display_name] = group_state.members[display_name]
         else:
-            # New user, start with 0 coffees
-            new_members[display_name] = 0
+            # New user, create GroupMember with 0 coffees
+            new_members[display_name] = GroupMember(name=display_name, user_id=None, coffee_count=0)
     
     # Update the group state
     old_count = len(group_state.members)
@@ -95,7 +95,7 @@ def get_users_with_orders(group_state: GroupState) -> Dict[str, int]:
     Returns:
         Dict[str, int]: Dictionary of display_name -> coffee_count for users with orders
     """
-    return {name: member_data.coffee for name, member_data in group_state.members.items() if member_data.coffee > 0}
+    return {name: member_data.coffee_count for name, member_data in group_state.members.items() if member_data.coffee_count > 0}
 
 
 def get_group_summary(group_state: GroupState) -> str:

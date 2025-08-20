@@ -13,7 +13,8 @@ from ..exceptions.coffee_exceptions import (
     SessionNotActiveError, InvalidCoffeeCountError, InsufficientCoffeeError
 )
 from ..common.log import (
-    log_coffee_session_started, log_coffee_session_participant_added
+    log_coffee_session_started, log_coffee_session_participant_added,
+    log_coffee_session_participant_removed
 )
 from ..bot.group_state_helpers import initialize_group_state_from_db
 from .telethon_models import GroupState
@@ -67,32 +68,30 @@ class SessionManager:
     async def start_coffee_session(
         self,
         initiator_id: int,
-        coffee_card_ids: List[str],
+        coffee_cards: List[CoffeeCard],
         group_state: GroupState
     ) -> CoffeeSession:
-        """Start a new coffee ordering session."""
+        """Start a new coffee ordering session.
+
+        Args:
+            initiator_id: Telegram user id of the initiator
+            coffee_cards: list of CoffeeCard documents (preferably already fetched)
+            group_state: pre-initialized GroupState
+        """
+
+        # Look up the initiator: try FullUser first (registered), then TelegramUser
+        initiator = await FullUser.find_one(FullUser.user_id == initiator_id)
+        if not initiator:
+            initiator = await TelegramUser.find_one(TelegramUser.user_id == initiator_id)
+
+        # Accept a list of CoffeeCard documents (recommended) or an empty list
+        cards = coffee_cards or []
         
-        initiator = await TelegramUser.get(initiator_id)
-        cards = await CoffeeCard.find({"_id": {"$in": coffee_card_ids}}).to_list()
-
-        if not initiator or not cards:
-            raise ValueError("Initiator or coffee card not found")
-        
-        # Check if there's already an active session
-        session = await self.get_active_session()
-        if session:
-            log_coffee_session_started(str(session.id), initiator.user_id, [card.name for card in cards])
-            return session
-
-        # Filter out depleted cards
-        for card in cards[:]:  # Use slice to avoid modifying list while iterating
-            if card.remaining_coffees < 1:
-                from ..common.log import log_coffee_card_depleted
-                log_coffee_card_depleted(str(card.id), card.name)
-                cards.remove(card)
-
         if not cards:
-            raise ValueError("No valid coffee cards available.")
+            raise ValueError("No coffee cards available to start a session")
+
+        # Derive display name for notifications when display_name missing
+        initiator_display_name = getattr(initiator, 'display_name', None) or getattr(initiator, 'first_name', None) or str(getattr(initiator, 'user_id', ''))
         
         session = CoffeeSession(
             initiator=initiator,
@@ -106,7 +105,7 @@ class SessionManager:
         
         return session
 
-    async def add_participant_to_session(
+    async def add_participant(
         self,
         user: TelegramUser,
     ) -> None:
@@ -115,14 +114,33 @@ class SessionManager:
             raise SessionNotActiveError()
 
         if user in self.session.participants:
-            log_coffee_session_participant_added(str(self.session.id), user.user_id, getattr(user, 'username', None))
+            log_coffee_session_participant_added(str(self.session.id), user.user_id, False)
             return
 
         self.session.participants.append(user)
         await self.session.save()
-        log_coffee_session_participant_added(str(self.session.id), user.user_id, getattr(user, 'username', None))
+        log_coffee_session_participant_added(str(self.session.id), user.user_id, True)
 
     
+    async def remove_participant( self, user_id: int ) -> bool:
+        user = await FullUser.find_one(FullUser.user_id == user_id)
+        if not user:
+            user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
+        if not user:
+            raise ValueError(f"User {user_id} not found in database")
+        
+        if not self.session or not self.session.is_active:
+            raise SessionNotActiveError()
+        
+        if user not in self.session.participants:
+            log_coffee_session_participant_removed(str(self.session.id), user.user_id, False)
+            return False
+        else:
+            self.session.participants.remove(user)
+            log_coffee_session_participant_removed(str(self.session.id), user.user_id, True)
+            return True
+        
+            
     async def start_or_join_session(self, user_id: int) -> Tuple[CoffeeSession, bool]:
         """
         Start a new session or join existing one.
@@ -146,7 +164,7 @@ class SessionManager:
         
         if self.session:
             # Add user to existing session if not already participant
-            await self.add_participant_to_session(user)
+            await self.add_participant(user)
             
             return self.session, False
         
@@ -158,10 +176,10 @@ class SessionManager:
             
             group_state = await initialize_group_state_from_db()
             
-            # Start new session with available cards
+            # Start new session with available card documents
             new_session = await self.start_coffee_session(
-                user_id, 
-                [str(card.id) for card in active_cards],
+                user_id,
+                active_cards,
                 group_state=group_state
             )
             
@@ -184,12 +202,18 @@ class SessionManager:
             raise SessionNotActiveError()
             
         if change == 'add':
-            self.session.group_state.add_coffee(member_name)
+            changed = self.session.group_state.add_coffee(member_name)
         elif change == 'remove':
-            self.session.group_state.remove_coffee(member_name)
-        
+            changed = self.session.group_state.remove_coffee(member_name)
+        else:
+            changed = False
+
+        # If nothing changed (e.g., removing when count is 0), do nothing
+        if not changed:
+            return
+
         await self.session.save()
-        
+
         # Sync all keyboards for this session
         await self.api.group_keyboard_manager.sync_all_keyboards_for_session(str(self.session.id))
 
@@ -226,8 +250,8 @@ class SessionManager:
             raise SessionNotActiveError()
             
         if member_name not in self.session.group_state.members:
-            from .telethon_models import GroupMemberData
-            self.session.group_state.members[member_name] = GroupMemberData(coffee=0, user_id=user_id)
+            from .telethon_models import GroupMember
+            self.session.group_state.members[member_name] = GroupMember(name=member_name, user_id=user_id, coffee_count=0)
             await self.session.save()
 
     async def get_member_user_id(self, member_name: str) -> Optional[int]:
@@ -269,13 +293,13 @@ class SessionManager:
         # Notify all Telegram Users about their orders:
         for name, group_member_data in self.session.group_state.members.items():
             # todo: also check, that they were not part of the session (as a participant)
-            if group_member_data.coffee > 0 and group_member_data.user_id is not None:
-                await self.session.fetch_link(self.session.initiator)
+            if group_member_data.coffee_count > 0 and group_member_data.user_id is not None:
+                await self.session.fetch_link("initiator")
                 initiator_display_name = self.session.initiator.display_name # type: ignore
 
                 await self.api.message_manager.send_text(
                     group_member_data.user_id,
-                    f"{initiator_display_name} has ordered {group_member_data.coffee} coffees for you.\n",
+                    f"{initiator_display_name} has ordered {group_member_data.coffee_count} coffees for you.\n",
                     True, True
                 )
         
@@ -303,6 +327,24 @@ class SessionManager:
                         f"Session ID: `{self.session.id}`",
                         True, True
                     )
+
+        # Build summary using central helper and send to all FullUsers
+        try:
+            summary_text = await self.get_session_summary()
+            # Send summary to all registered FullUsers
+            full_users = await FullUser.find().to_list()
+            for user in full_users:
+                user_id_to_notify = user.user_id
+                try:
+                    await self.api.message_manager.send_text(
+                        user_id_to_notify,
+                        summary_text,
+                        True, True
+                    )
+                except Exception as e:
+                    print(f"❌ Failed to send session summary to FullUser {user_id_to_notify}: {e}")
+        except Exception as e:
+            print(f"❌ Failed to build/send session summary: {e}")
         
         await self.create_orders()
         await self.update_coffee_card()
@@ -359,11 +401,11 @@ class SessionManager:
 
         # Create CoffeeOrder objects
         for name, member_data in self.session.group_state.members.items():
-            if member_data.coffee > 0:
+            if member_data.coffee_count > 0:
                 pass
                 # order = CoffeeOrder(
                 #     user_id=member_data.user_id,
-                #     coffee_count=member_data.coffee,
+                #     coffee_count=member_data.coffee_count,
                 #     session_id=self.session.id
                 # )
                 # await order.save()
@@ -411,7 +453,7 @@ class SessionManager:
         if self.session.group_state.members:
             summary += "**Individual Orders:**\n"
             for name, member_data in self.session.group_state.members.items():
-                if member_data.coffee > 0:
-                    summary += f"• {name}: {member_data.coffee}\n"
+                if member_data.coffee_count > 0:
+                    summary += f"• {name}: {member_data.coffee_count}\n"
         
         return summary

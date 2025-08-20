@@ -269,12 +269,18 @@ def log_coffee_session_started(session_id: str, initiator_id: int, card_names: l
         session_id, initiator_id, card_names
     )
 
-def log_coffee_session_participant_added(session_id: str, user_id: int, username: Optional[str] = None, level: int = logging.INFO):
-    if username:
-        logger.log(level, "[SESSION] Participant added to session %s: user_id=%s, username=%s", session_id, user_id, username)
-    else:
+def log_coffee_session_participant_added(session_id: str, user_id: int, successful: bool = True, level: int = logging.INFO):
+    if successful:
         logger.log(level, "[SESSION] Participant added to session %s: user_id=%s", session_id, user_id)
+    else:
+        logger.log(level, "[SESSION] Participant was already part of the session %s: user_id=%s", session_id, user_id)
 
+def log_coffee_session_participant_removed(session_id: str, user_id: int, successful: bool = True, level: int = logging.INFO):
+    if successful:
+        logger.log(level, "[SESSION] Participant removed from session %s: user_id=%s", session_id, user_id)
+    else:
+        logger.log(level, "[SESSION] Participant was not part of the session %s: user_id=%s", session_id, user_id)
+    
 def log_coffee_session_updated(session_id: str, coffee_counts: Dict[int, int], level: int = logging.INFO):
     total_coffees = sum(coffee_counts.values())
     logger.log(level, "[SESSION] Session updated: session_id=%s, total_coffees=%d, participants=%d", 

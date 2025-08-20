@@ -196,6 +196,8 @@ class TelethonAPI:
                     
             except AttributeError as e:
                 log_telegram_api_error("invalid_event", str(e))
+                # Prevent other handlers from handling this same event after an internal error
+                raise events.StopPropagation
             except asyncio.TimeoutError as e:
                 log_telegram_api_error("timeout", str(e))
             except errors.rpcerrorlist.FloodWaitError as e:

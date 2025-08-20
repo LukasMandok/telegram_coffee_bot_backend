@@ -830,23 +830,30 @@ class ConversationManager:
                 
             if submitted:
                 # Use SessionManager to complete the session
-                await self.api.session_manager.complete_session(session, user_id)
+                await self.api.session_manager.complete_session(user_id)
                 log_conversation_completed(user_id, "group_selection")
                 
             elif canceled:
                 log_conversation_cancelled(user_id, "group_selection", "user_cancelled")
-                # Just unregister this user's keyboard, don't affect the session
 
-                
-                # TODO: finalize implementation of cancel
-                
-                # remove user as participant from active session
+                # Finalize cancel: remove this user from the session participants
+                # and if this was the last active participant, cancel the whole session.
                 try:
-                    await session.remove_participant(user_id)
+                    await self.api.session_manager.remove_participant(user_id)
                 except ValueError as e:
                     print(f"Failed to remove participant {user_id} from session: {e}")
-                    
-                #
+                    # Check if any active participants/keyboards remain; cancel session if none
+                
+                try:
+                    session_id = str(session.id)
+                    kb_count = self.api.group_keyboard_manager.get_session_participant_count(session_id)
+                    participants_remaining = len(session.participants)
+
+                    if kb_count == 0 or participants_remaining == 0:
+                        await self.api.session_manager.cancel_session()
+
+                except Exception as e:
+                    print(f"Error finalizing cancel for participant {user_id}: {e}")
                 
 
     @managed_conversation("add_passive_user", 60)

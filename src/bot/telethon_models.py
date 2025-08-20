@@ -17,15 +17,8 @@ class GroupMember(BaseModel):
     name validation and coffee count constraints.
     """
     name: str = Field(..., description="The member's name")
+    user_id: Optional[int] = Field(default=None, description="The member's user ID")
     coffee_count: int = Field(default=0, ge=0, description="Number of coffees ordered")
-    
-    @field_validator('name')
-    @classmethod
-    def name_must_not_be_empty(cls, v: str) -> str:
-        """Validate that name is not empty or just whitespace."""
-        if not v.strip():
-            raise ValueError('Name cannot be empty')
-        return v.strip()
 
 
 class MessageModel(BaseModel):
@@ -113,44 +106,48 @@ class BotConfiguration(BaseModel):
         return self.timeouts.registration
 
 
-class GroupMemberData(BaseModel):
-    """Represents a group member with coffee count and user ID."""
-    coffee: int = Field(default=0, description="Number of coffees ordered")
-    user_id: Optional[int] = Field(default=None, description="Telegram user ID if known")
-
 class GroupState(BaseModel):
-    """Represents the current state of the coffee group ordering system."""
-    members: Dict[str, GroupMemberData] = Field(default_factory=dict, description="Member names and their data")
+    """Represents the current state of the coffee group ordering system.
+
+    members maps display_name -> GroupMember. GroupMember contains name, user_id
+    and coffee_count. We keep the mapping key as display_name for quick lookup
+    while storing richer member data in the value.
+    """
+    members: Dict[str, GroupMember] = Field(default_factory=dict, description="Member names and their data")
     
     def add_member(self, member_name: str, user_id: Optional[int] = None) -> None:
         """Add a new member to the group with zero coffee count."""
         if member_name not in self.members:
-            self.members[member_name] = GroupMemberData(coffee=0, user_id=user_id)
+            self.members[member_name] = GroupMember(name=member_name, user_id=user_id, coffee_count=0)
         else:
             raise ValueError(f"Member {member_name} already exists in the group")
     
     def get_total_coffees(self) -> int:
         """Calculate total coffee orders across all members."""
-        return sum(member.coffee for member in self.members.values())
+        return sum(member.coffee_count for member in self.members.values())
     
     def reset_orders(self) -> None:
         """Reset all coffee orders to zero."""
         for member_data in self.members.values():
-            member_data.coffee = 0
+            member_data.coffee_count = 0
             
     def add_coffee(self, member_name: str) -> bool:
         """Add a coffee for a member. Returns True if successful."""
         if member_name in self.members:
-            self.members[member_name].coffee += 1
+            self.members[member_name].coffee_count += 1
             return True
         return False
     
     def remove_coffee(self, member_name: str) -> bool:
         """Remove a coffee for a member. Returns True if successful."""
-        if member_name in self.members and self.members[member_name].coffee > 0:
-            self.members[member_name].coffee -= 1
+        if member_name in self.members and self.members[member_name].coffee_count > 0:
+            self.members[member_name].coffee_count -= 1
             return True
         return False
+    
+    def get_coffee(self, member_name: str) -> int:
+        """Get coffee count for a member (0 if missing)."""
+        return self.members.get(member_name, GroupMember(name=member_name, user_id=None, coffee_count=0)).coffee_count
     
     def export_state(self) -> str:
         """
@@ -182,15 +179,15 @@ class GroupState(BaseModel):
             Dictionary with group statistics and information
         """
         total_coffees = self.get_total_coffees()
-        members_with_orders = sum(1 for member_data in self.members.values() if member_data.coffee > 0)
-        
+        members_with_orders = sum(1 for member_data in self.members.values() if member_data.coffee_count > 0)
+
         return {
             "total_members": len(self.members),
             "total_coffees": total_coffees,
             "members_with_orders": members_with_orders,
             "members_summary": [
-                {"name": name, "coffee_count": member_data.coffee, "user_id": member_data.user_id}
-                for name, member_data in self.members.items()
-                if member_data.coffee > 0
+                {"name": name, "coffee_count": member_data.coffee_count, "user_id": member_data.user_id}
+                    for name, member_data in self.members.items()
+                    if member_data.coffee_count > 0
             ]
         }

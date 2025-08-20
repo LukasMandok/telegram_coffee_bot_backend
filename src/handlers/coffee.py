@@ -94,11 +94,12 @@ async def create_coffee_order(
     if not card:
         raise CoffeeCardNotFoundError(coffee_card_id)
 
-    initiator = await TelegramUser.get(initiator_id)
+    # Look up by Telegram user_id field (Document.get expects an ObjectId)
+    initiator = await TelegramUser.find_one(TelegramUser.user_id == initiator_id)
     if not initiator: 
         raise UserNotFoundError(user_id=initiator_id)
 
-    consumer = await TelegramUser.get(consumer_id)
+    consumer = await TelegramUser.find_one(TelegramUser.user_id == consumer_id)
     if not consumer:
         raise UserNotFoundError(user_id=consumer_id)
 
@@ -219,8 +220,8 @@ async def create_payment(
 ) -> Payment:
     """Create a payment record (payment is considered completed when created)."""
 
-    payer = await TelegramUser.get(payer_id)
-    recipient = await TelegramUser.get(recipient_id)
+    payer = await TelegramUser.find_one(TelegramUser.user_id == payer_id)
+    recipient = await TelegramUser.find_one(TelegramUser.user_id == recipient_id)
 
     if not payer or not recipient:
         raise ValueError("Payer or recipient not found")
@@ -458,8 +459,8 @@ async def get_session_summary(session: CoffeeSession) -> str:
     Returns:
         str: Formatted session summary
     """
-    await session.fetch_link(session.participants)
-    await session.fetch_link(session.coffee_cards)
+    await session.fetch_link("participants")
+    await session.fetch_link("coffee_cards")
     
     total_coffees = await session.get_total_coffees()
     available_coffees = await session.get_available_coffees()

@@ -346,15 +346,15 @@ class CommandManager:
                 return
                         
             # Notify all participants who have made orders
-            for name, group_member_data in session.group_state.members.items():
+            for name, group_member in session.group_state.members.items():
                 # todo: also check, that they were not part of the session (as a participant)
-                if group_member_data.coffee > 0 and group_member_data.user_id is not None:
-                    await session.fetch_link(session.initiator)
+                if group_member.coffee_count > 0 and group_member.user_id is not None:
+                    await session.fetch_link("initiator")
                     initiator_display_name = session.initiator.display_name # type: ignore
                     
                     await self.api.message_manager.send_text(
-                        group_member_data.user_id,
-                        f"{initiator_display_name} has ordered {group_member_data.coffee} coffees for you.\n",
+                        group_member.user_id,
+                        f"{initiator_display_name} has ordered {group_member.coffee_count} coffees for you.\n",
                         True, True
                     )
             
