@@ -37,6 +37,9 @@ class SessionManager:
     def __init__(self, api: "TelethonAPI"):
         self.api = api
         self.session: Optional[CoffeeSession] = None
+        # Keep track of notification messages sent per session so we can
+        # delete them when the session finishes or is cancelled.
+        self.session_notifications = {}
 
     # DB access
 
@@ -107,20 +110,26 @@ class SessionManager:
         # that someone is entering coffees; send silently where possible.
         try:
             initiator_user_id = getattr(initiator, 'user_id', None)
+            # session.id should exist after insert(); use string key
+            session_key = str(session.id)
+            self.session_notifications.setdefault(session_key, [])
+
             for name, member in group_state.members.items():
                 if member.user_id is None:
                     continue
                 # don't notify the initiator about their own session
                 if initiator_user_id is not None and member.user_id == initiator_user_id:
                     continue
-                # send silently and don't vanish so users keep the message
-                await self.api.message_manager.send_text(
+                # send silently and persist until session end (vanish=False)
+                msg = await self.api.message_manager.send_text(
                     member.user_id,
                     f"{initiator_display_name} started a new coffee session and is entering coffees. You can join with /group.",
-                    vanish=True,
+                    vanish=False,
                     conv=False,
                     silent=True
                 )
+                if session_key and msg is not None:
+                    self.session_notifications[session_key].append(msg)
         except Exception as e:
             print(f"❌ Failed to notify members about new session: {e}")
         
@@ -358,6 +367,20 @@ class SessionManager:
                     silent=True
                 )
 
+        # Delete persisted initial session notifications (they were sent with vanish=False)
+        try:
+            notif_key = session_id
+            if notif_key in self.session_notifications:
+                for msg in self.session_notifications[notif_key]:
+                    try:
+                        await msg.delete()
+                    except Exception:
+                        # best-effort: ignore deletion failures
+                        pass
+                del self.session_notifications[notif_key]
+        except Exception:
+            pass
+
         # Build summary using central helper and send to all FullUsers
         try:
             summary_text = await self.get_session_summary()
@@ -414,6 +437,19 @@ class SessionManager:
                     conv=False,
                     silent=True
                 )
+
+        # Delete persisted initial session notifications on cancel as well
+        try:
+            notif_key = session_id
+            if notif_key in self.session_notifications:
+                for msg in self.session_notifications[notif_key]:
+                    try:
+                        await msg.delete()
+                    except Exception:
+                        pass
+                del self.session_notifications[notif_key]
+        except Exception:
+            pass
         
         # Clean up keyboards
         await self.api.group_keyboard_manager.cleanup_session_keyboards(session_id)
