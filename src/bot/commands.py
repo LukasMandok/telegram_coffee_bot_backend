@@ -249,7 +249,7 @@ class CommandManager:
             )
             return
         
-        # Get the user (must be FullUser to have PayPal links)
+    # Get the user (registered Telegram users manage PayPal links)
         user = await dep.get_repo().find_user_by_id(user_id)
         # Register conversation state so other handlers (unknown commands) ignore input
         self.conversation_manager.create_conversation_state(user_id, "paypalme", timeout=120)

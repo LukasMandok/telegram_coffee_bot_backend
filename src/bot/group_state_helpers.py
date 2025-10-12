@@ -5,8 +5,7 @@ This module provides utilities to initialize the GroupState from database users
 instead of using hardcoded member lists.
 """
 
-from typing import Dict, List, Union
-from ..models.beanie_models import FullUser, PassiveUser
+from typing import Dict
 from ..dependencies.dependencies import get_repo
 from .telethon_models import GroupState, GroupMember
 
@@ -17,7 +16,7 @@ async def initialize_group_state_from_db() -> GroupState:
     """
     Initialize a GroupState by loading all users from the database.
     
-    Creates a GroupState with all FullUser and PassiveUser display names
+    Creates a GroupState with all TelegramUser and PassiveUser display names
     as members, each starting with 0 coffee orders.
     
     Returns:

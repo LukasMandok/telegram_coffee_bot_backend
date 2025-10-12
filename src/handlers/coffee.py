@@ -17,7 +17,7 @@ from ..models.coffee_models import (
 from ..dependencies.dependencies import repo
 
 from ..bot.group_state_helpers import initialize_group_state_from_db
-from ..models.beanie_models import TelegramUser, FullUser
+from ..models.beanie_models import TelegramUser
 from ..exceptions.coffee_exceptions import (
     InvalidCoffeeCountError, InsufficientCoffeeError, SessionNotActiveError,
     CoffeeCardNotFoundError, InsufficientCoffeeCardCapacityError, UserNotFoundError
@@ -34,50 +34,7 @@ from ..common.log import (
 if TYPE_CHECKING:
     from ..database.base_repo import BaseRepository
 
-@repo 
-async def create_coffee_card(
-    repo: "BaseRepository",
-    name: str,
-    total_coffees: int,
-    cost_per_coffee: float,
-    purchaser_id: int
-) -> CoffeeCard:
-    """Create a new coffee card."""
-    purchaser = await repo.find_user_by_id(purchaser_id)
-    if not purchaser:
-        raise ValueError("Purchaser not found")
 
-    total_cost = float(total_coffees) * cost_per_coffee
-
-    card = CoffeeCard(
-        name=name,
-        total_coffees=total_coffees,
-        remaining_coffees=total_coffees,
-        cost_per_coffee=cost_per_coffee,
-        total_cost=total_cost,
-        purchaser=purchaser
-    )
-
-    await card.insert()
-    log_coffee_card_created(name, total_coffees, purchaser_id, cost_per_coffee)
-    return card
-
-
-async def get_active_coffee_cards() -> List[CoffeeCard]:
-    """Get all active coffee cards."""
-    return await CoffeeCard.find(CoffeeCard.is_active == True).to_list()
-
-
-async def get_user_coffee_cards(user_id: int) -> List[CoffeeCard]:
-    """Get all coffee cards purchased by a user."""
-    # Try FullUser first, then TelegramUser
-    user = await FullUser.find_one(FullUser.user_id == user_id)
-    if not user:
-        user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
-    if not user:
-        return []
-    return await CoffeeCard.find(CoffeeCard.purchaser == user, 
-                                 fetch_links=True).to_list()
 
 
 # TODO: check
@@ -156,14 +113,9 @@ async def create_or_update_debt(
 ) -> UserDebt:
     """Create or update debt between users."""
 
-    # Get user documents first - try FullUser first, then TelegramUser
-    debtor = await FullUser.find_one(FullUser.user_id == debtor_id)
-    if not debtor:
-        debtor = await TelegramUser.find_one(TelegramUser.user_id == debtor_id)
-    
-    creditor = await FullUser.find_one(FullUser.user_id == creditor_id)
-    if not creditor:
-        creditor = await TelegramUser.find_one(TelegramUser.user_id == creditor_id)
+    # Get user documents
+    debtor = await TelegramUser.find_one(TelegramUser.user_id == debtor_id)
+    creditor = await TelegramUser.find_one(TelegramUser.user_id == creditor_id)
 
     if not debtor or not creditor:
         raise ValueError("Debtor or creditor not found")
@@ -311,12 +263,10 @@ async def get_active_session() -> Optional[CoffeeSession]:
     """Get the currently active coffee session."""
     return await CoffeeSession.find_one(CoffeeSession.is_active == True)
 
+
 async def get_active_session_for_user(user_id: int) -> Optional[CoffeeSession]:
     """Get the active session initiated by a user."""
-    # Try FullUser first, then TelegramUser
-    user = await FullUser.find_one(FullUser.user_id == user_id)
-    if not user:
-        user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
+    user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
     if not user:
         return None
     
@@ -324,46 +274,6 @@ async def get_active_session_for_user(user_id: int) -> Optional[CoffeeSession]:
         CoffeeSession.initiator == user,
         CoffeeSession.is_active == True
     )
-
-
-# TODO: check if it makes sense to still use group_members
-async def update_session_coffee_counts(
-    session: CoffeeSession,
-    group_members: Dict[str, int]
-) -> None:
-    """Update coffee counts in the session's group state."""
-    
-    if not session.is_active:
-        raise SessionNotActiveError()
-    
-    try:
-        await session.validate_coffee_counts(group_members)
-    except InvalidCoffeeCountError:
-        # Re-raise with more context if needed
-        raise
-    except InsufficientCoffeeError as e:
-        # The exception already has all the details we need
-        await handle_insufficient_coffee_capacity(session, e.requested, e.available)
-        raise e
-    
-    # Update the group state members directly
-    session.group_state.members = group_members
-    await session.save()
-    
-
-async def complete_coffee_session(session_id: str) -> List[CoffeeOrder]:
-    """Complete a coffee session by creating individual orders."""
-    
-    session = await CoffeeSession.get(session_id)
-    if not session:
-        raise ValueError("Session not found")
-    
-    if not session.is_active:
-        raise ValueError("Session is not active")
-    
-    orders = []
-    
-    return orders
 
 
 async def get_coffee_statistics() -> Dict:
@@ -427,7 +337,7 @@ async def broadcast_session_changes(session: CoffeeSession, api_instance=None) -
         if session.coffee_counts:
             summary += "**Current orders:**\n"
             for user_id, count in session.coffee_counts.items():
-                user = await FullUser.find_one(FullUser.user_id == user_id)
+                user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
                 name = user.display_name if user and hasattr(user, 'display_name') else f"User {user_id}"
                 if count > 0:
                     summary += f"• {name}: {count}\n"
@@ -449,106 +359,6 @@ async def broadcast_session_changes(session: CoffeeSession, api_instance=None) -
     print(f"📡 [BROADCAST] Session {session.id} changes to {participant_count} participants ({total_coffees} total coffees)")
 
 
-async def get_session_summary(session: CoffeeSession) -> str:
-    """
-    Generate a human-readable summary of the session.
-    
-    Args:
-        session: The coffee session to summarize
-        
-    Returns:
-        str: Formatted session summary
-    """
-    await session.fetch_link("participants")
-    await session.fetch_link("coffee_cards")
-    
-    total_coffees = await session.get_total_coffees()
-    available_coffees = await session.get_available_coffees()
-    
-    summary = f"☕ **Coffee Session Summary**\n"
-    summary += f"Session ID: `{session.id}`\n"
-    summary += f"Participants: {len(session.participants)}\n"
-    summary += f"Total Orders: {total_coffees} coffees\n"
-    summary += f"Available: {available_coffees} coffees\n"
-    
-    if session.coffee_cards:
-        summary += f"Cards: {len(session.coffee_cards)} card(s) available\n"
-    
-    if session.coffee_counts:
-        summary += f"\n**Orders:**\n"
-        for user_id, count in session.coffee_counts.items():
-            user = await FullUser.find_one(FullUser.user_id == user_id)
-            name = user.display_name if user and hasattr(user, 'display_name') else f"User {user_id}"
-            summary += f"• {name}: {count}\n"
-    
-    return summary
-
-
-async def complete_session_and_create_orders(session_id: str) -> CoffeeSession:
-    """
-    Complete a coffee session and process orders.
-    
-    Args:
-        session_id: The ID of the session to complete
-        
-    Returns:
-        The completed CoffeeSession
-    """
-    # Find the session
-    session = await CoffeeSession.get(session_id)
-    if session is None:
-        raise ValueError(f"Session {session_id} not found")
-        
-    if not session.is_active:
-        raise ValueError(f"Session {session_id} is not active")
-    
-    # total_coffees = await session.get_total_coffees()
-    
-    # # Notify all participants who have made orders
-    # for participant_user_id in session.coffee_counts.keys():
-    #     await self.api.message_manager.send_text(
-    #         participant_user_id,
-    #         f"✅ **Session Completed!**\n"
-    #         f"Total: {total_coffees} coffees\n"
-    #         f"Session ID: `{completed_session.id}`",
-    #         True, True
-    #     )
-    
-    # Mark session as completed
-    session.is_active = False
-    session.completed_date = datetime.now()
-    await session.save()
-    
-    # TODO: Process actual coffee orders here
-    # This would involve:
-    # 1. Creating CoffeeOrder objects
-    # 2. Updating coffee card counts
-    # 3. Processing payments/debts
-    
-    print(f"✅ [SESSION] Completed session {session.id}")
-    return session
-
-
-async def cancel_session(session_id: str) -> None:
-    """
-    Cancel an active coffee session.
-    
-    Args:
-        session_id: The ID of the session to cancel
-    """
-    # Find the session
-    session = await CoffeeSession.get(session_id)
-    if session is None:
-        raise ValueError(f"Session {session_id} not found")
-        
-    if not session.is_active:
-        raise ValueError(f"Session {session_id} is not active")
-    
-    session.is_active = False
-    await session.save()
-    
-    print(f"❌ [SESSION] Cancelled session {session.id}")
-
 
 async def get_user_active_session(user_id: int) -> Optional[CoffeeSession]:
     """
@@ -562,10 +372,7 @@ async def get_user_active_session(user_id: int) -> Optional[CoffeeSession]:
     """
     try:
         # Find session where user is a participant and is active
-        # Try FullUser first, then TelegramUser
-        user = await FullUser.find_one(FullUser.user_id == user_id)
-        if not user:
-            user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
+        user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
         if not user:
             return None
             
@@ -577,109 +384,3 @@ async def get_user_active_session(user_id: int) -> Optional[CoffeeSession]:
     except Exception as e:
         print(f"Error getting user active session: {e}")
         return None
-
-
-# async def process_telegram_keyboard_response(
-#     initiator_id: int,
-#     coffee_card_id: str,
-#     keyboard_responses: Dict[str, int]  # username -> coffee_count from keyboard
-# ) -> Dict[str, Any]:
-#     """
-#     Process responses from a Telegram group keyboard and create a session with orders.
-#     This is the main function you'd call from your Telethon handler.
-    
-#     Args:
-#         initiator_id: The user who initiated the coffee session
-#         coffee_card_id: The coffee card to use
-#         keyboard_responses: Dictionary of {username: coffee_count} from keyboard responses
-        
-#     Returns:
-#         Dictionary with session info and created orders
-        
-#     Raises:
-#         UserNotFoundError: If initiator or participants not found
-#         InvalidCoffeeCountError: If coffee counts are invalid
-#         InsufficientCoffeeError: If not enough coffees available
-#     """
-    
-#     # First, find all users by their usernames/names
-#     telegram_users = []
-#     user_coffee_counts = {}  # user_id -> coffee_count
-#     unknown_users = []
-    
-#     for username, coffee_count in keyboard_responses.items():
-#         if coffee_count > 0:
-#             # Try to find user by username first, then by first_name
-#             user = await TelegramUser.find_one(
-#                 {"$or": [
-#                     {"username": username}, 
-#                     {"first_name": username}
-#                 ]}
-#             )
-#             if user:
-#                 telegram_users.append(user)
-#                 user_coffee_counts[user.user_id] = coffee_count
-#             else:
-#                 unknown_users.append(username)
-#                 log_unexpected_error("user_lookup", f"User {username} not found in database during session processing")
-    
-#     if not telegram_users:
-#         raise UserNotFoundError(message="No valid users found from keyboard responses")
-    
-#     # Create the session
-#     session = await start_coffee_session(
-#         initiator_id=initiator_id,
-#         coffee_card_ids=[coffee_card_id]
-#     )
-    
-#     # Add participants to the session (the users found from keyboard responses)
-#     for user in telegram_users:
-#         if user not in session.participants:
-#             session.participants.append(user)
-    
-#     # Update coffee counts in the session
-#     await update_session_coffee_counts(session, user_coffee_counts)
-    
-#     # Calculate totals for response
-#     total_coffees = sum(coffee_count for coffee_count in keyboard_responses.values() if coffee_count > 0)
-#     total_cost = await session.get_total_cost()
-    
-#     return {
-#         "session": session,
-#         "session_id": str(session.id),
-#         "total_coffees": total_coffees,
-#         "total_cost": float(total_cost),
-#         "participants": len(telegram_users),
-#         "participant_details": [
-#             {"username": user.username or user.first_name, "user_id": user.user_id, "coffees": user_coffee_counts.get(user.user_id, 0)}
-#             for user in telegram_users
-#         ],
-#         "unknown_users": unknown_users,
-#         "success": True
-#     }
-
-
-async def complete_telegram_coffee_session(session_id: str) -> Dict[str, Any]:
-    """
-    Complete a coffee session by creating individual orders and updating debt tracking.
-    This function bridges Telegram UI completion with domain business logic.
-    
-    Args:
-        session_id: The session ID to complete
-        
-    Returns:
-        Dictionary with completion results including created orders and debt updates
-    """
-    # TODO: Implement session completion logic
-    # This would involve:
-    # 1. Getting the session
-    # 2. Creating individual CoffeeOrder records for each participant
-    # 3. Updating coffee card remaining counts
-    # 4. Creating/updating UserDebt records
-    # 5. Marking session as inactive
-    
-    return {
-        "success": True,
-        "message": "Session completion not yet implemented",
-        "session_id": session_id
-    }

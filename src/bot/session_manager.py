@@ -5,10 +5,10 @@ This module manages the overall coffee session workflow, coordinating between
 the GroupKeyboardManager and database operations.
 """
 
-from typing import Dict, List, Optional, TYPE_CHECKING, Tuple
+from typing import Dict, List, Optional, TYPE_CHECKING, Tuple, Any, cast
 from datetime import datetime
 from ..models.coffee_models import CoffeeSession, CoffeeCard, CoffeeOrder
-from ..models.beanie_models import TelegramUser, FullUser
+from ..models.beanie_models import TelegramUser
 from ..exceptions.coffee_exceptions import (
     SessionNotActiveError, InvalidCoffeeCountError, InsufficientCoffeeError
 )
@@ -49,10 +49,7 @@ class SessionManager:
 
     async def get_active_session_for_user(self, user_id: int) -> Optional[CoffeeSession]:
         """Get the active session initiated by a user."""
-        # Try FullUser first, then TelegramUser
-        user = await FullUser.find_one(FullUser.user_id == user_id)
-        if not user:
-            user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
+        user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
         if not user:
             return None
         
@@ -61,9 +58,9 @@ class SessionManager:
             CoffeeSession.is_active == True
         )
 
-    async def get_active_coffee_cards(self) -> List[CoffeeCard]:
-        """Get all active coffee cards."""
-        return await CoffeeCard.find(CoffeeCard.is_active == True).to_list()
+    # async def get_active_coffee_cards(self) -> List[CoffeeCard]:
+    #     """Get all active coffee cards."""
+    #     return await CoffeeCard.find(CoffeeCard.is_active == True).to_list()
 
     
     # Based on the current Session
@@ -82,10 +79,10 @@ class SessionManager:
             group_state: pre-initialized GroupState
         """
 
-        # Look up the initiator: try FullUser first (registered), then TelegramUser
-        initiator = await FullUser.find_one(FullUser.user_id == initiator_id)
+        # Look up the initiator: registered Telegram user
+        initiator = await TelegramUser.find_one(TelegramUser.user_id == initiator_id)
         if not initiator:
-            initiator = await TelegramUser.find_one(TelegramUser.user_id == initiator_id)
+            raise ValueError(f"Initiator {initiator_id} not found")
 
         # Accept a list of CoffeeCard documents (recommended) or an empty list
         cards = coffee_cards or []
@@ -94,22 +91,22 @@ class SessionManager:
             raise ValueError("No coffee cards available to start a session")
 
         # Derive display name for notifications when display_name missing
-        initiator_display_name = getattr(initiator, 'display_name', None) or getattr(initiator, 'first_name', None) or str(getattr(initiator, 'user_id', ''))
-        
+        initiator_display_name = initiator.display_name or initiator.first_name or str(initiator.user_id)
+
         session = CoffeeSession(
             initiator=initiator,
             coffee_cards=cards,  # type: ignore
             group_state=group_state
         )
-        
+
         # TODO: notify telegram users about the new session, and that they can join.
-        
+
         await session.insert()
 
         # Notify all group members that a new session has been started and
         # that someone is entering coffees; send silently where possible.
         try:
-            initiator_user_id = getattr(initiator, 'user_id', None)
+            initiator_user_id = initiator.user_id
             # session.id should exist after insert(); use string key
             session_key = str(session.id)
             self.session_notifications.setdefault(session_key, [])
@@ -132,7 +129,7 @@ class SessionManager:
                     self.session_notifications[session_key].append(msg)
         except Exception as e:
             print(f"❌ Failed to notify members about new session: {e}")
-        
+
         return session
 
     async def add_participant(
@@ -153,9 +150,7 @@ class SessionManager:
 
     
     async def remove_participant( self, user_id: int ) -> bool:
-        user = await FullUser.find_one(FullUser.user_id == user_id)
-        if not user:
-            user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
+        user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
         if not user:
             raise ValueError(f"User {user_id} not found in database")
         
@@ -184,10 +179,8 @@ class SessionManager:
         Raises:
             ValueError: If user not found or no coffee cards available
         """
-        # Get the user from database - try FullUser first, then TelegramUser
-        user = await FullUser.find_one(FullUser.user_id == user_id)
-        if not user:
-            user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
+        # Get the user from database
+        user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
         if not user:
             raise ValueError(f"User {user_id} not found in database")
         
@@ -200,7 +193,7 @@ class SessionManager:
         
         else:
             # Create new session
-            active_cards = await self.get_active_coffee_cards()
+            active_cards = await self.api.coffee_card_manager.get_active_coffee_cards()
             if not active_cards:
                 raise ValueError("No active coffee cards available for session")
             
@@ -307,52 +300,52 @@ class SessionManager:
         if not self.session or not self.session.is_active:
             return False
         
+        # TODO: as a last check, check if there are enough coffees available in the CoffeeCardManager
+
         # Mark session as completed
         self.session.is_active = False
         self.session.completed_date = datetime.now()
-        # Try FullUser first, then TelegramUser
-        submitted_by = await FullUser.find_one(FullUser.user_id == submitted_by_user_id)
-        if not submitted_by:
-            submitted_by = await TelegramUser.find_one(TelegramUser.user_id == submitted_by_user_id)
+        submitted_by = await TelegramUser.find_one(TelegramUser.user_id == submitted_by_user_id)
         self.session.submitted_by = submitted_by
         await self.session.save()
         
         # Get total coffees
         total_coffees = await self.session.get_total_coffees()
         
-        # Notify all Telegram Users about their orders:
+        # Get participant user IDs from session
+        await self.session.fetch_link("participants")
+        participant_user_ids = {p.user_id for p in self.session.participants if hasattr(p, 'user_id')}
+        
+        # Notify Telegram Users about their orders (but not session participants - they get the full summary)
         for name, group_member_data in self.session.group_state.members.items():
-            # todo: also check, that they were not part of the session (as a participant)
             if group_member_data.coffee_count > 0 and group_member_data.user_id is not None:
+                # Skip users who were active participants in the session
+                if group_member_data.user_id in participant_user_ids:
+                    continue
+                    
                 await self.session.fetch_link("initiator")
                 initiator_display_name = self.session.initiator.display_name # type: ignore
-
+                
+                # Use singular/plural correctly and make key info bold
+                coffee_word = "coffee" if group_member_data.coffee_count == 1 else "coffees"
                 await self.api.message_manager.send_text(
                     group_member_data.user_id,
-                    f"{initiator_display_name} has ordered {group_member_data.coffee_count} coffees for you.\n",
+                    f"**{initiator_display_name}** has ordered **{group_member_data.coffee_count}** {coffee_word} for you.\n",
                     True, True
                 )
         
-        # Notify all participants with active keyboards
-        session_id = str(self.session.id)
-        # Capture list of participant ids before cleaning up keyboards
-        participant_ids = []
-        if session_id in self.api.group_keyboard_manager.active_keyboards:
-            participant_ids = list(self.api.group_keyboard_manager.active_keyboards[session_id].keys())
-
         # Close all keyboards immediately for this session so UI is consistent
+        session_id = str(self.session.id)
         await self.api.group_keyboard_manager.cleanup_session_keyboards(session_id)
 
         # Send notifications to participants captured earlier
-        for participant_user_id in participant_ids:
+        for participant_user_id in participant_user_ids:
             if participant_user_id == submitted_by_user_id:
                 # Send completion message to submitter (persistent)
                 await self.api.message_manager.send_text(
                     participant_user_id,
                     f"✅ **Session Completed!**\n"
-                    f"Your order has been submitted and the session is now closed.\n"
-                    f"Total: {total_coffees} coffees\n"
-                    f"Session ID: `{self.session.id}`",
+                    f"Total: {total_coffees} coffees\n",
                     vanish=True,
                     conv=True,
                     silent=False
@@ -381,11 +374,11 @@ class SessionManager:
         except Exception:
             pass
 
-        # Build summary using central helper and send to all FullUsers
+        # Build summary using central helper and send to all TelegramUsers
         try:
             summary_text = await self.get_session_summary()
-            # Send summary to all registered FullUsers
-            full_users = await FullUser.find().to_list()
+            # Send summary to all registered TelegramUsers
+            full_users = await TelegramUser.find().to_list()
             for user in full_users:
                 user_id_to_notify = user.user_id
                 try:
@@ -398,12 +391,11 @@ class SessionManager:
                         silent=True
                     )
                 except Exception as e:
-                    print(f"❌ Failed to send session summary to FullUser {user_id_to_notify}: {e}")
+                    print(f"❌ Failed to send session summary to TelegramUser {user_id_to_notify}: {e}")
         except Exception as e:
             print(f"❌ Failed to build/send session summary: {e}")
         
         await self.create_orders()
-        await self.update_coffee_card()
         
         # Clean up keyboards
         await self.api.group_keyboard_manager.cleanup_session_keyboards(session_id)
@@ -467,39 +459,28 @@ class SessionManager:
             The completed CoffeeSession if successful, None if no active session
         """
         if not self.session:
-            return None
+            return []
 
-        # Create CoffeeOrder objects
-        for name, member_data in self.session.group_state.members.items():
-            if member_data.coffee_count > 0:
-                pass
-                # order = CoffeeOrder(
-                #     user_id=member_data.user_id,
-                #     coffee_count=member_data.coffee_count,
-                #     session_id=self.session.id
-                # )
-                # await order.save()
+        # Delegate allocation to a CoffeeCardManager instance
 
-        # TODO: Process actual coffee orders here
-        # This would involve:
-        # 1. Creating CoffeeOrder objects
-        # 2. Updating coffee card counts
-        # 3. Processing payments/debts
-        
+        # Build allocation plan (may raise on insufficient capacity)
+        allocations = self.api.coffee_card_manager.allocate_session_orders(self.session)
+
+        # determine initiator id
+        initiator_user = self.session.submitted_by or self.session.initiator
+        if not initiator_user or not getattr(initiator_user, 'user_id', None):
+            return []
+        initiator_id = int(getattr(initiator_user, 'user_id'))
+
+        # Materialize allocations -> orders
+        orders_created = await self.api.coffee_card_manager.create_orders_from_allocations(allocations, initiator_id)
+
+        # attach orders to session and persist
+        for order in orders_created:
+            self.session.orders.append(order)
         await self.session.save()
 
-    # TODO: implement
-    async def update_coffee_card(self) -> None:
-        """
-        Update coffee card counts based on the current session's group state.
-        
-        This method will:
-        - Update the coffee counts in the CoffeeCard objects
-        - Notify participants about their updated coffee counts
-        """
-        if not self.session:
-            raise SessionNotActiveError()
-
+        return orders_created
 
     async def get_session_summary(self) -> str:
         """

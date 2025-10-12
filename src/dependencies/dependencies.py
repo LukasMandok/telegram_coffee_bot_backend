@@ -17,13 +17,12 @@ def get_repo() -> "BaseRepository":
 def repo(func: Callable) -> Callable:
     @wraps(func)
     async def wrapper(*args, **kwargs):
-        # If a BaseRepository instance is already the first positional arg,
-        # call the wrapped function with the original args. Otherwise obtain
-        # a repo from get_repo() and inject it as the first argument.
+        repository = get_repo()
+        
         if args and isinstance(args[0], BaseRepository):
             return await func(*args, **kwargs)
         else:
-            return await func(get_repo(), *args, **kwargs)
+            return await func(repository, *args, **kwargs)
     
     return wrapper
 

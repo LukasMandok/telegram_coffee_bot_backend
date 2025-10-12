@@ -12,32 +12,27 @@ class BaseUser(ABC):
     created_at: datetime # should be defined at creation
     updated_at: datetime # should be defined at creation and update
     
-    # should be the rout model
+    # should be the root model
     
     
-class TelegramUser(BaseUser, ABC):
+class PassiveUser(BaseUser, ABC):
+    display_name: str  # Required unique display name for passive users
+    
+    # should be in passive_users collection
+    # These users don't have Telegram accounts but can have coffee orders/debts managed by admins
+
+
+class TelegramUser(PassiveUser, ABC):
     user_id:     int # should be unique
     username:    str # should be unique 
     last_login:  datetime
     phone:       Optional[str] # optional and unique
     photo_id:    Optional[int]
     lang_code:   str = "en"
+    paypal_link: Optional[str]
     
     # should be in telegram_users collection
     # can use cache if available
-        
-
-class FullUser(TelegramUser, ABC):
-    display_name: str  # Required when creating a FullUser, but TelegramUser won't have this field
-    
-    # should be in full_users collection
-
-
-class PassiveUser(BaseUser, ABC):
-    display_name: str  # Required unique display name for passive users
-    
-    # should be in passive_users collection
-    # These users don't have Telegram accounts but can have coffee orders/debts managed by admins
     
 #---------------------------
 # *      Configuration

@@ -7,7 +7,7 @@ from pydantic import Field, model_validator, field_validator
 # from bson import Decimal128
 
 from . import base_models as base
-from .beanie_models import TelegramUser, FullUser
+from .beanie_models import TelegramUser, PassiveUser
 from ..bot.telethon_models import GroupState
 from ..exceptions.coffee_exceptions import InvalidCoffeeCountError, InsufficientCoffeeError
 from ..utils.typing_utils import Link
@@ -28,7 +28,7 @@ class CoffeeCard(Document):
     remaining_coffees: int = Field(..., ge=0, description="Remaining coffees on the card")
     cost_per_coffee: float = Field(..., gt=0, description="Cost per coffee in EUR")
     total_cost: float = Field(..., gt=0, description="Total cost of the card")
-    purchaser: Link[FullUser] = Field(..., description="User who bought the card")
+    purchaser: Link[TelegramUser] = Field(..., description="User who bought the card")
     created_at: datetime = Field(default_factory=datetime.now)
     is_active: bool = Field(default=True, description="Whether the card is still active")
 
@@ -74,9 +74,10 @@ class CoffeeCard(Document):
 
 class CoffeeOrder(Document):
     """Represents an individual coffee order."""
-    consumer: Link[TelegramUser] = Field(..., description="User who consumed the coffee")
+    # Consumer can be a TelegramUser, but TelegramUser inherits from PassiveUser so we link against PassiveUser
+    consumer: Link[PassiveUser] = Field(..., description="User who consumed the coffee")
     initiator: Link[TelegramUser] = Field(..., description="User who executed/placed the order")
-    coffee_card: Link[CoffeeCard] = Field(..., description="The card used for this order")
+    coffee_cards: List[Link[CoffeeCard]] = Field(..., description="The primary card used for this order")
 
     quantity: int = Field(..., ge=1, description="Number of coffees ordered")
     order_date: datetime = Field(default_factory=datetime.now)
@@ -190,7 +191,8 @@ class Payment(Document):
 class UserDebt(Document):
     """Tracks debt between users for coffee orders."""
 
-    debtor: Link[TelegramUser] = Field(..., description="User who owes money")
+    # TelegramUser inherits from PassiveUser so linking against PassiveUser is sufficient for both cases
+    debtor: Link[PassiveUser] = Field(..., description="User who owes money")
     creditor: Link[TelegramUser] = Field(..., description="User who is owed money")
     total_amount: float = Field(..., ge=0, description="Total debt amount")
     coffee_card: Link[CoffeeCard] = Field(..., description="Card the debt is related to")
@@ -209,11 +211,8 @@ class UserDebt(Document):
     async def get_user_debts(cls, user_id: int) -> Sequence["UserDebt"]:
         """Get all debts for a specific user (as debtor)."""
         # Find the user first, then query by the Link reference
-        # Try FullUser first, then TelegramUser
         # Import here to avoid circular imports
-        user = await FullUser.find_one(FullUser.user_id == user_id)
-        if not user:
-            user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
+        user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
         if not user:
             return []
         return await cls.find(cls.debtor == user, fetch_links=True).to_list()
@@ -222,11 +221,8 @@ class UserDebt(Document):
     async def get_user_credits(cls, user_id: int) -> Sequence["UserDebt"]:
         """Get all amounts owed to a specific user (as creditor)."""
         # Find the user first, then query by the Link reference
-        # Try FullUser first, then TelegramUser
         # Import here to avoid circular imports
-        user = await FullUser.find_one(FullUser.user_id == user_id)
-        if not user:
-            user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
+        user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
         if not user:
             return []
         return await cls.find(cls.creditor == user, fetch_links=True).to_list()

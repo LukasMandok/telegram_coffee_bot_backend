@@ -58,23 +58,22 @@ class BaseUser(base.BaseUser, Document):
         name = "base_users"  # This collection won't be used directly
 
 
-class TelegramUser(base.TelegramUser, BaseUser):
+class PassiveUser(base.PassiveUser, BaseUser):
+    display_name: Annotated[str, Indexed(unique=True)]  # Required unique display name
+    
+    class Settings(BaseUser.Settings):
+        name = "passive_users"
+        is_root = False
+
+
+class TelegramUser(base.TelegramUser, PassiveUser):
     user_id: Annotated[int, Indexed(unique=True)]
     username: Annotated[str, Indexed(unique=True)]
     last_login: datetime
     phone: Annotated[Optional[str], Indexed(unique=True, sparse=True)] = None  # Unique but sparse to allow nulls
     photo_id: Optional[int] = None
-        
-    class Settings(BaseUser.Settings):
-        name = "telegram_users"
-        use_cache = False  # Disable caching to avoid stale data
-        is_root = False
-
-        
-class FullUser(base.FullUser, TelegramUser):
-    display_name: Annotated[str, Indexed(unique=True, sparse=True)]  # Required unique display name, sparse allows TelegramUser to have null
     paypal_link: Optional[str] = Field(None, description="PayPal payment link for coffee card purchases")
-    
+        
     # TODO: check if I can keep using this validator, or if it does not make any sense
     # as it also writes invalide data to the database
     @field_validator('paypal_link', mode='before')
@@ -105,17 +104,9 @@ class FullUser(base.FullUser, TelegramUser):
         
         return formatted_link
     
-    class Settings(TelegramUser.Settings):
-        name = "full_users"
+    class Settings(PassiveUser.Settings):
+        name = "telegram_users"
         use_cache = False  # Disable caching to avoid stale data
-        is_root = False
-
-
-class PassiveUser(base.PassiveUser, BaseUser):
-    display_name: Annotated[str, Indexed(unique=True)]  # Required unique display name
-    
-    class Settings(BaseUser.Settings):
-        name = "passive_users"
         is_root = False
     
 #-----------------------------

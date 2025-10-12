@@ -15,7 +15,6 @@ from telethon.tl.custom.conversation import Conversation
 from pymongo.errors import DuplicateKeyError
 
 from ..handlers import handlers
-from ..handlers.coffee import create_coffee_card
 from ..handlers.paypal import create_paypal_link, validate_paypal_link
 from ..dependencies import dependencies as dep
 from .keyboards import KeyboardManager
@@ -547,11 +546,11 @@ class ConversationManager:
             
             if data == "Yes":
                 await self.send_or_edit_message(user_id, "✅ Taking over existing user...", message_takeover, remove_buttons=True)
-                log_conversation_step(user_id, "registration", "converting_passive_to_full_user")
+                log_conversation_step(user_id, "registration", "converting_passive_to_telegram_user")
                 
                 try:
                     # Convert passive user to full user
-                    new_user = await handlers.convert_passive_to_full_user(
+                    new_user = await handlers.convert_passive_to_telegram_user(
                         passive_user=existing_passive_user,
                         user_id=user_id,
                         username=username,
@@ -924,7 +923,7 @@ class ConversationManager:
         Args:
             conv: Active conversation
             user_id: User ID
-            user: FullUser object
+            user: TelegramUser object
             show_current: Whether to show current link and offer change/keep options
             
         Returns:
@@ -1056,7 +1055,7 @@ class ConversationManager:
     async def create_coffee_card_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
         """Conversation to create a new coffee card with PayPal link setup."""
         
-        # Get the user (must be FullUser to create coffee cards)
+    # Get the user (must be a registered TelegramUser to create coffee cards)
         user = await dep.get_repo().find_user_by_id(user_id)
         if not user or not hasattr(user, 'display_name'):
             await self.api.message_manager.send_text(
@@ -1137,7 +1136,7 @@ class ConversationManager:
         
         # Create the coffee card
         try:            
-            card = await create_coffee_card(
+            card = await self.api.coffee_card_manager.create_coffee_card(
                 name=state.data['card_name'],
                 total_coffees=state.data['total_coffees'],
                 cost_per_coffee=state.data['cost_per_coffee'],

@@ -41,6 +41,7 @@ from ..bot.message_manager import MessageManager
 from ..bot.commands import CommandManager
 from ..bot.group_keyboard_manager import GroupKeyboardManager
 from ..bot.session_manager import SessionManager
+from ..bot.coffee_card_manager import CoffeeCardManager
 
 # Type-only imports - only needed for type annotations
 if TYPE_CHECKING:
@@ -81,7 +82,7 @@ class TelethonAPI:
         )
 
         self.bot: TelegramClient = TelegramClient(
-            'bot_' + str(uuid.uuid4()),
+            'bot_' + str(uuid.uuid4()),  #'coffee_bot_session',  
             self.config.api_id,
             self.config.api_hash
         ).start(bot_token=self.config.bot_token)
@@ -93,6 +94,7 @@ class TelethonAPI:
         self.command_manager = CommandManager(self)
         self.group_keyboard_manager = GroupKeyboardManager(self)
         self.session_manager = SessionManager(self)
+        self.coffee_card_manager = CoffeeCardManager(self)
 
         # Register all handlers
         self._register_handlers()
@@ -124,8 +126,9 @@ class TelethonAPI:
         until manually disconnected or an error occurs.
         """
         asyncio.create_task(self.message_manager.message_vanisher()) 
+        asyncio.create_task(self.coffee_card_manager.load_from_db())
         
-        self.bot.run_until_disconnected()
+        await self.bot.run_until_disconnected()
         
         
     ### SECTION: handler administration

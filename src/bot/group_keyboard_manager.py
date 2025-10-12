@@ -7,7 +7,6 @@ and handles keyboard creation, real-time updates, and pagination.
 
 from typing import Dict, List, Optional, TYPE_CHECKING, Any
 from ..models.coffee_models import CoffeeSession
-from ..models.beanie_models import FullUser
 from .telethon_models import GroupState
 from telethon import Button
 # from .keyboards import KeyboardManager

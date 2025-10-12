@@ -68,18 +68,19 @@ async def remove_admin(repo: "BaseRepository", user_id: int):
     return await repo.remove_admin(user_id)
 
 @repo
-async def register_user(repo: "BaseRepository", user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en"):
-    """Register a new FullUser in the database with smart display name generation."""
+async def register_user(repo: "BaseRepository", user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en", paypal_link: Optional[str] = None):
+    """Register a new TelegramUser in the database with smart display name generation."""
     try:
-        # Create the full user in the database with smart display name
-        new_user = await repo.create_full_user(
+        # Create the telegram user in the database with smart display name
+        new_user = await repo.create_telegram_user(
             user_id=user_id,
             username=username,
             first_name=first_name,
             last_name=last_name,
             phone=phone,
             photo_id=photo_id,
-            lang_code=lang_code
+            lang_code=lang_code,
+            paypal_link=paypal_link,
         )
         return new_user
     
@@ -111,11 +112,12 @@ async def find_passive_user_by_name(repo: "BaseRepository", first_name: str, las
         log_database_error("find_passive_user_by_name", str(e), {"first_name": first_name, "last_name": last_name})
         return None
 
+
 @repo
-async def convert_passive_to_full_user(repo: "BaseRepository", passive_user, user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en"):
-    """Convert a PassiveUser to a FullUser."""
+async def convert_passive_to_telegram_user(repo: "BaseRepository", passive_user, user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en", paypal_link: Optional[str] = None):
+    """Convert a PassiveUser to a TelegramUser."""
     try:
-        return await repo.convert_passive_to_full_user(
+        return await repo.convert_passive_to_telegram_user(
             passive_user=passive_user,
             user_id=user_id,
             username=username,
@@ -123,8 +125,9 @@ async def convert_passive_to_full_user(repo: "BaseRepository", passive_user, use
             last_name=last_name,
             phone=phone,
             photo_id=photo_id,
-            lang_code=lang_code
+            lang_code=lang_code,
+            paypal_link=paypal_link,
         )
     except Exception as e:
-        log_database_error("convert_passive_to_full_user", str(e), {"user_id": user_id})
+        log_database_error("convert_passive_to_telegram_user", str(e), {"user_id": user_id})
         raise
