@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import Enum
 
 from beanie import Document, BackLink, after_event, Update, before_event
-from pydantic import Field, model_validator, field_validator
+from pydantic import Field, model_validator, field_validator, BaseModel
 # from bson import Decimal128
 
 from . import base_models as base
@@ -20,6 +20,14 @@ class PaymentMethod(str, Enum):
     PAYPAL = "paypal"
 
 
+class ConsumerStats(BaseModel):
+    """Embedded document tracking coffee consumption per person on a card."""
+    user_id: str = Field(..., description="Stable user ID (stable_id from BaseUser)")
+    display_name: str = Field(..., description="Display name of the consumer (for display purposes)")
+    total_coffees: int = Field(default=0, ge=0, description="Total coffees consumed from this card")
+    last_order_date: Optional[datetime] = Field(None, description="Date of last order")
+
+
 class CoffeeCard(Document):
     """Represents a physical coffee card/cardboard."""
     
@@ -31,6 +39,13 @@ class CoffeeCard(Document):
     purchaser: Link[TelegramUser] = Field(..., description="User who bought the card")
     created_at: datetime = Field(default_factory=datetime.now)
     is_active: bool = Field(default=True, description="Whether the card is still active")
+    completed_at: Optional[datetime] = Field(default=None, description="When the card was marked as completed")
+
+    # Aggregated statistics for easy querying and export
+    consumer_stats: Dict[str, ConsumerStats] = Field(
+        default_factory=dict,
+        description="Aggregated coffee consumption per person (keyed by stable_id)"
+    )
 
     # Relationships - track both individual orders and group sessions  
     orders: List[Link["CoffeeOrder"]] = Field(default_factory=list, description="Orders made with this card")
@@ -68,6 +83,27 @@ class CoffeeCard(Document):
         if self.remaining_coffees < self.total_coffees:
             self.remaining_coffees += 1
     
+    async def complete_card(self) -> List["UserDebt"]:
+        """
+        Mark card as completed and create debt records for all consumers.
+        
+        Returns:
+            List of created UserDebt documents
+        """
+        if not self.is_active:
+            raise ValueError("Card is already completed")
+        
+        # Mark card as completed
+        self.is_active = False
+        self.completed_at = datetime.now()
+        await self.save()
+        
+        # Create debts - will be handled by DebtManager
+        # This is just a placeholder showing the pattern
+        from ..bot.debt_manager import DebtManager
+        # DebtManager will be called externally
+        return []
+    
     class Settings:
         name = "coffee_cards"
 
@@ -77,14 +113,13 @@ class CoffeeOrder(Document):
     # Consumer can be a TelegramUser, but TelegramUser inherits from PassiveUser so we link against PassiveUser
     consumer: Link[PassiveUser] = Field(..., description="User who consumed the coffee")
     initiator: Link[TelegramUser] = Field(..., description="User who executed/placed the order")
-    coffee_cards: List[Link[CoffeeCard]] = Field(..., description="The primary card used for this order")
+    coffee_cards: List[Link[CoffeeCard]] = Field(..., description="The card(s) used for this order")
 
     quantity: int = Field(..., ge=1, description="Number of coffees ordered")
     order_date: datetime = Field(default_factory=datetime.now)
     
-    # Link to session if this order was part of a group session
+    # Track if from a session, but session can be found via session.orders (no backlink needed)
     from_session: bool = Field(default=False, description="Whether this order was part of a group session")
-    session: Optional[Link["CoffeeSession"]] = Field(None, description="Session this order belongs to")
     
     class Settings:
         name = "coffee_orders"
@@ -94,9 +129,6 @@ class CoffeeSession(Document):
     """Represents a group coffee ordering session."""
     initiator: Link[TelegramUser] = Field(..., description="User who started the session")
     submitted_by: Optional[Link[TelegramUser]] = Field(None, description="User who submitted the session")
-    
-    # Support multiple coffee cards for large sessions
-    coffee_cards: List[Link[CoffeeCard]] = Field(default_factory=list, description="Cards used for this session")
     
     # Session participants and their orders
     participants: List[Link[TelegramUser]] = Field(default_factory=lambda data: [data['initiator']],
@@ -110,7 +142,7 @@ class CoffeeSession(Document):
     group_state: GroupState = Field(default_factory=lambda: GroupState(members={}), description="Group state with member coffee counts")
     
     # Generated orders from this session
-    orders: List[Link[CoffeeOrder]] = Field(default_factory=list)
+    orders: List[Link[CoffeeOrder]] = Field(default_factory=list, description="Orders created in this session")
         
     class Settings:
         name = "coffee_sessions"
@@ -189,23 +221,38 @@ class Payment(Document):
 
 # TODO: check
 class UserDebt(Document):
-    """Tracks debt between users for coffee orders."""
+    """
+    Tracks debt for a user on a completed coffee card.
+    Created when a coffee card is marked as completed.
+    """
 
     # TelegramUser inherits from PassiveUser so linking against PassiveUser is sufficient for both cases
     debtor: Link[PassiveUser] = Field(..., description="User who owes money")
-    creditor: Link[TelegramUser] = Field(..., description="User who is owed money")
-    total_amount: float = Field(..., ge=0, description="Total debt amount")
-    coffee_card: Link[CoffeeCard] = Field(..., description="Card the debt is related to")
+    creditor: Link[TelegramUser] = Field(..., description="User who is owed money (card purchaser)")
+    coffee_card: Link[CoffeeCard] = Field(..., description="The completed card this debt is for")
     
-    # Track individual orders that contribute to this debt
-    orders: List[Link[CoffeeOrder]] = Field(default_factory=list)
+    # Debt details
+    total_coffees: int = Field(..., ge=0, description="Number of coffees consumed from this card")
+    cost_per_coffee: float = Field(..., gt=0, description="Cost per coffee at time of card completion")
+    total_amount: float = Field(..., ge=0, description="Total debt amount (total_coffees * cost_per_coffee)")
+    paid_amount: float = Field(default=0.0, ge=0, description="Amount already paid towards this debt")
     
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
+    # Future: adjustment tracking
+    # adjustment_amount: float = Field(default=0.0, description="Adjustment due to missing coffees")
+    # adjustment_reason: Optional[str] = Field(None, description="Reason for adjustment")
+    
+    created_at: datetime = Field(default_factory=datetime.now, description="When debt was created (card completed)")
     is_settled: bool = Field(default=False, description="Whether debt is fully paid")
+    settled_at: Optional[datetime] = Field(None, description="When debt was fully settled")
     
     class Settings:
         name = "user_debts"
+        indexes = [
+            "debtor",
+            "creditor", 
+            "coffee_card",
+            [("debtor", 1), ("is_settled", 1)],  # For finding user's unpaid debts
+        ]
         
     @classmethod
     async def get_user_debts(cls, user_id: int) -> Sequence["UserDebt"]:

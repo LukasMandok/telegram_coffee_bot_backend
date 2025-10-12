@@ -163,6 +163,24 @@ class BeanieRepository(BaseRepository):
         # Check PassiveUser
         passive_user = await models.PassiveUser.find_one(models.PassiveUser.display_name == display_name)
         return passive_user
+    
+    async def find_user_by_id_string(self, id_string: str):
+        """Find a user (TelegramUser or PassiveUser) by their ObjectId string."""
+        from bson import ObjectId
+        
+        try:
+            object_id = ObjectId(id_string)
+        except:
+            return None
+        
+        # Check TelegramUser first
+        telegram_user = await models.TelegramUser.get(object_id)
+        if telegram_user:
+            return telegram_user
+        
+        # Check PassiveUser
+        passive_user = await models.PassiveUser.get(object_id)
+        return passive_user
 
     async def is_user_admin(self, user_id: int) -> bool:
         """Check if a user is an admin by looking up their user_id in config."""
@@ -375,7 +393,8 @@ class BeanieRepository(BaseRepository):
                 paypal_link=paypal_link,
                 last_login=datetime.now(),
                 created_at=passive_user.created_at,  # Preserve original creation date
-                updated_at=datetime.now()
+                updated_at=datetime.now(),
+                stable_id=passive_user.stable_id  # Preserve stable_id across conversion
             )
             
             # Set lang_code after creation

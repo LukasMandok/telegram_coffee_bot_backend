@@ -11,9 +11,6 @@ from ..models.beanie_models import TelegramUser
 from .conversations import ConversationManager
 from ..handlers import handlers
 from ..dependencies import dependencies as dep
-from ..handlers.coffee import (
-    get_user_active_session           
-)
 from ..exceptions.coffee_exceptions import (
     InvalidCoffeeCountError, 
     InsufficientCoffeeError, 
@@ -387,7 +384,7 @@ class CommandManager:
         log_telegram_command(user_id, "/cancel_session", getattr(event, 'chat_id', None))
         
         try:            
-            session = await get_user_active_session(user_id)
+            session = await self.api.session_manager.get_user_active_session(user_id)
             
             if session is None:
                 await self.api.message_manager.send_text(

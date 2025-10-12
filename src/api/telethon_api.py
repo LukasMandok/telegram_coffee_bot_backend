@@ -42,6 +42,7 @@ from ..bot.commands import CommandManager
 from ..bot.group_keyboard_manager import GroupKeyboardManager
 from ..bot.session_manager import SessionManager
 from ..bot.coffee_card_manager import CoffeeCardManager
+from ..bot.debt_manager import DebtManager
 
 # Type-only imports - only needed for type annotations
 if TYPE_CHECKING:
@@ -88,12 +89,12 @@ class TelethonAPI:
         ).start(bot_token=self.config.bot_token)
         
         log_telegram_bot_started(self.config.api_id)
-
-        # Initialize managers with runtime imports to avoid circular dependencies
+        
         self.message_manager = MessageManager(self.bot)
         self.command_manager = CommandManager(self)
         self.group_keyboard_manager = GroupKeyboardManager(self)
         self.session_manager = SessionManager(self)
+        self.debt_manager = DebtManager(self)
         self.coffee_card_manager = CoffeeCardManager(self)
 
         # Register all handlers

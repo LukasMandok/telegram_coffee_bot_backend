@@ -1,4 +1,5 @@
 from typing import Annotated, Optional, List, Dict, TYPE_CHECKING
+import uuid
 
 from beanie import Document, Indexed, Link
 from pydantic import Field, field_validator
@@ -48,6 +49,12 @@ chocolates = await Product.find(
 #---------------------------
 
 class BaseUser(base.BaseUser, Document):
+    # Stable identifier that persists across user type conversions
+    stable_id: Annotated[str, Indexed(unique=True)] = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        description="Stable UUID that persists when PassiveUser converts to TelegramUser"
+    )
+    
     first_name: str
     last_name: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.now)

@@ -57,6 +57,30 @@ class SessionManager:
             CoffeeSession.initiator == user,
             CoffeeSession.is_active == True
         )
+    
+    async def get_user_active_session(self, user_id: int) -> Optional[CoffeeSession]:
+        """
+        Get the active coffee session where user is a participant.
+        
+        Args:
+            user_id: Telegram user ID
+            
+        Returns:
+            Active CoffeeSession if found, None otherwise
+        """
+        try:
+            user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
+            if not user:
+                return None
+                
+            session = await CoffeeSession.find_one(
+                CoffeeSession.participants == user,
+                CoffeeSession.is_active == True
+            )
+            return session
+        except Exception as e:
+            print(f"Error getting user active session: {e}")
+            return None
 
     # async def get_active_coffee_cards(self) -> List[CoffeeCard]:
     #     """Get all active coffee cards."""
@@ -472,12 +496,14 @@ class SessionManager:
             return []
         initiator_id = int(getattr(initiator_user, 'user_id'))
 
-        # Materialize allocations -> orders
-        orders_created = await self.api.coffee_card_manager.create_orders_from_allocations(allocations, initiator_id)
+        # Materialize allocations -> orders (pass session so relationships are updated)
+        orders_created = await self.api.coffee_card_manager.create_orders_from_allocations(
+            allocations, 
+            initiator_id,
+            self.session
+        )
 
-        # attach orders to session and persist
-        for order in orders_created:
-            self.session.orders.append(order)
+        # Session orders are already updated in create_orders_from_allocations
         await self.session.save()
 
         return orders_created
