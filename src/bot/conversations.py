@@ -1160,3 +1160,263 @@ class ConversationManager:
                 user_id, f"❌ Failed to create coffee card: {str(e)}", message, remove_buttons=True
             )
             return False
+
+    @managed_conversation("debt_overview", 300)
+    async def debt_overview_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
+        """
+        Interactive debt overview conversation with payment marking.
+        
+        Args:
+            user_id: Telegram user ID
+            conv: Active Telethon conversation object (provided by decorator)
+            state: Conversation state object (provided by decorator)
+            
+        Returns:
+            bool: True if conversation completed successfully, False otherwise
+        """
+        from telethon import Button
+        
+        # Get the user
+        user = await dep.get_repo().find_user_by_id(user_id)
+        if not user:
+            await self.api.message_manager.send_text(
+                user_id,
+                "❌ User not found.",
+                True, True
+            )
+            return False
+        
+        # Main conversation loop
+        message = None
+        while True:
+            # Get current debt summary
+            debt_summary = await self.api.debt_manager.get_debt_summary_by_creditor(user)
+            
+            if not debt_summary:
+                await self.send_or_edit_message(
+                    user_id,
+                    "✅ **No Outstanding Debts**\n\nYou don't owe anyone money! 🎉",
+                    message,
+                    remove_buttons=True
+                )
+                return True
+            
+            # Build overview text
+            overview_text = "💳 **Your Debt Overview**\n\n"
+            total_all_debts = 0.0
+            creditor_buttons = []
+            
+            for creditor_name, summary in debt_summary.items():
+                total_owed = summary["total_owed"]
+                total_all_debts += total_owed
+                
+                overview_text += f"**{creditor_name}**\n"
+                overview_text += f"💰 You owe: **€{total_owed:.2f}**\n"
+                
+                if summary["paypal_link"]:
+                    payment_link_with_amount = f"{summary['paypal_link']}/{total_owed:.2f}EUR"
+                    overview_text += f"💳 Pay now: {payment_link_with_amount}\n"
+                
+                overview_text += "\n"
+                creditor_buttons.append(creditor_name)
+            
+            overview_text += f"**Total Outstanding: €{total_all_debts:.2f}**\n\n"
+            overview_text += "━━━━━━━━━━━━━━━━\n"
+            overview_text += "**Mark as Paid:**\n"
+            overview_text += "Select a creditor below to mark payment"
+            
+            # Create keyboard with creditor buttons (2 per row)
+            buttons = []
+            for i in range(0, len(creditor_buttons), 2):
+                row = []
+                for j in range(2):
+                    if i + j < len(creditor_buttons):
+                        cred_name = creditor_buttons[i + j]
+                        row.append(Button.inline(f"💰 {cred_name}", f"debt_pay:{cred_name}".encode('utf-8')))
+                buttons.append(row)
+            buttons.append([Button.inline("❌ Close", b"debt_close")])
+            
+            # Send or edit the overview message
+            data, message = await self.send_keyboard_and_wait_response(
+                conv, user_id, overview_text, buttons, 180
+            )
+            
+            if data is None or data == "debt_close":
+                if message:
+                    await message.delete()
+                return True
+            
+            # Handle creditor selection
+            if data.startswith("debt_pay:"):
+                creditor_name = data.split(":", 1)[1]
+                
+                if creditor_name not in debt_summary:
+                    await self.api.message_manager.send_text(
+                        user_id, "❌ Creditor not found.", True, True
+                    )
+                    continue
+                
+                # Show payment options
+                creditor_info = debt_summary[creditor_name]
+                total_owed = creditor_info["total_owed"]
+                
+                payment_text = (
+                    f"💳 **Mark Payment to {creditor_name}**\n\n"
+                    f"Total owed: **€{total_owed:.2f}**\n\n"
+                    f"Choose an option:"
+                )
+                
+                payment_buttons = [
+                    [Button.inline(f"✅ Mark Full Amount (€{total_owed:.2f})", f"debt_mark_full:{creditor_name}".encode('utf-8'))],
+                    [Button.inline("💵 Specify Custom Amount", f"debt_mark_custom:{creditor_name}".encode('utf-8'))],
+                    [Button.inline("« Back", b"debt_back")]
+                ]
+                
+                data2, message = await self.send_keyboard_and_wait_response(
+                    conv, user_id, payment_text, payment_buttons, 120
+                )
+                
+                if data2 is None or data2 == "debt_back":
+                    # Return to main overview (loop continues)
+                    continue
+                
+                if data2.startswith("debt_mark_full:"):
+                    # Mark full amount as paid
+                    cred_name = data2.split(":", 1)[1]
+                    
+                    # Update all debts for this creditor
+                    for debt in creditor_info["debts"]:
+                        remaining = debt.total_amount - debt.paid_amount
+                        if remaining > 0:
+                            debt.paid_amount = debt.total_amount
+                            await debt.save()
+                    
+                    # Show success message
+                    await self.send_or_edit_message(
+                        user_id,
+                        f"✅ Marked €{total_owed:.2f} as paid to {cred_name}",
+                        message,
+                        remove_buttons=True
+                    )
+                    
+                    # Continue loop to refresh overview
+                    message = None
+                    continue
+                
+                if data2.startswith("debt_mark_custom:"):
+                    # Custom amount input
+                    cred_name = data2.split(":", 1)[1]
+                    
+                    await self.send_or_edit_message(
+                        user_id,
+                        f"💵 **Custom Payment to {cred_name}**\n\n"
+                        f"Total owed: **€{total_owed:.2f}**\n\n"
+                        f"Enter the amount you paid (in €):",
+                        message,
+                        remove_buttons=True
+                    )
+                    
+                    # Wait for amount input
+                    amount_event = await self.receive_message(conv, user_id, 60)
+                    try:
+                        paid_amount = float(amount_event.message.message.strip())
+                        if paid_amount <= 0:
+                            raise ValueError("Amount must be positive")
+                        if paid_amount > total_owed:
+                            raise ValueError("Amount cannot exceed total owed")
+                        
+                        # Update debts with custom amount
+                        remaining_to_pay = paid_amount
+                        for debt in creditor_info["debts"]:
+                            debt_remaining = debt.total_amount - debt.paid_amount
+                            if debt_remaining > 0 and remaining_to_pay > 0:
+                                payment_for_this_debt = min(remaining_to_pay, debt_remaining)
+                                debt.paid_amount += payment_for_this_debt
+                                await debt.save()
+                                remaining_to_pay -= payment_for_this_debt
+                        
+                        await self.api.message_manager.send_text(
+                            user_id,
+                            f"✅ Marked €{paid_amount:.2f} as paid to {cred_name}",
+                            True, True
+                        )
+                        
+                        # Continue loop to refresh overview
+                        message = None
+                        continue
+                        
+                    except ValueError as e:
+                        await self.api.message_manager.send_text(
+                            user_id,
+                            f"❌ Invalid amount: {str(e)}",
+                            True, True
+                        )
+                        # Continue loop to return to main overview
+                        message = None
+                        continue
+    
+    @managed_conversation("complete_coffee_card", 60)
+    async def complete_coffee_card_conversation(
+        self, 
+        user_id: int, 
+        conv: Conversation, 
+        state: ConversationState,
+        card,  # CoffeeCard object
+    ) -> bool:
+        """
+        Handle the conversation flow for completing a coffee card with confirmation.
+        
+        Args:
+            user_id: The user requesting completion
+            conv: The active conversation
+            state: The conversation state
+            card: The CoffeeCard object to complete
+            
+        Returns:
+            True if card was completed, False if cancelled
+        """
+        from ..models.coffee_models import CoffeeCard
+        
+        # Check if confirmation is needed (card has remaining coffees)
+        if card.remaining_coffees > 0:
+            confirmation_text = (
+                f"⚠️ Card **{card.name}** has {card.remaining_coffees} coffees left.\n\n"
+                f"Complete it anyway?"
+            )
+            
+            # Use existing confirmation keyboard and wait for response
+            data, message = await self.send_keyboard_and_wait_response(
+                conv,
+                user_id,
+                confirmation_text,
+                KeyboardManager.get_confirmation_keyboard(),
+                60
+            )
+            
+            if data != "Yes":
+                # User declined or timeout
+                await self.send_or_edit_message(
+                    user_id,
+                    "❌ Cancelled.",
+                    message,
+                    remove_buttons=True
+                )
+                return False
+            
+            # User confirmed - continue with completion
+            await self.send_or_edit_message(
+                user_id,
+                "✅ Completing...",
+                message,
+                remove_buttons=True
+            )
+        
+        # Now complete the card (without confirmation since we already handled it)
+        debts = await self.api.coffee_card_manager.complete_coffee_card(
+            card,
+            requesting_user_id=user_id,
+            require_confirmation=False  # We already handled confirmation above
+        )
+        
+        return len(debts) > 0  # True if debts were created, False otherwise
+

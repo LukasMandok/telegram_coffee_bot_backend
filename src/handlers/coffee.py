@@ -11,10 +11,11 @@ from datetime import datetime
 # Runtime imports - actually used in code
 from ..models.coffee_models import (
     CoffeeCard, CoffeeOrder, Payment, UserDebt, 
-    CoffeeSession, PaymentMethod
+    CoffeeSession, PaymentMethod, ConsumerStats
 )
 
 from ..dependencies.dependencies import repo
+from ..utils.order_utils import create_order_and_update_cards
 
 from ..bot.group_state_helpers import initialize_group_state_from_db
 from ..models.beanie_models import TelegramUser
@@ -46,12 +47,12 @@ async def create_coffee_order(
 ) -> CoffeeOrder:
     """Create a coffee order and update card/debt tracking."""
 
-    # Get the coffee card and consumer
+    # Get the coffee card and validate
     card = await CoffeeCard.get(coffee_card_id)
     if not card:
         raise CoffeeCardNotFoundError(coffee_card_id)
 
-    # Look up by Telegram user_id field (Document.get expects an ObjectId)
+    # Look up users
     initiator = await TelegramUser.find_one(TelegramUser.user_id == initiator_id)
     if not initiator: 
         raise UserNotFoundError(user_id=initiator_id)
@@ -60,7 +61,7 @@ async def create_coffee_order(
     if not consumer:
         raise UserNotFoundError(user_id=consumer_id)
 
-    # Check if enough coffees are available
+    # Check availability
     if card.remaining_coffees < quantity:
         raise InsufficientCoffeeCardCapacityError(
             requested=quantity,
@@ -68,24 +69,19 @@ async def create_coffee_order(
             card_name=card.name
         )
 
-    # Create the order
-    order = CoffeeOrder(
-        coffee_card=card,
+    # Use the shared order creation utility
+    order = await create_order_and_update_cards(
         initiator=initiator,
         consumer=consumer,
+        cards=[card],
         quantity=quantity,
-        session=None  # Explicitly set as None for individual orders
+        from_session=False,
+        session=None
     )
-    await order.insert()
     
     log_coffee_order_created(str(order.id), consumer_id, initiator_id, quantity, card.name)
 
-    # Update card
-    card.remaining_coffees -= quantity
-    await card.save()
-
     # Create/update debt if consumer != card purchaser
-    # Fetch/resolve the purchaser link to access its fields
     await card.fetch_link("purchaser")
 
     if consumer.user_id != card.purchaser.user_id:  # type: ignore

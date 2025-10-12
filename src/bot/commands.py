@@ -8,6 +8,7 @@ Telegram-specific operations with domain business logic.
 from typing import Dict, Any, List, TYPE_CHECKING
 from telethon import events
 from ..models.beanie_models import TelegramUser
+from ..models.coffee_models import CoffeeCard
 from .conversations import ConversationManager
 from ..handlers import handlers
 from ..dependencies import dependencies as dep
@@ -421,3 +422,96 @@ class CommandManager:
                 f"❌ Failed to cancel session: {str(e)}",
                 True, True
             )
+
+    @dep.verify_user
+    @dep.verify_user
+    async def handle_complete_coffee_card_command(self, event: events.NewMessage.Event) -> None:
+        """
+        Handle the /complete_coffee_card command to manually complete the oldest coffee card.
+        
+        Args:
+            event: The NewMessage event containing /complete_coffee_card command
+        """
+        user_id = event.sender_id
+        log_telegram_command(user_id, "/complete_coffee_card", getattr(event, 'chat_id', None))
+        
+        # Check if user already has an active conversation
+        if self.conversation_manager.has_active_conversation(user_id):
+            await self.api.message_manager.send_text(
+                user_id,
+                "❌ You already have an active conversation. Please finish it first or use /cancel.",
+                True,
+                True
+            )
+            return
+        
+        try:
+            # Get all active coffee cards from the manager (already loaded)
+            cards = self.api.coffee_card_manager.cards
+            print("!! cards:", len(cards))
+            
+            
+            if not cards:
+                oldest_card = None
+            else:
+                # Sort by created_at to get oldest first
+                sorted_cards = sorted(cards, key=lambda c: c.created_at)
+                oldest_card = sorted_cards[0]
+            
+            if not oldest_card:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ No active coffee cards found.",
+                    True, True
+                )
+                return
+            
+            # Start the completion conversation (handles confirmation if needed)
+            success = await self.conversation_manager.complete_coffee_card_conversation(
+                user_id,
+                card=oldest_card
+            )
+            
+            if not success:
+                # User cancelled - conversation already handled the message
+                return
+            
+        except ValueError as e:
+            await self.api.message_manager.send_text(
+                user_id,
+                f"❌ Error: {str(e)}",
+                True, True
+            )
+        except Exception as e:
+            import traceback
+            print(f"❌ Unexpected error in handle_complete_coffee_card_command for user {user_id}: {e}")
+            print(f"Full traceback:\n{traceback.format_exc()}")
+            await self.api.message_manager.send_text(
+                user_id,
+                f"❌ Failed to complete coffee card: {str(e)}",
+                True, True
+            )
+
+    @dep.verify_user
+    async def handle_debt_command(self, event: events.NewMessage.Event) -> None:
+        """
+        Handle the /debt command to show debt overview.
+        
+        Args:
+            event: The NewMessage event containing /debt command
+        """
+        user_id = event.sender_id
+        log_telegram_command(user_id, "/debt", getattr(event, 'chat_id', None))
+        
+        # Check if user already has an active conversation
+        if self.conversation_manager.has_active_conversation(user_id):
+            await self.api.message_manager.send_text(
+                user_id,
+                "❌ You already have an active conversation. Please finish it first or use /cancel.",
+                True,
+                True
+            )
+            return
+        
+        # Start the debt overview conversation
+        await self.conversation_manager.debt_overview_conversation(user_id)

@@ -26,39 +26,43 @@ class DebtManager:
     def __init__(self, api):
         self.api = api
     
-    async def complete_card_and_create_debts(self, card: CoffeeCard) -> List[UserDebt]:
+    @staticmethod
+    def calculate_debt_amount(total_coffees: int, cost_per_coffee: float) -> float:
         """
-        Mark a coffee card as completed and create debt records for all consumers.
-        
-        This is the PRIMARY method for debt creation. Debts are only created here,
-        when a card is marked as completed.
+        Calculate the total debt amount.
         
         Args:
-            card: Coffee card to complete
+            total_coffees: Number of coffees consumed
+            cost_per_coffee: Cost per coffee
             
         Returns:
-            List of created UserDebt documents
-            
-        Raises:
-            ValueError: If card is already completed
+            Total debt amount
         """
-        if not card.is_active:
-            raise ValueError(f"Card '{card.name}' is already completed")
+        return total_coffees * cost_per_coffee
+    
+    async def create_or_update_debts_for_card(self, card: CoffeeCard) -> List[UserDebt]:
+        """
+        Create or update debt records for all consumers of a coffee card.
         
-        # Fetch the purchaser (creditor)
-        await card.fetch_link("purchaser")
+        If a debt already exists for a debtor on this card, it will be updated
+        with the current total_coffees from consumer_stats. This allows for
+        corrections if coffees are missing or need adjustment.
+        
+        This method can be called on both active and inactive cards to create
+        or update debts as needed.
+        
+        Args:
+            card: Coffee card to create/update debts for
+            
+        Returns:
+            List of created or updated UserDebt documents
+        """
+        # Purchaser should already be loaded with the card
         creditor: TelegramUser = card.purchaser  # type: ignore
         creditor_stable_id = creditor.stable_id
         
-        # Mark card as completed
-        card.is_active = False
-        card.completed_at = datetime.now()
-        await card.save()
-        
-        print(f"✅ Card '{card.name}' marked as completed")
-        
-        # Create debts for each consumer (except purchaser)
-        created_debts = []
+        # Create or update debts for each consumer (except purchaser)
+        processed_debts = []
         
         for stable_id, stats in card.consumer_stats.items():
             # Skip purchaser - they don't owe themselves
@@ -75,26 +79,41 @@ class DebtManager:
                 print(f"⚠️  Warning: Consumer with stable_id '{stable_id}' not found, skipping debt creation")
                 continue
             
-            # Calculate debt amount
-            total_amount = stats.total_coffees * card.cost_per_coffee
-            
-            # Create debt record
-            debt = UserDebt(
-                debtor=consumer,  # type: ignore
-                creditor=creditor,  # type: ignore
-                coffee_card=card,  # type: ignore
-                total_coffees=stats.total_coffees,
-                cost_per_coffee=card.cost_per_coffee,
-                total_amount=total_amount,
-                paid_amount=0.0,
-                is_settled=False
+            # Check if debt already exists for this debtor and card
+            existing_debt = await UserDebt.find_one(
+                UserDebt.debtor == consumer,
+                UserDebt.coffee_card == card
             )
-            await debt.insert()
-            created_debts.append(debt)
             
-            print(f"💰 Created debt: {stats.display_name} owes {creditor.display_name} €{total_amount:.2f} ({stats.total_coffees} coffees)")
+            # Calculate debt amount using the helper method
+            total_amount = self.calculate_debt_amount(stats.total_coffees, card.cost_per_coffee)
+            
+            if existing_debt:
+                # Update existing debt
+                existing_debt.total_coffees = stats.total_coffees
+                existing_debt.cost_per_coffee = card.cost_per_coffee
+                existing_debt.total_amount = total_amount
+                # Note: Don't reset paid_amount - keep existing payments
+                await existing_debt.save()
+                processed_debts.append(existing_debt)
+                print(f"🔄 Updated debt: {stats.display_name} owes {creditor.display_name} €{total_amount:.2f} ({stats.total_coffees} coffees)")
+            else:
+                # Create new debt record
+                debt = UserDebt(
+                    debtor=consumer,  # type: ignore
+                    creditor=creditor,  # type: ignore
+                    coffee_card=card,  # type: ignore
+                    total_coffees=stats.total_coffees,
+                    cost_per_coffee=card.cost_per_coffee,
+                    total_amount=total_amount,
+                    paid_amount=0.0,
+                    is_settled=False
+                )
+                await debt.insert()
+                processed_debts.append(debt)
+                print(f"💰 Created debt: {stats.display_name} owes {creditor.display_name} €{total_amount:.2f} ({stats.total_coffees} coffees)")
         
-        return created_debts
+        return processed_debts
     
     async def get_user_debts(
         self, 
@@ -124,6 +143,54 @@ class DebtManager:
             await debt.fetch_link("coffee_card")
         
         return debts
+    
+    async def get_debt_summary_by_creditor(self, user: PassiveUser) -> Dict[str, Dict[str, Any]]:
+        """
+        Get a summary of all outstanding debts grouped by creditor.
+        
+        Only includes debts where paid_amount < total_amount (not fully paid).
+        
+        Args:
+            user: User to get debt summary for (the debtor)
+            
+        Returns:
+            Dict mapping creditor display_name to:
+                - creditor_id: creditor's user_id
+                - creditor_name: creditor's display_name
+                - total_owed: total amount owed to this creditor
+                - paypal_link: creditor's PayPal link (if available)
+                - debts: list of individual debt objects
+        """
+        # Get all unsettled debts for this user
+        all_debts = await self.get_user_debts(user, include_settled=False)
+        
+        # Group by creditor and calculate totals
+        creditor_summary = {}
+        
+        for debt in all_debts:
+            # Skip if fully paid
+            if debt.paid_amount >= debt.total_amount:
+                continue
+            
+            creditor = debt.creditor  # type: ignore
+            creditor_name = creditor.display_name  # type: ignore
+            
+            # Initialize creditor entry if not exists
+            if creditor_name not in creditor_summary:
+                creditor_summary[creditor_name] = {
+                    "creditor_id": creditor.user_id if hasattr(creditor, 'user_id') else None,  # type: ignore
+                    "creditor_name": creditor_name,
+                    "total_owed": 0.0,
+                    "paypal_link": creditor.paypal_link if hasattr(creditor, 'paypal_link') else None,  # type: ignore
+                    "debts": []
+                }
+            
+            # Add outstanding amount to total
+            outstanding = debt.total_amount - debt.paid_amount
+            creditor_summary[creditor_name]["total_owed"] += outstanding
+            creditor_summary[creditor_name]["debts"].append(debt)
+        
+        return creditor_summary
     
     async def get_user_credits(
         self,

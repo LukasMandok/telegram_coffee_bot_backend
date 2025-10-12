@@ -262,7 +262,7 @@ class SessionManager:
         await self.session.save()
 
         # Sync all keyboards for this session
-        await self.api.group_keyboard_manager.sync_all_keyboards_for_session(str(self.session.id))
+        await self.api.group_keyboard_manager.sync_all_keyboards_for_session(self.session)
 
     # async def update_session_coffee_counts(self, group_members: Dict[str, int]) -> None:
     #     """Update coffee counts in the session's group state."""
@@ -314,6 +314,35 @@ class SessionManager:
         # This is a helper method that can be expanded later
         pass
     
+    async def _auto_complete_filled_cards(self, notifier_user_id: int) -> None:
+        """
+        Check for fully filled cards and auto-complete them.
+        
+        Args:
+            notifier_user_id: User ID to notify about completed cards
+        """
+        try:
+            # Check cards from manager's cache (already updated with latest remaining_coffees)
+            # instead of querying database which might have stale data
+            cards_to_complete = []
+            for card in self.api.coffee_card_manager.cards:
+                if card.remaining_coffees == 0:
+                    cards_to_complete.append(card)
+            
+            # Complete each filled card
+            for card in cards_to_complete:
+                print(f"🎯 Auto-completing fully filled card: {card.name}")
+                # Use the shared completion function (no confirmation needed for auto-complete)
+                await self.api.coffee_card_manager.complete_coffee_card(
+                    card,
+                    requesting_user_id=notifier_user_id,
+                    require_confirmation=False
+                )
+                    
+        except Exception as e:
+            print(f"❌ Error auto-completing filled cards: {e}")
+            # Don't fail the session completion if auto-complete fails
+    
     async def complete_session(self, submitted_by_user_id: int) -> bool:
         """
         Complete a session when a user submits their order.
@@ -361,6 +390,69 @@ class SessionManager:
         # Close all keyboards immediately for this session so UI is consistent
         session_id = str(self.session.id)
         await self.api.group_keyboard_manager.cleanup_session_keyboards(session_id)
+
+        # Try to create orders FIRST - this may fail if insufficient coffees
+        try:
+            await self.create_orders()
+        except InsufficientCoffeeError as e:
+            # Insufficient coffee capacity - rollback session completion
+            print(f"❌ Order creation failed: Insufficient coffees")
+            self.session.is_active = True  # Re-activate session
+            self.session.completed_date = None
+            await self.session.save()
+            
+            # Cancel all active conversations for this session to prevent timeout errors
+            if session_id in self.api.group_keyboard_manager.active_keyboards:
+                for participant_user_id in list(self.api.group_keyboard_manager.active_keyboards[session_id].keys()):
+                    self.api.conversation_manager.cancel_conversation(participant_user_id)
+                    print(f"🔕 Cancelled conversation for user {participant_user_id} due to session suspension")
+            
+            # Notify user of insufficient coffee capacity
+            await self.api.message_manager.send_text(
+                submitted_by_user_id,
+                f"⚠️ **Session Suspended!**\n\n"
+                f"❌ Not enough coffees remaining on your cards.\n"
+                f"• Requested: {e.requested}\n"
+                f"• Available: {e.available}\n\n"
+                f"💡 Someone needs to buy and open a new coffee card!\n"
+                f"Use /create_coffee_card to add a new card.\n\n"
+                f"Your session is still active and you can submit again once a new card is available.",
+                vanish=False,
+                conv=False
+            )
+            
+            # Don't send summary or completion messages - orders failed
+            return False
+        except Exception as e:
+            # Other errors - rollback session completion
+            print(f"❌ Order creation failed: {e}")
+            self.session.is_active = True  # Re-activate session
+            self.session.completed_date = None
+            await self.session.save()
+            
+            # Cancel all active conversations for this session to prevent timeout errors
+            if session_id in self.api.group_keyboard_manager.active_keyboards:
+                for participant_user_id in list(self.api.group_keyboard_manager.active_keyboards[session_id].keys()):
+                    self.api.conversation_manager.cancel_conversation(participant_user_id)
+                    print(f"🔕 Cancelled conversation for user {participant_user_id} due to session suspension")
+            
+            # Notify user of generic failure
+            await self.api.message_manager.send_text(
+                submitted_by_user_id,
+                f"⚠️ **Session Suspended!**\n\n"
+                f"❌ Error: {str(e)}\n\n"
+                f"Your session is still active. Please try again.",
+                vanish=False,
+                conv=False
+            )
+            
+            # Don't send summary or completion messages - orders failed
+            return False
+        
+        # Orders created successfully - now check for fully filled cards and auto-complete them
+        await self._auto_complete_filled_cards(submitted_by_user_id)
+        
+        # Send completion notifications
 
         # Send notifications to participants captured earlier
         for participant_user_id in participant_user_ids:
@@ -418,11 +510,6 @@ class SessionManager:
                     print(f"❌ Failed to send session summary to TelegramUser {user_id_to_notify}: {e}")
         except Exception as e:
             print(f"❌ Failed to build/send session summary: {e}")
-        
-        await self.create_orders()
-        
-        # Clean up keyboards
-        await self.api.group_keyboard_manager.cleanup_session_keyboards(session_id)
         
         # Clear current session reference
         if self.session and str(self.session.id) == session_id:

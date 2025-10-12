@@ -42,7 +42,56 @@ class GroupKeyboardManager:
         # session_id -> {user_id -> ActiveKeyboard}
         self.active_keyboards: Dict[str, Dict[int, ActiveKeyboard]] = {}
     
-    def create_group_keyboard(self, group_state: GroupState, current_page: int = 0) -> Any:
+    async def _determine_flags_and_message(self, session: CoffeeSession) -> tuple[bool, bool, str]:
+        """
+        Determine warning flags and build complete message text based on coffee availability.
+        
+        Args:
+            session: The coffee session to check
+            
+        Returns:
+            Tuple of (is_insufficient, is_multi_card, message_text)
+        """
+        # Get available coffees and total
+        available_coffees = await session.get_available_coffees()
+        total_coffees = await session.get_total_coffees()
+        
+        is_insufficient = False
+        is_multi_card = False
+        warning_message = None
+        
+        if total_coffees > 0:
+            # Get active cards to check availability
+            active_cards = await self.api.coffee_card_manager.get_active_coffee_cards()
+            total_available = sum(card.remaining_coffees for card in active_cards)
+            
+            if total_coffees > total_available:
+                # Not enough coffees available
+                is_insufficient = True
+                warning_message = f"⚠️ Not enough coffees remaining on your cards!"
+            elif len(active_cards) > 1 and total_coffees > active_cards[0].remaining_coffees:
+                # Will use multiple cards
+                is_multi_card = True
+                warning_message = "🔄 Coffee orders will be split between multiple cards"
+        
+        # Build complete message text with optional warning
+        message_text = (
+            f"☕ **Group Coffee Order**\n"
+            f"Total: {total_coffees} coffees  ({available_coffees} available)\n"
+        )
+        if warning_message:
+            message_text += f"{warning_message}\n"
+        message_text += "\nSelect coffee quantities for each person:"
+        
+        return is_insufficient, is_multi_card, message_text
+    
+    async def create_group_keyboard(
+        self, 
+        group_state: GroupState, 
+        current_page: int = 0, 
+        is_insufficient: bool = False,
+        is_multi_card: bool = False
+    ) -> Any:
         """
         Generate a paginated group coffee ordering keyboard.
         
@@ -50,10 +99,13 @@ class GroupKeyboardManager:
         - Member names with +/- buttons for coffee counts
         - Pagination controls for large groups (>15 members)
         - Submit button (when orders > 0) and Cancel button
+        - Warning icons based on coffee availability
         
         Args:
             group_state: Current state of group coffee ordering
             current_page: Current page for pagination
+            is_insufficient: Whether there are insufficient coffees
+            is_multi_card: Whether orders will be split across multiple cards
             
         Returns:
             List of button rows for the inline keyboard
@@ -97,7 +149,15 @@ class GroupKeyboardManager:
         ])
         
         if total > 0:
-            keyboard_group[-1].append(Button.inline(f"Submit ({total})", "group_submit"))
+            # Build submit button text with appropriate icon
+            submit_text = f"Submit ({total})"
+            
+            if is_insufficient:
+                submit_text = f"⚠️ Submit ({total})"
+            elif is_multi_card:
+                submit_text = f"🔄 Submit ({total})"
+            
+            keyboard_group[-1].append(Button.inline(submit_text, "group_submit"))
         
         return keyboard_group
     
@@ -116,15 +176,16 @@ class GroupKeyboardManager:
         # Use the group state directly from the session
         group_state = session.group_state
         
-        # Generate keyboard for this user's page
-        keyboard = self.create_group_keyboard(group_state, initial_page)
+        # Determine flags and build complete message text
+        is_insufficient, is_multi_card, message_text = await self._determine_flags_and_message(session)
+        
+        # Generate keyboard for this user's page with flags
+        keyboard = await self.create_group_keyboard(group_state, initial_page, is_insufficient, is_multi_card)
         
         # Send the keyboard message
         message = await self.api.message_manager.send_keyboard(
             user_id, 
-            f"☕ **Group Coffee Order**\n"
-            f"Total: {await session.get_total_coffees()} coffees\n"
-            "Select coffee quantities for each person:", 
+            message_text,
             keyboard, 
             True, 
             True
@@ -174,39 +235,39 @@ class GroupKeyboardManager:
     
 
     # TODO: this is sus
-    async def sync_all_keyboards_for_session(self, session_id: str) -> None:
+    async def sync_all_keyboards_for_session(self, session: CoffeeSession) -> None:
         """
         Synchronize all active keyboards for a specific session.
         
         Args:
-            session_id: Coffee session ID
+            session: Coffee session object
         """
+        if not session:
+            raise ValueError("Session cannot be None")
+        
+        session_id = str(session.id)
         if session_id not in self.active_keyboards:
             return
-        
-        # Get the updated session
-        session = await CoffeeSession.get(session_id)
-        if not session or not session.is_active:
-            return
-        
+                
         # Use the group state directly from the session
         group_state = session.group_state
+        
+        # Determine flags and build complete message text
+        is_insufficient, is_multi_card, message_text = await self._determine_flags_and_message(session)
         
         # Update each participant's keyboard
         keyboards_to_update = list(self.active_keyboards[session_id].items())
         
         for participant_user_id, active_keyboard in keyboards_to_update:
             try:
-                # Generate updated keyboard for this participant using their current page
-                keyboard = self.create_group_keyboard(group_state, active_keyboard.current_page)
+                # Generate updated keyboard for this participant using their current page with flags
+                keyboard = await self.create_group_keyboard(group_state, active_keyboard.current_page, is_insufficient, is_multi_card)
                 
                 # Update the message
                 await self.api.bot.edit_message(
                     participant_user_id,
                     active_keyboard.message_id,
-                    f"☕ **Group Coffee Order**\n"
-                    f"Total: {await session.get_total_coffees()} coffees\n"
-                    "Select coffee quantities for each person:",
+                    message_text,
                     buttons=keyboard
                 )
                 
@@ -272,16 +333,17 @@ class GroupKeyboardManager:
             # Use the group state directly from the session
             group_state = session.group_state
             
+            # Determine flags and build complete message text
+            is_insufficient, is_multi_card, message_text = await self._determine_flags_and_message(session)
+            
             # Generate updated keyboard with this participant's current page
-            keyboard = self.create_group_keyboard(group_state, active_keyboard.current_page)
+            keyboard = await self.create_group_keyboard(group_state, active_keyboard.current_page, is_insufficient, is_multi_card)
             
             # Update the message
             await self.api.bot.edit_message(
                 user_id,
                 active_keyboard.message_id,
-                f"☕ **Group Coffee Order**\n"
-                f"Total: {await session.get_total_coffees()} coffees\n"
-                "Select coffee quantities for each person:",
+                message_text,
                 buttons=keyboard
             )
             

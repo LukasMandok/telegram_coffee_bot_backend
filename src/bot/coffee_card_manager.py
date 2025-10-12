@@ -1,6 +1,7 @@
 import asyncio
 
 from typing import List, Dict, Any, TYPE_CHECKING, Optional
+from datetime import datetime
 
 from src.exceptions.coffee_exceptions import InsufficientCoffeeCardCapacityError, UserNotFoundError
 
@@ -11,6 +12,7 @@ from ..dependencies.dependencies import repo, get_repo
 from ..utils.beanie_utils import requires_beanie
 
 from src.common.log import log_coffee_card_created
+from .keyboards import KeyboardManager
 
 # Type-only imports - only needed for type annotations
 if TYPE_CHECKING:
@@ -124,27 +126,135 @@ class CoffeeCardManager:
         return await CoffeeCard.find(CoffeeCard.purchaser == user, 
                                     fetch_links=True).to_list()
     
-    async def complete_coffee_card(self, card_id: str) -> List[UserDebt]:
+    async def complete_coffee_card(
+        self, 
+        card: CoffeeCard,  
+        requesting_user_id: Optional[int] = None,
+        require_confirmation: bool = False  # Deprecated - confirmation should be handled in conversation
+    ) -> List[UserDebt]:
         """
         Mark a coffee card as completed and create debt records.
         
+        Note: Confirmation logic has been moved to ConversationManager.complete_coffee_card_conversation()
+        
         Args:
-            card_id: ID of the card to complete
+            card: The coffee card to complete
+            requesting_user_id: Optional user ID who is requesting completion (for notifications)
+            require_confirmation: Deprecated - confirmation should be handled before calling this method
             
         Returns:
             List of created UserDebt documents
             
         Raises:
             ValueError: If card not found or already completed
-        """
-        from bson import ObjectId
-        
-        card = await CoffeeCard.get(ObjectId(card_id))
+        """        
         if not card:
-            raise ValueError(f"Card with ID {card_id} not found")
+            raise ValueError(f"Card not provided")
         
-        # Use DebtManager to complete card and create debts
-        debts = await self.api.debt_manager.complete_card_and_create_debts(card)
+        # Purchaser should already be loaded with the card from the cache
+        purchaser: TelegramUser = card.purchaser  # type: ignore
+        
+        # Check if card is already completed
+        if not card.is_active:
+            raise ValueError(f"Card '{card.name}' is already completed")
+        
+        # Create or update debts FIRST (before deactivating card)
+        # because debt_manager checks if card is active
+        debts = await self.api.debt_manager.create_or_update_debts_for_card(card)
+        
+        # NOW mark card as completed and deactivate
+        await self._deactivate_coffee_card(card)
+        
+        print(f"✅ Card '{card.name}' marked as completed")
+        
+        # Build debt summary message for purchaser
+        if debts:
+            debt_summary = "\n".join([
+                f"• {d.debtor.display_name}: €{d.total_amount:.2f} ({d.total_coffees} coffees)"  # type: ignore
+                for d in debts
+            ])
+            total_debt = sum(d.total_amount for d in debts)
+        else:
+            debt_summary = "No debts (only you consumed coffees)"
+            total_debt = 0.0
+        
+        # Notify the purchaser
+        notification_prefix = "🎉 **Card Auto-Completed!**" if not requesting_user_id else "🎉 **Card Completed!**"
+        
+        purchaser_message = (
+            f"{notification_prefix}\n\n"
+            f"📋 Card: **{card.name}**\n"
+            f"💰 Total to Collect: **€{total_debt:.2f}**\n\n"
+        )
+        
+        if debts:
+            purchaser_message += f"**Who Owes You:**\n{debt_summary}\n\n"
+            
+            # Add payment link if available
+            if purchaser.paypal_link:
+                purchaser_message += f"💳 Your Payment Link:\n{purchaser.paypal_link}\n\n"
+                purchaser_message += "Share this link with people who owe you money!"
+            else:
+                purchaser_message += "💡 Set up your payment link with /paypalme to easily collect money!"
+        else:
+            purchaser_message += "No one owes you money for this card. ☕"
+        
+        await self.api.message_manager.send_text(
+            purchaser.user_id,
+            purchaser_message,
+            vanish=False,
+            conv=False,
+            silent=False
+        )
+        
+        # Notify all consumers who have debts
+        for debt in debts:
+            # Debtor should already be loaded from create_or_update_debts_for_card
+            debtor = debt.debtor  # type: ignore
+            
+            # Skip if debtor has no user_id (shouldn't happen for TelegramUsers)
+            if not hasattr(debtor, 'user_id') or not debtor.user_id:
+                continue
+            
+            debtor_message = (
+                f"💳 **Coffee Card Completed!**\n\n"
+                f"📋 Card: **{card.name}**\n"
+                f"☕ You drank: **{debt.total_coffees} coffees**\n"
+                f"💰 You owe: **€{debt.total_amount:.2f}** to: **{purchaser.display_name}**\n"
+            )
+            
+            # Add payment link with amount if available
+            if purchaser.paypal_link:
+                # PayPal.me supports amount parameter: https://paypal.me/username/amount
+                payment_link_with_amount = f"{purchaser.paypal_link}/{debt.total_amount:.2f}EUR"
+                debtor_message += f"\n💳 **Payment Link:**\n{payment_link_with_amount}\n\n"
+                debtor_message += "Click the link to pay directly!"
+            else:
+                debtor_message += f"\n💡 Contact {purchaser.display_name} for payment details."
+            
+            await self.api.message_manager.send_text(
+                debtor.user_id,
+                debtor_message,
+                vanish=False,
+                conv=False,
+                silent=False
+            )
+        
+        # If someone else completed it manually, notify them too
+        if requesting_user_id and requesting_user_id != purchaser.user_id:
+            await self.api.message_manager.send_text(
+                requesting_user_id,
+                f"✅ **Card Completed!**\n\n"
+                f"📋 Card: **{card.name}**\n"
+                f"👤 Purchaser: {purchaser.display_name}\n"
+                f"💰 Total Debts: €{total_debt:.2f}\n\n"
+                f"All debtors have been notified.",
+                vanish=False,
+                conv=False,
+                silent=False
+            )
+        
+        print(f"✅ Card '{card.name}' completed with {len(debts)} debts created, {len(debts)} notifications sent")
         
         return debts
         
@@ -199,7 +309,7 @@ class CoffeeCardManager:
         await order.insert()
         
         # Update each card's relationships and consumer stats
-        consumer_key = consumer.stable_id  # Use stable_id as the key
+        consumer_id = consumer.stable_id  # Use stable_id as the key
         
         for card in cards:
             # Add order to card
@@ -209,15 +319,15 @@ class CoffeeCardManager:
             # Update consumer stats (only for cards that actually contributed)
             coffees_from_this_card = card_deductions.get(str(card.id), 0)
             if coffees_from_this_card > 0:
-                if consumer_key not in card.consumer_stats:
-                    card.consumer_stats[consumer_key] = ConsumerStats(
+                if consumer_id not in card.consumer_stats:
+                    card.consumer_stats[consumer_id] = ConsumerStats(
                         user_id=consumer.stable_id,
                         display_name=consumer.display_name,
                         total_coffees=coffees_from_this_card,
                         last_order_date=order.order_date
                     )
                 else:
-                    stats = card.consumer_stats[consumer_key]
+                    stats = card.consumer_stats[consumer_id]
                     stats.total_coffees += coffees_from_this_card
                     stats.display_name = consumer.display_name  # Update display name in case it changed
                     stats.last_order_date = order.order_date

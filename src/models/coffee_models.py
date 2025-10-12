@@ -130,6 +130,9 @@ class CoffeeSession(Document):
     initiator: Link[TelegramUser] = Field(..., description="User who started the session")
     submitted_by: Optional[Link[TelegramUser]] = Field(None, description="User who submitted the session")
     
+    # Coffee cards available for this session
+    coffee_cards: List[Link[CoffeeCard]] = Field(default_factory=list, description="Coffee cards available for this session")
+    
     # Session participants and their orders
     participants: List[Link[TelegramUser]] = Field(default_factory=lambda data: [data['initiator']],
                                                    description="Users participating in this session")
@@ -150,7 +153,7 @@ class CoffeeSession(Document):
     
     async def get_available_coffees(self) -> int:
         """Get total available coffees across all cards in this session."""
-        await self.fetch_link(self.coffee_cards)
+        await self.fetch_link("coffee_cards")
         
         if not self.coffee_cards:
             return 0
@@ -164,7 +167,7 @@ class CoffeeSession(Document):
     
     async def get_total_cost(self) -> float:
         """Calculate total cost for this session."""
-        await self.fetch_link(self.coffee_cards)
+        await self.fetch_link("coffee_cards")
         
         if not self.coffee_cards:
             return 0.0
