@@ -11,6 +11,8 @@ from pydantic import BaseModel
 from .telethon_models import MessageModel
 from ..common.log import log_telegram_message_sent, log_telegram_keyboard_sent, log_telegram_api_error, log_telegram_message_deleted
 
+if TYPE_CHECKING:
+    from telethon import TelegramClient
 
 class MessageManager:
     """
@@ -20,23 +22,24 @@ class MessageManager:
     lifecycle including cleanup and conversation grouping.
     """
     
-    def __init__(self, bot_client: Any):
+    def __init__(self, bot_client: TelegramClient):
         """
         Initialize MessageManager with bot client.
         
         Args:
             bot_client: Telethon TelegramClient instance
         """
-        self.bot = bot_client
+        self.bot: TelegramClient = bot_client
         self.latest_messages: List[Union["MessageModel", List["MessageModel"], Any]] = []
     
     async def send_text(
         self, 
         user_id: int, 
         text: str, 
-    vanish: bool = True, 
-    conv: bool = False,
-    silent: bool = False
+        vanish: bool = True, 
+        conv: bool = False,
+        silent: bool = False,
+        link_preview: bool = False  # Disable link preview by default
     ) -> Optional["MessageModel"]:
         """
         Send a text message to a user and optionally add it to latest_messages.
@@ -46,12 +49,19 @@ class MessageManager:
             text: Message text content
             vanish: If True, add message to latest_messages for cleanup
             conv: If True, add to conversation group
+            silent: If True, send message silently
+            link_preview: If True, enable link preview (default: False)
             
         Returns:
             The sent message object or None if failed
         """
         try:
-            telegram_message = await self.bot.send_message(user_id, text, silent=silent)
+            telegram_message = await self.bot.send_message(
+                user_id, 
+                text, 
+                silent=silent,
+                link_preview=link_preview
+            )
             message_model = MessageModel.from_telegram_message(telegram_message)
             
             if vanish:
@@ -68,9 +78,10 @@ class MessageManager:
         user_id: int,
         text: str,
         keyboard_layout: Any,
-    vanish: bool = True,
-    conv: bool = False,
-    silent: bool = False
+        vanish: bool = True,
+        conv: bool = False,
+        silent: bool = False,
+        link_preview: bool = False  # Disable link preview by default
     ) -> Optional["MessageModel"]:
         """
         Send a keyboard to the user and optionally add it to latest_messages.
@@ -81,6 +92,8 @@ class MessageManager:
             keyboard_layout: 2D list representing keyboard button layout
             vanish: If True, add message to cleanup cache
             conv: If True, add to conversation group
+            silent: If True, send message silently
+            link_preview: If True, enable link preview (default: False)
             
         Returns:
             The sent message with keyboard or None if failed
@@ -91,6 +104,7 @@ class MessageManager:
                 text,
                 buttons=keyboard_layout,
                 silent=silent,
+                link_preview=link_preview
                 # parse_mode='html'
             )
             message_model = MessageModel.from_telegram_message(telegram_message)

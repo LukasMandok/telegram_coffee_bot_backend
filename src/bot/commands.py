@@ -276,10 +276,18 @@ class CommandManager:
         """
         Handle digit messages (temporary handler for testing).
         
+        Skips processing if user has an active conversation to avoid
+        interfering with conversation inputs like coffee counts or prices.
+        
         Args:
             event: The NewMessage event containing digits
         """
         user_id = event.sender_id
+        
+        # Don't process digits if user is in an active conversation
+        if self.conversation_manager.has_active_conversation(user_id):
+            return
+        
         await self.api.message_manager.send_text(user_id, f'catches digits: {event.text}', True, True)
 
     async def handle_unknown_command(self, event: events.NewMessage.Event) -> None:
