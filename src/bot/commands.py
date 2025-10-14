@@ -48,6 +48,27 @@ class CommandManager:
         self.api = api
         self.conversation_manager = ConversationManager(api)
     
+    async def _check_and_notify_active_conversation(self, user_id: int) -> bool:
+        """
+        Check if user has an active conversation and notify them if they do.
+        
+        Args:
+            user_id: The Telegram user ID to check
+            
+        Returns:
+            bool: True if user has an active conversation (command should abort),
+                  False if user is free to start a new conversation
+        """
+        if self.conversation_manager.has_active_conversation(user_id):
+            await self.api.message_manager.send_text(
+                user_id,
+                "❌ You already have an active conversation. Please finish it first or use /cancel.",
+                True,
+                True
+            )
+            return True
+        return False
+    
     async def handle_start_command(self, event: events.NewMessage.Event) -> None:
         """
         Handle the /start command for user registration.
@@ -190,13 +211,7 @@ class CommandManager:
         log_telegram_command(user_id, "/group", getattr(event, 'chat_id', None))
 
         # Check if user already has an active conversation
-        if self.conversation_manager.has_active_conversation(user_id):
-            await self.api.message_manager.send_text(
-                user_id,
-                "❌ You already have an active conversation. Please finish it first or use /cancel.",
-                True,
-                True
-            )
+        if await self._check_and_notify_active_conversation(user_id):
             return
         
         # Start the group selection conversation
@@ -214,13 +229,7 @@ class CommandManager:
         log_telegram_command(user_id, "/new_coffee_card", getattr(event, 'chat_id', None))
 
         # Check if user already has an active conversation
-        if self.conversation_manager.has_active_conversation(user_id):
-            await self.api.message_manager.send_text(
-                user_id,
-                "❌ You already have an active conversation. Please finish it first or use /cancel.",
-                True,
-                True
-            )
+        if await self._check_and_notify_active_conversation(user_id):
             return
         
         # Start the coffee card creation conversation
@@ -238,13 +247,7 @@ class CommandManager:
         log_telegram_command(user_id, "/paypalme", getattr(event, 'chat_id', None))
 
         # Check if user already has an active conversation
-        if self.conversation_manager.has_active_conversation(user_id):
-            await self.api.message_manager.send_text(
-                user_id,
-                "❌ You already have an active conversation. Please finish it first or use /cancel.",
-                True,
-                True
-            )
+        if await self._check_and_notify_active_conversation(user_id):
             return
         
     # Get the user (registered Telegram users manage PayPal links)
@@ -432,7 +435,6 @@ class CommandManager:
             )
 
     @dep.verify_user
-    @dep.verify_user
     async def handle_complete_coffee_card_command(self, event: events.NewMessage.Event) -> None:
         """
         Handle the /complete_coffee_card command to manually complete the oldest coffee card.
@@ -444,13 +446,7 @@ class CommandManager:
         log_telegram_command(user_id, "/complete_coffee_card", getattr(event, 'chat_id', None))
         
         # Check if user already has an active conversation
-        if self.conversation_manager.has_active_conversation(user_id):
-            await self.api.message_manager.send_text(
-                user_id,
-                "❌ You already have an active conversation. Please finish it first or use /cancel.",
-                True,
-                True
-            )
+        if await self._check_and_notify_active_conversation(user_id):
             return
         
         try:
@@ -512,14 +508,27 @@ class CommandManager:
         log_telegram_command(user_id, "/debt", getattr(event, 'chat_id', None))
         
         # Check if user already has an active conversation
-        if self.conversation_manager.has_active_conversation(user_id):
-            await self.api.message_manager.send_text(
-                user_id,
-                "❌ You already have an active conversation. Please finish it first or use /cancel.",
-                True,
-                True
-            )
+        if await self._check_and_notify_active_conversation(user_id):
             return
         
         # Start the debt overview conversation
         await self.conversation_manager.debt_overview_conversation(user_id)
+
+    @dep.verify_user
+    async def handle_credit_command(self, event: events.NewMessage.Event) -> None:
+        """
+        Handle the /credit command to show credit overview (money owed to the user).
+        
+        Args:
+            event: The NewMessage event containing /credit command
+        """
+        user_id = event.sender_id
+        log_telegram_command(user_id, "/credit", getattr(event, 'chat_id', None))
+        
+        # Check if user already has an active conversation
+        if await self._check_and_notify_active_conversation(user_id):
+            return
+        
+        # Start the credit overview conversation
+        await self.conversation_manager.credit_overview_conversation(user_id)
+

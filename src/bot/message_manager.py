@@ -22,14 +22,14 @@ class MessageManager:
     lifecycle including cleanup and conversation grouping.
     """
     
-    def __init__(self, bot_client: TelegramClient):
+    def __init__(self, bot_client: "TelegramClient"):
         """
         Initialize MessageManager with bot client.
         
         Args:
             bot_client: Telethon TelegramClient instance
         """
-        self.bot: TelegramClient = bot_client
+        self.bot: "TelegramClient" = bot_client
         self.latest_messages: List[Union["MessageModel", List["MessageModel"], Any]] = []
     
     async def send_text(

@@ -113,6 +113,7 @@ class TelethonAPI:
         self.add_handler(lambda event: self.command_manager.handle_complete_coffee_card_command(event), "/complete_coffee_card")
         self.add_handler(lambda event: self.command_manager.handle_paypalme_command(event), "/paypalme")
         self.add_handler(lambda event: self.command_manager.handle_debt_command(event), "/debt")
+        self.add_handler(lambda event: self.command_manager.handle_credit_command(event), "/credit")
         self.add_handler(lambda event: self.command_manager.handle_cancel_command(event), "/cancel")
         # TODO: check if I actually need them
         self.add_handler(lambda event: self.command_manager.handle_complete_session_command(event), "/complete_session")

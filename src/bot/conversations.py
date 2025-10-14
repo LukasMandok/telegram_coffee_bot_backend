@@ -6,6 +6,7 @@ authentication, and group selection processes.
 """
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Dict, Any, Callable, Optional
 from functools import wraps
 from pydantic import BaseModel, Field, ValidationError
@@ -19,6 +20,7 @@ from ..handlers.paypal import create_paypal_link, validate_paypal_link
 from ..dependencies import dependencies as dep
 from .keyboards import KeyboardManager
 
+logger = logging.getLogger(__name__)
             
 from ..common.log import (
     log_telegram_callback, log_conversation_started, log_conversation_step, log_unexpected_error,
@@ -469,6 +471,10 @@ class ConversationManager:
         phone = getattr(user_entity, 'phone', None)
         photo_id = getattr(user_entity, 'photo', None)
         lang_code = getattr(user_entity, 'lang_code', 'en')
+        
+        # Normalize phone: convert empty strings or whitespace to None
+        if phone is not None and (not isinstance(phone, str) or not phone.strip()):
+            phone = None
         
         # Debug logging to see what we're getting from Telegram
         print(f"DEBUG: Telegram user entity for user_id {user_id}:")
@@ -1353,6 +1359,313 @@ class ConversationManager:
                         )
                         # Continue loop to return to main overview
                         message = None
+                        continue
+    
+    @managed_conversation("credit_overview", 300)
+    async def credit_overview_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
+        """
+        Interactive credit overview conversation for creditors.
+        Shows money owed to them and allows marking debts as paid.
+        
+        Args:
+            user_id: Telegram user ID
+            conv: Active Telethon conversation object (provided by decorator)
+            state: Conversation state object (provided by decorator)
+            
+        Returns:
+            bool: True if conversation completed successfully, False otherwise
+        """
+        # Get the user
+        user = await dep.get_repo().find_user_by_id(user_id)
+        if not user:
+            await self.api.message_manager.send_text(
+                user_id,
+                "❌ User not found.",
+                True, True
+            )
+            return False
+        
+        # Main conversation loop
+        message = None
+        current_view = "main"  # Can be: main, debtors, debtor_debts
+        current_debtor_name = None
+        
+        while True:
+            if current_view == "main":
+                # Get all credits (debts where this user is the creditor)
+                all_credits = await self.api.debt_manager.get_user_credits(user, include_settled=False)
+                
+                if not all_credits:
+                    await self.send_or_edit_message(
+                        user_id,
+                        "✅ **No Outstanding Credits**\n\nNo one owes you money! 🎉",
+                        message,
+                        remove_buttons=True
+                    )
+                    return True
+                
+                # Fetch links for all credits
+                for debt in all_credits:
+                    if not hasattr(debt.debtor, 'display_name'):
+                        await debt.fetch_link("debtor")
+                    if not hasattr(debt.coffee_card, 'name'):
+                        await debt.fetch_link("coffee_card")
+                
+                # Group credits by card and calculate totals
+                card_summaries = {}  # card_name -> {debtors: {name: amount}, total: float}
+                total_all_credits = 0.0
+                all_debtors = set()
+                
+                for debt in all_credits:
+                    card_name = debt.coffee_card.name if debt.coffee_card else "Unknown Card"
+                    debtor_name = debt.debtor.display_name if debt.debtor else "Unknown"
+                    outstanding = debt.total_amount - debt.paid_amount
+                    
+                    if card_name not in card_summaries:
+                        card_summaries[card_name] = {"debtors": {}, "total": 0.0}
+                    
+                    if debtor_name not in card_summaries[card_name]["debtors"]:
+                        card_summaries[card_name]["debtors"][debtor_name] = 0.0
+                    
+                    card_summaries[card_name]["debtors"][debtor_name] += outstanding
+                    card_summaries[card_name]["total"] += outstanding
+                    total_all_credits += outstanding
+                    all_debtors.add(debtor_name)
+                
+                # Build overview text
+                overview_text = "💰 **Your Credit Overview**\n\n"
+                overview_text += "People owe you money from these coffee cards:\n\n"
+                
+                for card_name, summary in card_summaries.items():
+                    overview_text += f"**{card_name}**\n"
+                    for debtor_name, amount in summary["debtors"].items():
+                        overview_text += f"  • {debtor_name}: €{amount:.2f}\n"
+                    overview_text += f"  **Subtotal: €{summary['total']:.2f}**\n\n"
+                
+                overview_text += f"**Total Owed to You: €{total_all_credits:.2f}**\n\n"
+                overview_text += "━━━━━━━━━━━━━━━━\n"
+                overview_text += "Choose an action below:"
+                
+                # Create main action keyboard
+                buttons = KeyboardManager.get_credit_main_keyboard()
+                
+                # Send or edit the overview message
+                data, message = await self.send_keyboard_and_wait_response(
+                    conv, user_id, overview_text, buttons, 180
+                )
+                
+                if data is None or data == "credit_close":
+                    if message:
+                        await message.delete()
+                    return True
+                
+                if data == "credit_notify":
+                    # Notify all debtors
+                    notified_count = 0
+                    for debt in all_credits:
+                        if debt.debtor and debt.debtor.telegram_id:
+                            outstanding = debt.total_amount - debt.paid_amount
+                            card_name = debt.coffee_card.name if debt.coffee_card else "Unknown Card"
+                            creditor_name = user.display_name
+                            
+                            notify_text = (
+                                f"💳 **Payment Reminder**\n\n"
+                                f"You owe **€{outstanding:.2f}** to {creditor_name}\n"
+                                f"from coffee card: **{card_name}**\n\n"
+                            )
+                            
+                            if user.paypal_username:
+                                payment_link = f"https://paypal.me/{user.paypal_username}/{outstanding:.2f}EUR"
+                                notify_text += f"💳 Pay now: {payment_link}"
+                            
+                            try:
+                                await self.api.message_manager.send_text(
+                                    debt.debtor.telegram_id,
+                                    notify_text,
+                                    True, True
+                                )
+                                notified_count += 1
+                            except Exception as e:
+                                logger.error(f"Failed to notify debtor {debt.debtor.telegram_id}: {e}")
+                    
+                    await self.send_or_edit_message(
+                        user_id,
+                        f"✅ Sent {notified_count} payment reminder(s)",
+                        message,
+                        remove_buttons=True
+                    )
+                    message = None
+                    continue
+                
+                if data == "credit_mark_paid":
+                    current_view = "debtors"
+                    continue
+            
+            elif current_view == "debtors":
+                # Show list of debtors to choose from
+                all_credits = await self.api.debt_manager.get_user_credits(user, include_settled=False)
+                
+                # Fetch links if needed
+                for debt in all_credits:
+                    if not hasattr(debt.debtor, 'display_name'):
+                        await debt.fetch_link("debtor")
+                
+                # Group by debtor
+                debtor_totals = {}  # debtor_name -> total_outstanding
+                for debt in all_credits:
+                    debtor_name = debt.debtor.display_name if debt.debtor else "Unknown"
+                    outstanding = debt.total_amount - debt.paid_amount
+                    if debtor_name not in debtor_totals:
+                        debtor_totals[debtor_name] = 0.0
+                    debtor_totals[debtor_name] += outstanding
+                
+                debtor_list = list(debtor_totals.keys())
+                
+                debtor_text = "**Select a debtor to mark payments:**\n\n"
+                for debtor_name in debtor_list:
+                    debtor_text += f"• {debtor_name}: €{debtor_totals[debtor_name]:.2f}\n"
+                
+                buttons = KeyboardManager.get_credit_debtors_keyboard(debtor_list)
+                
+                data, message = await self.send_keyboard_and_wait_response(
+                    conv, user_id, debtor_text, buttons, 120
+                )
+                
+                if data is None or data == "credit_back_main":
+                    current_view = "main"
+                    continue
+                
+                if data.startswith("credit_debtor:"):
+                    current_debtor_name = data.split(":", 1)[1]
+                    current_view = "debtor_debts"
+                    continue
+            
+            elif current_view == "debtor_debts":
+                # Show specific debts for selected debtor
+                all_credits = await self.api.debt_manager.get_user_credits(user, include_settled=False)
+                
+                # Fetch links if needed
+                for debt in all_credits:
+                    if not hasattr(debt.debtor, 'display_name'):
+                        await debt.fetch_link("debtor")
+                    if not hasattr(debt.coffee_card, 'name'):
+                        await debt.fetch_link("coffee_card")
+                
+                # Filter debts for this debtor
+                debtor_debts = []
+                for debt in all_credits:
+                    debtor_name = debt.debtor.display_name if debt.debtor else "Unknown"
+                    if debtor_name == current_debtor_name:
+                        outstanding = debt.total_amount - debt.paid_amount
+                        if outstanding > 0:
+                            card_name = debt.coffee_card.name if debt.coffee_card else "Unknown Card"
+                            debtor_debts.append((card_name, outstanding, str(debt.id)))
+                
+                if not debtor_debts:
+                    current_view = "debtors"
+                    continue
+                
+                total_from_debtor = sum(amount for _, amount, _ in debtor_debts)
+                
+                debt_text = (
+                    f"**Debts from {current_debtor_name}**\n\n"
+                    f"Total owed: **€{total_from_debtor:.2f}**\n\n"
+                    f"Select a debt to mark as paid:"
+                )
+                
+                buttons = KeyboardManager.get_credit_debtor_debts_keyboard(
+                    current_debtor_name, debtor_debts
+                )
+                
+                data, message = await self.send_keyboard_and_wait_response(
+                    conv, user_id, debt_text, buttons, 120
+                )
+                
+                if data is None or data == "credit_back_debtors":
+                    current_view = "debtors"
+                    current_debtor_name = None
+                    continue
+                
+                if data.startswith("credit_settle:"):
+                    # Mark specific debt as settled
+                    debt_id = data.split(":", 1)[1]
+                    
+                    # Find and settle the debt
+                    from beanie import PydanticObjectId
+                    from ..models.coffee_models import UserDebt
+                    debt = await UserDebt.get(PydanticObjectId(debt_id))
+                    
+                    if debt:
+                        outstanding = debt.total_amount - debt.paid_amount
+                        await self.api.debt_manager._apply_payment_to_debt(debt, outstanding)
+                        
+                        await self.send_or_edit_message(
+                            user_id,
+                            f"✅ Marked €{outstanding:.2f} as paid by {current_debtor_name}",
+                            message,
+                            remove_buttons=True
+                        )
+                    
+                    message = None
+                    current_view = "debtor_debts"
+                    continue
+                
+                if data.startswith("credit_custom:"):
+                    # Custom amount for this debtor
+                    await self.send_or_edit_message(
+                        user_id,
+                        f"💵 **Custom Payment from {current_debtor_name}**\n\n"
+                        f"Total owed: **€{total_from_debtor:.2f}**\n\n"
+                        f"Enter the amount they paid (in €):",
+                        message,
+                        remove_buttons=True
+                    )
+                    
+                    # Wait for amount input
+                    amount_event = await self.receive_message(conv, user_id, 60)
+                    try:
+                        paid_amount = float(amount_event.message.message.strip())
+                        if paid_amount <= 0:
+                            raise ValueError("Amount must be positive")
+                        if paid_amount > total_from_debtor:
+                            raise ValueError("Amount cannot exceed total owed")
+                        
+                        # Apply payment to debts from oldest to newest
+                        debtor_debts_objects = [
+                            debt for debt in all_credits
+                            if (debt.debtor.display_name if debt.debtor else "Unknown") == current_debtor_name
+                            and (debt.total_amount - debt.paid_amount) > 0
+                        ]
+                        
+                        # Sort by creation date (oldest first)
+                        debtor_debts_objects.sort(key=lambda d: d.id)
+                        
+                        remaining_to_apply = paid_amount
+                        for debt in debtor_debts_objects:
+                            debt_outstanding = debt.total_amount - debt.paid_amount
+                            if remaining_to_apply > 0 and debt_outstanding > 0:
+                                payment_for_this = min(remaining_to_apply, debt_outstanding)
+                                await self.api.debt_manager._apply_payment_to_debt(debt, payment_for_this)
+                                remaining_to_apply -= payment_for_this
+                        
+                        await self.api.message_manager.send_text(
+                            user_id,
+                            f"✅ Applied €{paid_amount:.2f} payment from {current_debtor_name}",
+                            True, True
+                        )
+                        
+                        message = None
+                        current_view = "debtor_debts"
+                        continue
+                        
+                    except ValueError as e:
+                        await self.api.message_manager.send_text(
+                            user_id,
+                            f"❌ Invalid amount: {str(e)}",
+                            True, True
+                        )
+                        message = None
+                        current_view = "debtor_debts"
                         continue
     
     @managed_conversation("complete_coffee_card", 60)

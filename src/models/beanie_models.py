@@ -1,7 +1,8 @@
 from typing import Annotated, Optional, List, Dict, TYPE_CHECKING
 import uuid
 
-from beanie import Document, Indexed, Link
+from beanie import Document, Indexed, Link, before_event, Insert
+from pymongo import IndexModel, ASCENDING
 from pydantic import Field, field_validator
 
 from datetime import datetime
@@ -77,7 +78,8 @@ class TelegramUser(base.TelegramUser, PassiveUser):
     user_id: Annotated[int, Indexed(unique=True)]
     username: Annotated[str, Indexed(unique=True)]
     last_login: datetime
-    phone: Annotated[Optional[str], Indexed(unique=True, sparse=True)] = None  # Unique but sparse to allow nulls
+    # Make phone truly optional with a default of None. We'll enforce uniqueness via a partial index.
+    phone: Annotated[Optional[str], Indexed()] = None
     photo_id: Optional[int] = None
     paypal_link: Optional[str] = Field(None, description="PayPal payment link for coffee card purchases")
         
@@ -110,11 +112,20 @@ class TelegramUser(base.TelegramUser, PassiveUser):
             raise ValueError(f"PayPal link is not valid or doesn't exist: {formatted_link}")
         
         return formatted_link
+        
+    @before_event(Insert)
+    def remove_empty_phone(self):
+        if not self.phone:
+            del self.phone
     
     class Settings(PassiveUser.Settings):
         name = "telegram_users"
         use_cache = False  # Disable caching to avoid stale data
         is_root = False
+        # Define a partial unique index to enforce uniqueness only when phone is present and a string
+        indexes = [
+            IndexModel([("phone", ASCENDING)], unique=True, sparse=True)
+        ]
     
 #-----------------------------
 # *      Configuration

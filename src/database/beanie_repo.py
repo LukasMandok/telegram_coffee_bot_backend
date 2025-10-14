@@ -312,6 +312,20 @@ class BeanieRepository(BaseRepository):
         try:
             print(f"DEBUG: Creating passive user: {first_name} {last_name or ''}")
             
+            # First check if a TelegramUser with the same name already exists
+            print(f"DEBUG: Checking for existing TelegramUser with same name...")
+            existing_telegram_user = await models.TelegramUser.find_one(
+                models.TelegramUser.first_name == first_name,
+                models.TelegramUser.last_name == last_name
+            )
+            
+            if existing_telegram_user:
+                print(f"DEBUG: Found existing TelegramUser with same name: {existing_telegram_user.display_name}")
+                raise ValueError(
+                    f"Cannot create passive user: A Telegram user with the name '{first_name} {last_name or ''}' already exists. "
+                    f"Display name: {existing_telegram_user.display_name}"
+                )
+            
             # Generate unique display name
             display_name = await self._generate_unique_display_name(first_name, last_name)
             print(f"DEBUG: Generated display name: '{display_name}'")

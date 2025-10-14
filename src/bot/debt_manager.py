@@ -73,8 +73,10 @@ class DebtManager:
             if stats.total_coffees == 0:
                 continue
             
-            # Find the consumer
-            consumer = await PassiveUser.find_one(PassiveUser.stable_id == stable_id)
+            # Find the consumer: TelegramUser first, then PassiveUser
+            consumer = await TelegramUser.find_one(TelegramUser.stable_id == stable_id)
+            if not consumer:
+                consumer = await PassiveUser.find_one(PassiveUser.stable_id == stable_id)
             if not consumer:
                 print(f"⚠️  Warning: Consumer with stable_id '{stable_id}' not found, skipping debt creation")
                 continue
@@ -207,17 +209,27 @@ class DebtManager:
         Returns:
             List of UserDebt documents with fetched links
         """
-        query = UserDebt.find(UserDebt.creditor == user)  # type: ignore
+        # TODO: improve this I liked the origional more: query = UserDebt.find(UserDebt.creditor == user), maybe creditor.id = user.id works
+        # Query by ObjectId in the Link field
+        from beanie import PydanticObjectId
+        query = UserDebt.find({"creditor.$id": PydanticObjectId(user.id)})
         
         if not include_settled:
             query = query.find(UserDebt.is_settled == False)
         
         credits = await query.to_list()
         
-        # Fetch related data
+        # Manually fetch links for each credit - avoiding cursor issues
         for credit in credits:
-            await credit.fetch_link("debtor")
-            await credit.fetch_link("coffee_card")
+            # Fetch debtor
+            if credit.debtor:
+                debtor = await PassiveUser.get(credit.debtor.ref.id)  # type: ignore
+                credit.debtor = debtor  # type: ignore
+            
+            # Fetch coffee_card
+            if credit.coffee_card:
+                card = await CoffeeCard.get(credit.coffee_card.ref.id)  # type: ignore
+                credit.coffee_card = card  # type: ignore
         
         return credits
     
@@ -330,9 +342,16 @@ class DebtManager:
         if debt.paid_amount >= debt.total_amount:
             debt.is_settled = True
             debt.settled_at = datetime.now()
-            await debt.fetch_link("debtor")
-            await debt.fetch_link("creditor")
-            await debt.fetch_link("coffee_card")
+            # TODO: improve this and make it less bloated (maybe dont fetch at all)
+            
+            # Only fetch links if they haven't been loaded yet
+            if not hasattr(debt.debtor, 'display_name'):
+                await debt.fetch_link("debtor")
+            if not hasattr(debt.creditor, 'display_name'):
+                await debt.fetch_link("creditor")
+            if not hasattr(debt.coffee_card, 'name'):
+                await debt.fetch_link("coffee_card")
+            
             print(f"✅ Debt settled: {debt.debtor.display_name} → {debt.creditor.display_name} for card '{debt.coffee_card.name}'")  # type: ignore
         
         await debt.save()

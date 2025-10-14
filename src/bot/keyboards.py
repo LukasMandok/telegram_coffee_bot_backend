@@ -134,6 +134,66 @@ class KeyboardManager:
         return [navigation_buttons] if navigation_buttons else []
     
     @staticmethod
+    def get_credit_main_keyboard() -> Any:
+        """
+        Generate the main credit overview keyboard with action buttons.
+        
+        Returns:
+            List of button rows containing notify and mark as paid buttons
+        """
+        return [
+            [Button.inline("📢 Notify Users", "credit_notify")],
+            [Button.inline("✅ Mark as Paid", "credit_mark_paid")],
+            [Button.inline("❌ Close", "credit_close")]
+        ]
+    
+    @staticmethod
+    def get_credit_debtors_keyboard(debtors: List[str]) -> Any:
+        """
+        Generate keyboard with buttons for each debtor who owes money.
+        
+        Args:
+            debtors: List of debtor display names
+            
+        Returns:
+            List of button rows, 2 debtors per row
+        """
+        buttons = []
+        for i in range(0, len(debtors), 2):
+            row = []
+            for j in range(2):
+                if i + j < len(debtors):
+                    debtor = debtors[i + j]
+                    row.append(Button.inline(f"👤 {debtor}", f"credit_debtor:{debtor}"))
+            buttons.append(row)
+        buttons.append([Button.inline("« Back", "credit_back_main")])
+        return buttons
+    
+    @staticmethod
+    def get_credit_debtor_debts_keyboard(debtor_name: str, debts: List[tuple]) -> Any:
+        """
+        Generate keyboard with buttons for each debt from a specific debtor.
+        
+        Args:
+            debtor_name: Name of the debtor
+            debts: List of tuples (card_name, outstanding_amount, debt_id)
+            
+        Returns:
+            List of button rows with debt buttons and actions
+        """
+        buttons = []
+        for card_name, amount, debt_id in debts:
+            buttons.append([
+                Button.inline(
+                    f"💳 {card_name}: €{amount:.2f}", 
+                    f"credit_settle:{debt_id}"
+                )
+            ])
+        buttons.append([Button.inline("💵 Specify Custom Amount", f"credit_custom:{debtor_name}")])
+        buttons.append([Button.inline("« Back", "credit_back_debtors")])
+        return buttons
+    
+    @staticmethod
     def get_keyboard_callback_filter(user_id: int) -> events.CallbackQuery:
         """
         Create a callback query event filter for a specific user.
