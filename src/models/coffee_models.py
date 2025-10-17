@@ -245,6 +245,7 @@ class UserDebt(Document):
     # adjustment_reason: Optional[str] = Field(None, description="Reason for adjustment")
     
     created_at: datetime = Field(default_factory=datetime.now, description="When debt was created (card completed)")
+    updated_at: datetime = Field(default_factory=datetime.now, description="Last update time for this debt")
     is_settled: bool = Field(default=False, description="Whether debt is fully paid")
     settled_at: Optional[datetime] = Field(None, description="When debt was fully settled")
     

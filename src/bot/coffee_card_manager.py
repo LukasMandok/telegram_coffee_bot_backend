@@ -61,36 +61,39 @@ class CoffeeCardManager:
 
     async def create_coffee_card(
         self,
-        name: str,
         total_coffees: int,
         cost_per_coffee: float,
         purchaser_id: int
     ) -> CoffeeCard:
         """Create a new coffee card."""
         repo = get_repo()
-        print(f"Creating coffee card: {name}, {total_coffees} coffees at {cost_per_coffee} each, purchaser ID {purchaser_id}")
         purchaser = await repo.find_user_by_id(purchaser_id)
         if not purchaser:
             raise ValueError("Purchaser not found")
 
+        # Count existing cards for naming
+        existing_cards = await CoffeeCard.find().to_list()
+        card_number = len(existing_cards) + 1
+        card_name = f"Card {card_number}"
+
         total_cost = float(total_coffees) * cost_per_coffee
 
         card = CoffeeCard(
-            name=name,
+            name=card_name,
             total_coffees=total_coffees,
             remaining_coffees=total_coffees,
             cost_per_coffee=cost_per_coffee,
             total_cost=total_cost,
             purchaser=purchaser
         )
-        
+
         print(f"Coffee card created: {card}")
 
         await card.insert()
-        log_coffee_card_created(name, total_coffees, purchaser_id, cost_per_coffee)
-        
+        log_coffee_card_created(card_name, total_coffees, purchaser_id, cost_per_coffee)
+
         await self._add_coffee_card(card)
-        
+
         return card
     
     async def get_available(self) -> int:

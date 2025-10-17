@@ -84,65 +84,13 @@ async def create_coffee_order(
     # Create/update debt if consumer != card purchaser
     await card.fetch_link("purchaser")
 
-    if consumer.user_id != card.purchaser.user_id:  # type: ignore
-        debt_amount = float(quantity) * card.cost_per_coffee
-        await create_or_update_debt(
-            debtor_id=consumer.user_id,
-            creditor_id=card.purchaser.user_id,  # type: ignore
-            coffee_card=card,
-            order=order,
-            amount=debt_amount
-        )
+    # Debts are created/updated only when a coffee card is completed via DebtManager
 
     # Fetch links before returning so they're accessible in the router
     await order.fetch_all_links()
     return order
 
-
-# TODO: check
-async def create_or_update_debt(
-    debtor_id: int,
-    creditor_id: int,
-    coffee_card: CoffeeCard,
-    order: CoffeeOrder,
-    amount: float
-) -> UserDebt:
-    """Create or update debt between users."""
-
-    # Get user documents
-    debtor = await TelegramUser.find_one(TelegramUser.user_id == debtor_id)
-    creditor = await TelegramUser.find_one(TelegramUser.user_id == creditor_id)
-
-    if not debtor or not creditor:
-        raise ValueError("Debtor or creditor not found")
-
-    # Try to find existing debt using document references
-    existing_debt = await UserDebt.find_one(
-        UserDebt.debtor == debtor,
-        UserDebt.creditor == creditor,
-        UserDebt.coffee_card == coffee_card,
-        UserDebt.is_settled == False
-    )
-
-    if existing_debt:
-        # Update existing debt
-        existing_debt.total_amount += amount
-        existing_debt.orders.append(order)
-        existing_debt.updated_at = datetime.now()
-        await existing_debt.save()
-        return existing_debt
-    else:
-        # Create new debt - Beanie automatically converts documents to Links
-        debt = UserDebt(
-            debtor=debtor,
-            creditor=creditor, 
-            total_amount=amount,
-            coffee_card=coffee_card,
-            orders=[order]
-        )
-        await debt.insert()
-        log_debt_created(debtor_id, creditor_id, amount, coffee_card.name)
-        return debt
+    # ... debts are handled by DebtManager on card completion
 
 
 # TODO: check
@@ -244,12 +192,12 @@ async def settle_debts_for_payment(payment: Payment) -> None:
             # Fully settle this debt
             debt.is_settled = True
             remaining_amount -= debt.total_amount
+            debt.settled_at = datetime.now()
         else:
             # Partially settle this debt
             debt.total_amount -= remaining_amount
             remaining_amount = 0.0
         
-        debt.updated_at = datetime.now()
         await debt.save()
         
         

@@ -90,11 +90,13 @@ class DebtManager:
             # Calculate debt amount using the helper method
             total_amount = self.calculate_debt_amount(stats.total_coffees, card.cost_per_coffee)
             
+            now = datetime.now()
             if existing_debt:
                 # Update existing debt
                 existing_debt.total_coffees = stats.total_coffees
                 existing_debt.cost_per_coffee = card.cost_per_coffee
                 existing_debt.total_amount = total_amount
+                existing_debt.updated_at = now
                 # Note: Don't reset paid_amount - keep existing payments
                 await existing_debt.save()
                 processed_debts.append(existing_debt)
@@ -109,7 +111,8 @@ class DebtManager:
                     cost_per_coffee=card.cost_per_coffee,
                     total_amount=total_amount,
                     paid_amount=0.0,
-                    is_settled=False
+                    is_settled=False,
+                    updated_at=now
                 )
                 await debt.insert()
                 processed_debts.append(debt)
@@ -354,8 +357,8 @@ class DebtManager:
             
             print(f"✅ Debt settled: {debt.debtor.display_name} → {debt.creditor.display_name} for card '{debt.coffee_card.name}'")  # type: ignore
         
+        debt.updated_at = datetime.now()
         await debt.save()
-        
         return amount - to_apply
     
     async def get_debt_summary(self, user: TelegramUser) -> Dict[str, Any]:

@@ -78,13 +78,10 @@ class TelegramUser(base.TelegramUser, PassiveUser):
     user_id: Annotated[int, Indexed(unique=True)]
     username: Annotated[str, Indexed(unique=True)]
     last_login: datetime
-    # Make phone truly optional with a default of None. We'll enforce uniqueness via a partial index.
-    phone: Annotated[Optional[str], Indexed()] = None
+    phone: Optional[str] = None
     photo_id: Optional[int] = None
     paypal_link: Optional[str] = Field(None, description="PayPal payment link for coffee card purchases")
         
-    # TODO: check if I can keep using this validator, or if it does not make any sense
-    # as it also writes invalide data to the database
     @field_validator('paypal_link', mode='before')
     @classmethod
     def validate_and_format_paypal_link(cls, v: Optional[str]) -> Optional[str]:
@@ -112,20 +109,11 @@ class TelegramUser(base.TelegramUser, PassiveUser):
             raise ValueError(f"PayPal link is not valid or doesn't exist: {formatted_link}")
         
         return formatted_link
-        
-    @before_event(Insert)
-    def remove_empty_phone(self):
-        if not self.phone:
-            del self.phone
     
     class Settings(PassiveUser.Settings):
         name = "telegram_users"
         use_cache = False  # Disable caching to avoid stale data
         is_root = False
-        # Define a partial unique index to enforce uniqueness only when phone is present and a string
-        indexes = [
-            IndexModel([("phone", ASCENDING)], unique=True, sparse=True)
-        ]
     
 #-----------------------------
 # *      Configuration

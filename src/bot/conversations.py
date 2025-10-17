@@ -1028,7 +1028,7 @@ class ConversationManager:
                 )
                 return True
 
-            except Exception:
+            except Exception as e:
                 # Field validation failed or other error; do NOT persist invalid value
                 attempts += 1
                 remaining = max_attempts - attempts
@@ -1078,8 +1078,7 @@ class ConversationManager:
         # Initialize default values
         state.data.update({
             'total_coffees': 100,
-            'cost_per_coffee': 0.8,
-            'card_name': f"{user.display_name}'s Coffee Card"
+            'cost_per_coffee': 0.8
         })
         
         # Show initial overview and get confirmation
@@ -1143,7 +1142,6 @@ class ConversationManager:
         # Create the coffee card
         try:            
             card = await self.api.coffee_card_manager.create_coffee_card(
-                name=state.data['card_name'],
                 total_coffees=state.data['total_coffees'],
                 cost_per_coffee=state.data['cost_per_coffee'],
                 purchaser_id=user_id
