@@ -58,13 +58,13 @@ class ConversationTimeout(BaseModel):
     group_selection: int = Field(default=180, gt=0, description="Group selection timeout in seconds")
 
 
-def managed_conversation(conversation_type: str, timeout: int = 60):
+def managed_conversation(conversation_type: str, timeout: int = 60, use_existing_conv: bool = False):
     """
     Decorator to automatically manage conversation state and Telethon conversation objects.
     
     This decorator:
     - Creates and registers conversation state
-    - Creates Telethon conversation object
+    - Creates Telethon conversation object (or reuses existing one for sub-conversations)
     - Passes both as parameters to the decorated function
     - Automatically cleans up on completion or error
     - Handles conversation cancellation gracefully
@@ -72,38 +72,64 @@ def managed_conversation(conversation_type: str, timeout: int = 60):
     Args:
         conversation_type: Type of conversation (e.g., "registration", "group_selection")
         timeout: Conversation timeout in seconds
+        use_existing_conv: If True, expects 'existing_conv' to be passed in kwargs for sub-conversations
         
     Usage:
         @managed_conversation("registration", 60)
         async def register_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
             # Your conversation logic here
             pass
+            
+        # For sub-conversations:
+        @managed_conversation("setup_paypal", 120, use_existing_conv=True)
+        async def setup_paypal(self, user_id: int, conv: Conversation, state: ConversationState, existing_conv: Conversation) -> bool:
+            # Will reuse the existing conversation from parent
+            pass
     """
     def decorator(func: Callable) -> Callable:
         async def wrapper(self, user_id: int, *args, **kwargs):
+            # Extract existing conversation if provided
+            existing_conv = kwargs.pop('existing_conv', None) if use_existing_conv else None
+            
             # Create and register conversation state
             state = self.create_conversation_state(user_id, conversation_type, timeout)
+            
+            timed_out = False
             try:
-                # Open a Telethon conversation and pass it into the wrapped function
-                async with self.api.bot.conversation(user_id) as conv:
-                    state.conv = conv
+                if use_existing_conv and existing_conv is not None:
+                    # Use existing conversation (for sub-conversations)
+                    state.conv = existing_conv
                     try:
-                        result = await func(self, user_id, conv, state, *args, **kwargs)
+                        result = await func(self, user_id, existing_conv, state, *args, **kwargs)
                         return result
                     except ConversationCancelledException:
-                        # Let the caller handle cancellation messaging if needed
                         log_conversation_cancelled(user_id, conversation_type)
                         return False
+                else:
+                    # Open a new Telethon conversation and pass it into the wrapped function
+                    async with self.api.bot.conversation(user_id) as conv:
+                        state.conv = conv
+                        try:
+                            result = await func(self, user_id, conv, state, *args, **kwargs)
+                            return result
+                        except ConversationCancelledException:
+                            log_conversation_cancelled(user_id, conversation_type)
+                            return False
+            except asyncio.TimeoutError:
+                # Mark that a timeout occurred
+                timed_out = True
+                raise
             except Exception as e:
                 # Log unexpected errors and return False to the caller
                 log_unexpected_error(f"managed_conversation_{conversation_type}", str(e), {"user_id": user_id})
                 return False
             finally:
-                # Clean up conversation state in all cases
-                try:
-                    self.remove_conversation_state(user_id)
-                except Exception:
-                    pass
+                # Only clean up if not timed out (let exception handler handle timeouts)
+                if not timed_out:
+                    try:
+                        self.remove_conversation_state(user_id)
+                    except Exception:
+                        pass
 
         return wrapper
     return decorator
@@ -922,13 +948,15 @@ class ConversationManager:
         
         return True
 
-    async def setup_paypal_link_subconversation(self, conv: Conversation, user_id: int, user, show_current: bool = True) -> bool:
+    @managed_conversation("setup_paypal_link", 120, use_existing_conv=True)
+    async def setup_paypal_link_subconversation(self, user_id: int, conv: Conversation, state: ConversationState, user, show_current: bool = True) -> bool:
         """
         Reusable subconversation to set up or change PayPal link for a user.
         
         Args:
-            conv: Active conversation
             user_id: User ID
+            conv: Active conversation (provided by decorator)
+            state: Conversation state (provided by decorator)
             user: TelegramUser object
             show_current: Whether to show current link and offer change/keep options
             
@@ -1071,7 +1099,9 @@ class ConversationManager:
         
         # Check if user has PayPal link, if not, set it up
         if not user.paypal_link:
-            paypal_setup_success = await self.setup_paypal_link_subconversation(conv, user_id, user, show_current=False)
+            paypal_setup_success = await self.setup_paypal_link_subconversation(
+                user_id, user=user, show_current=False, existing_conv=conv
+            )
             if not paypal_setup_success:
                 return False
         

@@ -250,30 +250,23 @@ class CommandManager:
         if await self._check_and_notify_active_conversation(user_id):
             return
         
-    # Get the user (registered Telegram users manage PayPal links)
+        # Get the user (registered Telegram users manage PayPal links)
         user = await dep.get_repo().find_user_by_id(user_id)
-        # Register conversation state so other handlers (unknown commands) ignore input
-        self.conversation_manager.create_conversation_state(user_id, "paypalme", timeout=120)
-        try:
-            # Start a conversation and use the PayPal setup subconversation directly
-            async with self.api.bot.conversation(user_id) as conv:
-                setup_success = await self.conversation_manager.setup_paypal_link_subconversation(
-                    conv, user_id, user, show_current=True
+        
+        # Start a conversation and use the PayPal setup subconversation
+        # The sub-conversation will manage its own state and handle timeouts
+        async with self.api.bot.conversation(user_id) as conv:
+            setup_success = await self.conversation_manager.setup_paypal_link_subconversation(
+                user_id, user=user, show_current=True, existing_conv=conv
+            )
+            
+            if not setup_success:
+                await self.api.message_manager.send_text(
+                    user_id, 
+                    "❌ PayPal setup was not completed.\n"
+                    "You can try again anytime with `/paypalme`", 
+                    True, True
                 )
-                
-                if not setup_success:
-                    await self.api.message_manager.send_text(
-                        user_id, 
-                        "❌ PayPal setup was not completed.\n"
-                        "You can try again anytime with `/paypalme`", 
-                        True, True
-                    )
-        finally:
-            # Ensure the conversation state is removed
-            try:
-                self.conversation_manager.remove_conversation_state(user_id)
-            except Exception:
-                pass
 
     async def handle_digits_command(self, event: events.NewMessage.Event) -> None:
         """
@@ -314,10 +307,10 @@ class CommandManager:
         if self.conversation_manager.has_active_conversation(sender_id):
             print(f"Command ignored due to active conversation: {message}")
             return
-        else:
-            print(f"Processing unknown command: {message}")
-            active_conversations = self.conversation_manager.get_active_conversations()
-            print(f"Active conversation: {active_conversations}")
+        
+        print(f"Processing unknown command: {message}")
+        active_conversations = self.conversation_manager.get_active_conversations()
+        print(f"Active conversation: {active_conversations}")
         
         await self.api.message_manager.send_text(sender_id, f"**{message}** is an unknown command.", True, True)
 
