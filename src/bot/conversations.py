@@ -7,7 +7,7 @@ authentication, and group selection processes.
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Dict, Any, Callable, Optional
+from typing import TYPE_CHECKING, Dict, Any, Callable, Optional, cast
 from functools import wraps
 from pydantic import BaseModel, Field, ValidationError
 import pydantic_core
@@ -103,7 +103,7 @@ def managed_conversation(conversation_type: str, timeout: int = 60, use_existing
                         result = await func(self, user_id, existing_conv, state, *args, **kwargs)
                         return result
                     except ConversationCancelledException:
-                        log_conversation_cancelled(user_id, conversation_type)
+                        log_conversation_cancelled(user_id, conversation_type, reason="user_cancelled")
                         return False
                 else:
                     # Open a new Telethon conversation and pass it into the wrapped function
@@ -113,7 +113,7 @@ def managed_conversation(conversation_type: str, timeout: int = 60, use_existing
                             result = await func(self, user_id, conv, state, *args, **kwargs)
                             return result
                         except ConversationCancelledException:
-                            log_conversation_cancelled(user_id, conversation_type)
+                            log_conversation_cancelled(user_id, conversation_type, reason="user_cancelled")
                             return False
             except asyncio.TimeoutError:
                 # Mark that a timeout occurred
@@ -1040,12 +1040,25 @@ class ConversationManager:
 
             try:
                 # Validate & format the PayPal input BEFORE assigning to the model or saving
+                logger.info(f"[PayPal Setup] User input: {paypal_input}")
                 formatted = create_paypal_link(paypal_input)
-                is_valid = validate_paypal_link(formatted)
+                logger.info(f"[PayPal Setup] Normalized link: {formatted}")
+                is_valid = False
+                validation_error = None
+                try:
+                    is_valid = validate_paypal_link(formatted)
+                except Exception as ve:
+                    validation_error = ve
+                    logger.error(f"[PayPal Setup] Exception during validation: {ve}", exc_info=True)
+
+                logger.info(f"[PayPal Setup] Validation result: {is_valid}")
 
                 if not is_valid:
                     # Treat as validation failure; do NOT assign or save
-                    raise ValueError("PayPal link is not valid or doesn't exist")
+                    error_msg = f"PayPal link is not valid or doesn't exist."
+                    if validation_error:
+                        error_msg += f"\nError: {validation_error}"
+                    raise ValueError(error_msg)
 
                 # Only assign and save when validated
                 user.paypal_link = formatted
@@ -1058,8 +1071,11 @@ class ConversationManager:
 
             except Exception as e:
                 # Field validation failed or other error; do NOT persist invalid value
+                logger.error(f"[PayPal Setup] Exception: {e}", exc_info=True)
                 attempts += 1
                 remaining = max_attempts - attempts
+
+                error_details = f"\nError: {e}" if e else ""
 
                 if remaining > 0:
                     await self.api.message_manager.send_text(
@@ -1069,14 +1085,14 @@ class ConversationManager:
                         "• Is your username correct?\n"
                         "• Does your PayPal.me link exist?\n"
                         "• Visit: https://www.paypal.com/myaccount/profile/\n\n"
-                        f"You have {remaining} attempt(s) remaining.",
+                        f"You have {remaining} attempt(s) remaining." + error_details,
                         True, True
                     )
                 else:
                     await self.api.message_manager.send_text(
                         user_id,
                         "❌ Maximum attempts reached. PayPal setup failed.\n"
-                        "Please try again later or contact support.",
+                        "Please try again later or contact support." + error_details,
                         True, True
                     )
                     return False
@@ -1107,7 +1123,7 @@ class ConversationManager:
         
         # Initialize default values
         state.data.update({
-            'total_coffees': 100,
+            'total_coffees': 200,
             'cost_per_coffee': 0.8
         })
         
@@ -1432,12 +1448,7 @@ class ConversationManager:
                     )
                     return True
                 
-                # Fetch links for all credits
-                for debt in all_credits:
-                    if not hasattr(debt.debtor, 'display_name'):
-                        await debt.fetch_link("debtor")
-                    if not hasattr(debt.coffee_card, 'name'):
-                        await debt.fetch_link("coffee_card")
+                # Links (debtor, coffee_card) are already fetched by DebtManager
                 
                 # Group credits by card and calculate totals
                 card_summaries = {}  # card_name -> {debtors: {name: amount}, total: float}
@@ -1448,13 +1459,10 @@ class ConversationManager:
                     card_name = debt.coffee_card.name if debt.coffee_card else "Unknown Card"
                     debtor_name = debt.debtor.display_name if debt.debtor else "Unknown"
                     outstanding = debt.total_amount - debt.paid_amount
-                    
                     if card_name not in card_summaries:
                         card_summaries[card_name] = {"debtors": {}, "total": 0.0}
-                    
                     if debtor_name not in card_summaries[card_name]["debtors"]:
                         card_summaries[card_name]["debtors"][debtor_name] = 0.0
-                    
                     card_summaries[card_name]["debtors"][debtor_name] += outstanding
                     card_summaries[card_name]["total"] += outstanding
                     total_all_credits += outstanding
@@ -1491,30 +1499,27 @@ class ConversationManager:
                     # Notify all debtors
                     notified_count = 0
                     for debt in all_credits:
-                        if debt.debtor and debt.debtor.telegram_id:
+                        if debt.debtor and hasattr(debt.debtor, 'user_id'):
                             outstanding = debt.total_amount - debt.paid_amount
                             card_name = debt.coffee_card.name if debt.coffee_card else "Unknown Card"
                             creditor_name = user.display_name
-                            
                             notify_text = (
                                 f"💳 **Payment Reminder**\n\n"
                                 f"You owe **€{outstanding:.2f}** to {creditor_name}\n"
                                 f"from coffee card: **{card_name}**\n\n"
                             )
-                            
-                            if user.paypal_username:
-                                payment_link = f"https://paypal.me/{user.paypal_username}/{outstanding:.2f}EUR"
+                            if getattr(user, 'paypal_link', None):
+                                payment_link = f"{user.paypal_link}/{outstanding:.2f}EUR"
                                 notify_text += f"💳 Pay now: {payment_link}"
-                            
                             try:
                                 await self.api.message_manager.send_text(
-                                    debt.debtor.telegram_id,
+                                    debt.debtor.user_id,
                                     notify_text,
                                     True, True
                                 )
                                 notified_count += 1
                             except Exception as e:
-                                logger.error(f"Failed to notify debtor {debt.debtor.telegram_id}: {e}")
+                                logger.error(f"Failed to notify debtor {getattr(debt.debtor, 'user_id', None)}: {e}")
                     
                     await self.send_or_edit_message(
                         user_id,
@@ -1533,10 +1538,7 @@ class ConversationManager:
                 # Show list of debtors to choose from
                 all_credits = await self.api.debt_manager.get_user_credits(user, include_settled=False)
                 
-                # Fetch links if needed
-                for debt in all_credits:
-                    if not hasattr(debt.debtor, 'display_name'):
-                        await debt.fetch_link("debtor")
+                # Links already fetched by DebtManager
                 
                 # Group by debtor
                 debtor_totals = {}  # debtor_name -> total_outstanding
@@ -1572,12 +1574,7 @@ class ConversationManager:
                 # Show specific debts for selected debtor
                 all_credits = await self.api.debt_manager.get_user_credits(user, include_settled=False)
                 
-                # Fetch links if needed
-                for debt in all_credits:
-                    if not hasattr(debt.debtor, 'display_name'):
-                        await debt.fetch_link("debtor")
-                    if not hasattr(debt.coffee_card, 'name'):
-                        await debt.fetch_link("coffee_card")
+                # Links already fetched by DebtManager
                 
                 # Filter debts for this debtor
                 debtor_debts = []
@@ -1661,12 +1658,11 @@ class ConversationManager:
                         # Apply payment to debts from oldest to newest
                         debtor_debts_objects = [
                             debt for debt in all_credits
-                            if (debt.debtor.display_name if debt.debtor else "Unknown") == current_debtor_name
-                            and (debt.total_amount - debt.paid_amount) > 0
+                            if (debt.debtor and debt.debtor.display_name == current_debtor_name and (debt.total_amount - debt.paid_amount) > 0)
                         ]
                         
                         # Sort by creation date (oldest first)
-                        debtor_debts_objects.sort(key=lambda d: d.id)
+                        debtor_debts_objects.sort(key=lambda d: d.created_at)
                         
                         remaining_to_apply = paid_amount
                         for debt in debtor_debts_objects:

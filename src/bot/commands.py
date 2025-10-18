@@ -236,15 +236,15 @@ class CommandManager:
         await self.conversation_manager.create_coffee_card_conversation(user_id)
 
     @dep.verify_user
-    async def handle_paypalme_command(self, event: events.NewMessage.Event) -> None:
+    async def handle_paypal_command(self, event: events.NewMessage.Event) -> None:
         """
-        Handle the /paypalme command to set up or change PayPal link.
+        Handle the /paypal command to set up or change PayPal link.
         
         Args:
-            event: The NewMessage event containing /paypalme command
+            event: The NewMessage event containing /paypal command
         """
         user_id = event.sender_id
-        log_telegram_command(user_id, "/paypalme", getattr(event, 'chat_id', None))
+        log_telegram_command(user_id, "/paypal", getattr(event, 'chat_id', None))
 
         # Check if user already has an active conversation
         if await self._check_and_notify_active_conversation(user_id):
@@ -264,7 +264,7 @@ class CommandManager:
                 await self.api.message_manager.send_text(
                     user_id, 
                     "❌ PayPal setup was not completed.\n"
-                    "You can try again anytime with `/paypalme`", 
+                    "You can try again anytime with `/paypal`", 
                     True, True
                 )
 

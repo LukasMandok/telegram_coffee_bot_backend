@@ -136,19 +136,13 @@ class DebtManager:
         Returns:
             List of UserDebt documents with fetched links
         """
-        query = UserDebt.find(UserDebt.debtor == user)  # type: ignore
+        # Fetch linked creditor and coffee_card in one go
+        query = UserDebt.find(UserDebt.debtor == user, fetch_links=True)  # type: ignore
         
         if not include_settled:
             query = query.find(UserDebt.is_settled == False)
         
-        debts = await query.to_list()
-        
-        # Fetch related data
-        for debt in debts:
-            await debt.fetch_link("creditor")
-            await debt.fetch_link("coffee_card")
-        
-        return debts
+        return await query.to_list()
     
     async def get_debt_summary_by_creditor(self, user: PassiveUser) -> Dict[str, Dict[str, Any]]:
         """
@@ -213,29 +207,13 @@ class DebtManager:
         Returns:
             List of UserDebt documents with fetched links
         """
-        # TODO: improve this I liked the origional more: query = UserDebt.find(UserDebt.creditor == user), maybe creditor.id = user.id works
-        # Query by ObjectId in the Link field
-        from beanie import PydanticObjectId
-        query = UserDebt.find({"creditor.$id": PydanticObjectId(user.id)})
+        # Query directly by link and fetch linked debtor/coffee_card
+        query = UserDebt.find(UserDebt.creditor == user, fetch_links=True)
         
         if not include_settled:
             query = query.find(UserDebt.is_settled == False)
         
-        credits = await query.to_list()
-        
-        # Manually fetch links for each credit - avoiding cursor issues
-        for credit in credits:
-            # Fetch debtor
-            if credit.debtor:
-                debtor = await PassiveUser.get(credit.debtor.ref.id)  # type: ignore
-                credit.debtor = debtor  # type: ignore
-            
-            # Fetch coffee_card
-            if credit.coffee_card:
-                card = await CoffeeCard.get(credit.coffee_card.ref.id)  # type: ignore
-                credit.coffee_card = card  # type: ignore
-        
-        return credits
+        return await query.to_list()
     
     async def get_debts_for_card(self, card: CoffeeCard) -> List[UserDebt]:
         """
@@ -247,14 +225,8 @@ class DebtManager:
         Returns:
             List of UserDebt documents with fetched links
         """
-        debts = await UserDebt.find(UserDebt.coffee_card == card).to_list()  # type: ignore
-        
-        # Fetch related data
-        for debt in debts:
-            await debt.fetch_link("debtor")
-            await debt.fetch_link("creditor")
-        
-        return debts
+        # Fetch linked debtor and creditor together
+        return await UserDebt.find(UserDebt.coffee_card == card, fetch_links=True).to_list()  # type: ignore
     
     async def record_payment(
         self,
@@ -381,12 +353,12 @@ class DebtManager:
         total_owed_to_me = sum(d.total_amount - d.paid_amount for d in debts_owed_to_me)
         
         # Calculate estimated debt on active cards (not yet completed)
-        active_cards = await CoffeeCard.find(CoffeeCard.is_active == True).to_list()
+        # Fetch purchaser links up-front to avoid per-card fetch_link
+        active_cards = await CoffeeCard.find(CoffeeCard.is_active == True, fetch_links=True).to_list()
         estimated_debt_on_active = 0.0
         
         user_stable_id = user.stable_id
         for card in active_cards:
-            await card.fetch_link("purchaser")
             purchaser: TelegramUser = card.purchaser  # type: ignore
             
             # If I consumed from someone else's active card

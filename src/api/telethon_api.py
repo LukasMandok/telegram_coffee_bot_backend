@@ -111,7 +111,7 @@ class TelethonAPI:
         self.add_handler(lambda event: self.command_manager.handle_add_passive_user_command(event), "/add_user")
         self.add_handler(lambda event: self.command_manager.handle_new_card_command(event), "/new_card")
         self.add_handler(lambda event: self.command_manager.handle_close_card_command(event), "/close_card")
-        self.add_handler(lambda event: self.command_manager.handle_paypalme_command(event), "/paypalme")
+        self.add_handler(lambda event: self.command_manager.handle_paypal_command(event), "/paypal")
         self.add_handler(lambda event: self.command_manager.handle_debt_command(event), "/debt")
         self.add_handler(lambda event: self.command_manager.handle_credit_command(event), "/credit")
         self.add_handler(lambda event: self.command_manager.handle_cancel_command(event), "/cancel")

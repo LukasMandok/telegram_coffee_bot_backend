@@ -200,7 +200,7 @@ class CoffeeCardManager:
                 purchaser_message += f"💳 Your Payment Link:\n{purchaser.paypal_link}\n\n"
                 purchaser_message += "Share this link with people who owe you money!"
             else:
-                purchaser_message += "💡 Set up your payment link with /paypalme to easily collect money!"
+                purchaser_message += "💡 Set up your payment link with /paypal to easily collect money!"
         else:
             purchaser_message += "No one owes you money for this card. ☕"
         
