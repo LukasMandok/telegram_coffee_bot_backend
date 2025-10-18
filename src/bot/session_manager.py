@@ -475,6 +475,10 @@ class SessionManager:
                     conv=False,
                     silent=True
                 )
+                
+        # Remove conversation state for all participants so they are unblocked
+        for participant_user_id in participant_user_ids:
+            self.api.conversation_manager.cancel_conversation(participant_user_id)
 
         # Delete persisted initial session notifications (they were sent with vanish=False)
         try:
