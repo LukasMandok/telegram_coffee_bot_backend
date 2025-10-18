@@ -155,8 +155,9 @@ class CoffeeCardManager:
         if not card:
             raise ValueError(f"Card not provided")
         
-        # Purchaser should already be loaded with the card from the cache
-        purchaser: TelegramUser = card.purchaser  # type: ignore
+        
+        await card.fetch_link("purchaser")
+        purchaser: TelegramUser = card.purchaser  # type: ignore        
         
         # Check if card is already completed
         if not card.is_active:

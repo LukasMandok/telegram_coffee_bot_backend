@@ -1,4 +1,5 @@
-from motor.motor_asyncio import AsyncIOMotorClient
+# from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import AsyncMongoClient
 from beanie import init_beanie
 from typing import Optional
 from datetime import datetime
@@ -38,7 +39,8 @@ class BeanieRepository(BaseRepository):
 
         try:
             # await DataBase.connect(uri = self.uri, db = "fastapi")
-            self.client = AsyncIOMotorClient(self.uri)
+            # self.client = AsyncIOMotorClient(self.uri)
+            self.client = AsyncMongoClient(self.uri)
             self.db = self.client["fastapi"]
 
             await init_beanie(self.db, document_models=[
