@@ -333,7 +333,7 @@ class SessionManager:
             for card in cards_to_complete:
                 print(f"🎯 Auto-completing fully filled card: {card.name}")
                 # Use the shared completion function (no confirmation needed for auto-complete)
-                await self.api.coffee_card_manager.complete_coffee_card(
+                await self.api.coffee_card_manager.close_card(
                     card,
                     requesting_user_id=notifier_user_id,
                     require_confirmation=False

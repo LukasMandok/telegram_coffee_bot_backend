@@ -218,15 +218,15 @@ class CommandManager:
         await self.conversation_manager.group_selection(user_id)
 
     @dep.verify_user
-    async def handle_new_coffee_card_command(self, event: events.NewMessage.Event) -> None:
+    async def handle_new_card_command(self, event: events.NewMessage.Event) -> None:
         """
-        Handle the /new_coffee_card command to create a new coffee card.
+        Handle the /new_card command to create a new coffee card.
         
         Args:
-            event: The NewMessage event containing /new_coffee_card command
+            event: The NewMessage event containing /new_card command
         """
         user_id = event.sender_id
-        log_telegram_command(user_id, "/new_coffee_card", getattr(event, 'chat_id', None))
+        log_telegram_command(user_id, "/new_card", getattr(event, 'chat_id', None))
 
         # Check if user already has an active conversation
         if await self._check_and_notify_active_conversation(user_id):
@@ -428,15 +428,15 @@ class CommandManager:
             )
 
     @dep.verify_user
-    async def handle_complete_coffee_card_command(self, event: events.NewMessage.Event) -> None:
+    async def handle_close_card_command(self, event: events.NewMessage.Event) -> None:
         """
-        Handle the /complete_coffee_card command to manually complete the oldest coffee card.
+        Handle the /close_card command to manually complete the oldest coffee card.
         
         Args:
-            event: The NewMessage event containing /complete_coffee_card command
+            event: The NewMessage event containing /close_card command
         """
         user_id = event.sender_id
-        log_telegram_command(user_id, "/complete_coffee_card", getattr(event, 'chat_id', None))
+        log_telegram_command(user_id, "/close_card", getattr(event, 'chat_id', None))
         
         # Check if user already has an active conversation
         if await self._check_and_notify_active_conversation(user_id):
@@ -464,7 +464,7 @@ class CommandManager:
                 return
             
             # Start the completion conversation (handles confirmation if needed)
-            success = await self.conversation_manager.complete_coffee_card_conversation(
+            success = await self.conversation_manager.close_card_conversation(
                 user_id,
                 card=oldest_card
             )
@@ -481,7 +481,7 @@ class CommandManager:
             )
         except Exception as e:
             import traceback
-            print(f"❌ Unexpected error in handle_complete_coffee_card_command for user {user_id}: {e}")
+            print(f"❌ Unexpected error in handle_close_card_command for user {user_id}: {e}")
             print(f"Full traceback:\n{traceback.format_exc()}")
             await self.api.message_manager.send_text(
                 user_id,

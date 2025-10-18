@@ -1696,8 +1696,8 @@ class ConversationManager:
                         current_view = "debtor_debts"
                         continue
     
-    @managed_conversation("complete_coffee_card", 60)
-    async def complete_coffee_card_conversation(
+    @managed_conversation("close_card", 60)
+    async def close_card_conversation(
         self, 
         user_id: int, 
         conv: Conversation, 
@@ -1753,7 +1753,7 @@ class ConversationManager:
             )
         
         # Now complete the card (without confirmation since we already handled it)
-        debts = await self.api.coffee_card_manager.complete_coffee_card(
+        debts = await self.api.coffee_card_manager.close_card(
             card,
             requesting_user_id=user_id,
             require_confirmation=False  # We already handled confirmation above

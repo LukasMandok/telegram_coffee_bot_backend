@@ -6,6 +6,7 @@ from datetime import datetime
 from src.exceptions.coffee_exceptions import InsufficientCoffeeCardCapacityError, UserNotFoundError
 
 from ..models.coffee_models import CoffeeCard, CoffeeOrder, CoffeeSession, ConsumerStats, UserDebt
+from ..services.order import place_order
 from ..models.beanie_models import TelegramUser, PassiveUser
 
 from ..dependencies.dependencies import repo, get_repo
@@ -129,7 +130,7 @@ class CoffeeCardManager:
         return await CoffeeCard.find(CoffeeCard.purchaser == user, 
                                     fetch_links=True).to_list()
     
-    async def complete_coffee_card(
+    async def close_card(
         self, 
         card: CoffeeCard,  
         requesting_user_id: Optional[int] = None,
@@ -138,7 +139,7 @@ class CoffeeCardManager:
         """
         Mark a coffee card as completed and create debt records.
         
-        Note: Confirmation logic has been moved to ConversationManager.complete_coffee_card_conversation()
+        Note: Confirmation logic has been moved to ConversationManager.close_card_conversation()
         
         Args:
             card: The coffee card to complete
@@ -264,93 +265,8 @@ class CoffeeCardManager:
         
     ### Orders
     
-    async def _create_order_and_update_cards(
-        self,
-        initiator: TelegramUser,
-        consumer: PassiveUser,
-        cards: List[CoffeeCard],
-        quantity: int,
-        from_session: bool,
-        session: Optional[CoffeeSession] = None
-    ) -> CoffeeOrder:
-        """
-        Core method to create an order and update all related data.
-        Handles: coffee deduction, order creation, card relationships, consumer stats, and debts.
-        
-        Args:
-            initiator: User who initiated the order
-            consumer: User who consumed the coffees
-            cards: List of cards to use (in order of preference)
-            quantity: Total number of coffees in this order
-            from_session: Whether this is part of a session
-            session: Optional session to link to
-            
-        Returns:
-            Created CoffeeOrder
-        """
-        # Deduct coffees from cards and track per-card amounts
-        remaining_to_deduct = quantity
-        card_deductions: Dict[str, int] = {}
-        
-        for card in cards:
-            if remaining_to_deduct == 0:
-                break
-                
-            deduct_from_this_card = min(remaining_to_deduct, card.remaining_coffees)
-            card.remaining_coffees -= deduct_from_this_card
-            card_deductions[str(card.id)] = deduct_from_this_card
-            remaining_to_deduct -= deduct_from_this_card
-        
-        # Create the order
-        order = CoffeeOrder(
-            coffee_cards=cards,  # type: ignore
-            initiator=initiator,
-            consumer=consumer,
-            quantity=quantity,
-            from_session=from_session
-        )
-        await order.insert()
-        
-        # Update each card's relationships and consumer stats
-        consumer_id = consumer.stable_id  # Use stable_id as the key
-        
-        for card in cards:
-            # Add order to card
-            if order not in card.orders:
-                card.orders.append(order)  # type: ignore
-            
-            # Update consumer stats (only for cards that actually contributed)
-            coffees_from_this_card = card_deductions.get(str(card.id), 0)
-            if coffees_from_this_card > 0:
-                if consumer_id not in card.consumer_stats:
-                    card.consumer_stats[consumer_id] = ConsumerStats(
-                        user_id=consumer.stable_id,
-                        display_name=consumer.display_name,
-                        total_coffees=coffees_from_this_card,
-                        last_order_date=order.order_date
-                    )
-                else:
-                    stats = card.consumer_stats[consumer_id]
-                    stats.total_coffees += coffees_from_this_card
-                    stats.display_name = consumer.display_name  # Update display name in case it changed
-                    stats.last_order_date = order.order_date
-                
-                # Note: Debts are created only when card is completed, not on each order
-            
-            await card.save()
-        
-        # Link to session if applicable
-        if session:
-            if order not in session.orders:
-                session.orders.append(order)  # type: ignore
-            
-            # Add session to cards (only once per card per session)
-            for card in cards:
-                if session not in card.sessions:
-                    card.sessions.append(session)  # type: ignore
-                    await card.save()
-        
-        return order
+    # Order creation logic has been moved to services.order.place_order
+
     
     async def create_coffee_order(
         self,
@@ -406,13 +322,14 @@ class CoffeeCardManager:
             raise ValueError(f"Consumer {consumer_name} not found")
 
         # Create order with integrated debt tracking
-        order = await self._create_order_and_update_cards(
+        order = await place_order(
             initiator=initiator,
             consumer=consumer,
             cards=[card],
             quantity=1,
             from_session=False,
-            session=None
+            session=None,
+            enforce_capacity=False
         )
         
         await self._update_available()
@@ -521,13 +438,14 @@ class CoffeeCardManager:
                 continue
             
             # Create order with integrated debt tracking
-            order = await self._create_order_and_update_cards(
+            order = await place_order(
                 initiator=initiator,
                 consumer=consumer,
                 cards=cards,
                 quantity=quantity,
                 from_session=True,
-                session=session
+                session=session,
+                enforce_capacity=True
             )
             
             orders_created.append(order)

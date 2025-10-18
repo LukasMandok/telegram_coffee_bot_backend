@@ -15,7 +15,7 @@ from ..models.coffee_models import (
 )
 
 from ..dependencies.dependencies import repo
-from ..utils.order_utils import create_order_and_update_cards
+from ..services.order import place_order
 
 from ..bot.group_state_helpers import initialize_group_state_from_db
 from ..models.beanie_models import TelegramUser
@@ -70,13 +70,14 @@ async def create_coffee_order(
         )
 
     # Use the shared order creation utility
-    order = await create_order_and_update_cards(
+    order = await place_order(
         initiator=initiator,
         consumer=consumer,
         cards=[card],
         quantity=quantity,
         from_session=False,
-        session=None
+        session=None,
+        enforce_capacity=True
     )
     
     log_coffee_order_created(str(order.id), consumer_id, initiator_id, quantity, card.name)
