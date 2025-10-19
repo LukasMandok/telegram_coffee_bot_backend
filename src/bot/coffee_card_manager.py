@@ -3,7 +3,7 @@ import asyncio
 from typing import List, Dict, Any, TYPE_CHECKING, Optional
 from datetime import datetime
 
-from src.exceptions.coffee_exceptions import InsufficientCoffeeCardCapacityError, UserNotFoundError
+from src.exceptions.coffee_exceptions import InsufficientCoffeeError, UserNotFoundError
 
 from ..models.coffee_models import CoffeeCard, CoffeeOrder, CoffeeSession, ConsumerStats, UserDebt
 from ..services.order import place_order
@@ -295,7 +295,7 @@ class CoffeeCardManager:
         
         # Check availability
         if self.available < 1:
-            raise InsufficientCoffeeCardCapacityError(
+            raise InsufficientCoffeeError(
                 requested=1,
                 available=self.available
             )
@@ -308,7 +308,7 @@ class CoffeeCardManager:
                 break
         
         if not card:
-            raise InsufficientCoffeeCardCapacityError(
+            raise InsufficientCoffeeError(
                 requested=1,
                 available=0
             )
@@ -341,12 +341,12 @@ class CoffeeCardManager:
         Allocate coffee cards to each member's order in a session.
         
         Returns a dict mapping member display names to the list of cards allocated for their orders.
-        Raises InsufficientCoffeeCardCapacityError if not enough coffees available.
+        Raises InsufficientCoffeeError if not enough coffees available.
         """
         total_needed = sum(member.coffee_count for member in session.group_state.members.values())
         
         if self.available < total_needed:
-            raise InsufficientCoffeeCardCapacityError(
+            raise InsufficientCoffeeError(
                 requested=total_needed,
                 available=self.available
             )
@@ -384,7 +384,7 @@ class CoffeeCardManager:
             
             if needed > 0:
                 # Shouldn't happen if we validated available capacity
-                raise InsufficientCoffeeCardCapacityError(
+                raise InsufficientCoffeeError(
                     requested=member_data.coffee_count,
                     available=member_data.coffee_count - needed
                 )

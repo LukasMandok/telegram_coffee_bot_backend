@@ -57,8 +57,6 @@ class DebtManager:
         Returns:
             List of created or updated UserDebt documents
         """
-        # Purchaser should already be loaded with the card
-        await card.fetch_link("purchaser")
         creditor: TelegramUser = card.purchaser  # type: ignore
         creditor_stable_id = creditor.stable_id
         

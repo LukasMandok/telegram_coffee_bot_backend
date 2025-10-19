@@ -21,7 +21,11 @@ from ..bot.group_state_helpers import initialize_group_state_from_db
 from ..models.beanie_models import TelegramUser
 from ..exceptions.coffee_exceptions import (
     InvalidCoffeeCountError, InsufficientCoffeeError, SessionNotActiveError,
-    CoffeeCardNotFoundError, InsufficientCoffeeCardCapacityError, UserNotFoundError
+    CoffeeCardNotFoundError, UserNotFoundError
+)
+from ..exceptions.coffee_exceptions import (
+    InvalidCoffeeCountError, InsufficientCoffeeError, SessionNotActiveError,
+    CoffeeCardNotFoundError, UserNotFoundError
 )
 from ..common.log import (
     log_coffee_card_created, log_coffee_card_activated, log_coffee_card_deactivated, 
@@ -63,11 +67,10 @@ async def create_coffee_order(
 
     # Check availability
     if card.remaining_coffees < quantity:
-        raise InsufficientCoffeeCardCapacityError(
-            requested=quantity,
-            available=card.remaining_coffees,
-            card_name=card.name
-        )
+            raise InsufficientCoffeeError(
+                requested=quantity,
+                available=card.remaining_coffees
+            )
 
     # Use the shared order creation utility
     order = await place_order(

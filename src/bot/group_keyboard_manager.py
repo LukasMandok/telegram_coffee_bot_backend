@@ -125,8 +125,8 @@ class GroupKeyboardManager:
             keyboard_group.append([
                 Button.inline(str(name), "group_name"),
                 Button.inline(str(coffee_count), "group_value"),
-                Button.inline("+", f"group_plus_{name}"),
-                Button.inline("-", f"group_minus_{name}")
+                Button.inline("+", f"group_minus_{name}"),
+                Button.inline("-", f"group_plus_{name}")
             ])
             
         if pages > 0:

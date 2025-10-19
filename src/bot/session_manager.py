@@ -14,7 +14,8 @@ from ..exceptions.coffee_exceptions import (
 )
 from ..common.log import (
     log_coffee_session_started, log_coffee_session_participant_added,
-    log_coffee_session_participant_removed
+    log_coffee_session_participant_removed, log_unexpected_error,
+    logger
 )
 from ..bot.group_state_helpers import initialize_group_state_from_db
 from .telethon_models import GroupState
@@ -129,6 +130,9 @@ class SessionManager:
 
         # Notify all group members that a new session has been started and
         # that someone is entering coffees; send silently where possible.
+        # Prepare variables used in error context
+        initiator_user_id: Optional[int] = None
+        session_key: Optional[str] = None
         try:
             initiator_user_id = initiator.user_id
             # session.id should exist after insert(); use string key
@@ -152,7 +156,16 @@ class SessionManager:
                 if session_key and msg is not None:
                     self.session_notifications[session_key].append(msg)
         except Exception as e:
-            print(f"❌ Failed to notify members about new session: {e}")
+            # Centralized stacktrace logging for unexpected errors
+            log_unexpected_error(
+                operation="notify_members_new_session",
+                error=str(e),
+                context={
+                    "initiator_id": initiator_user_id,
+                    "session_id": session_key,
+                    "member_count": len(group_state.members)
+                }
+            )
 
         return session
 
@@ -340,7 +353,11 @@ class SessionManager:
                 )
                     
         except Exception as e:
-            print(f"❌ Error auto-completing filled cards: {e}")
+            # Centralized stacktrace logging for unexpected errors in auto-complete
+            log_unexpected_error(
+                operation="auto_complete_filled_cards",
+                error=str(e)
+            )
             # Don't fail the session completion if auto-complete fails
     
     async def complete_session(self, submitted_by_user_id: int) -> bool:
@@ -367,7 +384,7 @@ class SessionManager:
         
         # Get participant user IDs from session
         await self.session.fetch_link("participants")
-        participant_user_ids = {p.user_id for p in self.session.participants if hasattr(p, 'user_id')}
+        participant_user_ids = {getattr(p, 'user_id', None) for p in self.session.participants if getattr(p, 'user_id', None) is not None}
         
         # Notify Telegram Users about their orders (but not session participants - they get the full summary)
         for name, group_member_data in self.session.group_state.members.items():
@@ -395,47 +412,49 @@ class SessionManager:
         try:
             await self.create_orders()
         except InsufficientCoffeeError as e:
-            # Insufficient coffee capacity - rollback session completion
-            print(f"❌ Order creation failed: Insufficient coffees")
+            # Expected: user requested more coffees than available
+            logger.warning(
+                f"[ORDER] Insufficient coffee capacity: requested={getattr(e, 'requested', '?')}, available={getattr(e, 'available', '?')}, session_id={session_id}"
+            )
             self.session.is_active = True  # Re-activate session
             self.session.completed_date = None
             await self.session.save()
-            
+
             # Cancel all active conversations for this session to prevent timeout errors
             if session_id in self.api.group_keyboard_manager.active_keyboards:
                 for participant_user_id in list(self.api.group_keyboard_manager.active_keyboards[session_id].keys()):
                     self.api.conversation_manager.cancel_conversation(participant_user_id)
-                    print(f"🔕 Cancelled conversation for user {participant_user_id} due to session suspension")
-            
+                    # Optionally log this, but not as error
             # Notify user of insufficient coffee capacity
             await self.api.message_manager.send_text(
                 submitted_by_user_id,
                 f"⚠️ **Session Suspended!**\n\n"
                 f"❌ Not enough coffees remaining on your cards.\n"
-                f"• Requested: {e.requested}\n"
-                f"• Available: {e.available}\n\n"
+                f"• Requested: {getattr(e, 'requested', '?')}\n"
+                f"• Available: {getattr(e, 'available', '?')}\n\n"
                 f"💡 Someone needs to buy and open a new coffee card!\n"
-                f"Use /create_coffee_card to add a new card.\n\n"
+                f"Use /new_card to add a new card.\n\n"
                 f"Your session is still active and you can submit again once a new card is available.",
                 vanish=False,
                 conv=False
             )
-            
             # Don't send summary or completion messages - orders failed
             return False
         except Exception as e:
-            # Other errors - rollback session completion
-            print(f"❌ Order creation failed: {e}")
+            # Only truly unexpected errors get a stacktrace
+            log_unexpected_error(
+                operation="create_orders",
+                error=str(e),
+                context={"session_id": session_id}
+            )
             self.session.is_active = True  # Re-activate session
             self.session.completed_date = None
             await self.session.save()
-            
+
             # Cancel all active conversations for this session to prevent timeout errors
             if session_id in self.api.group_keyboard_manager.active_keyboards:
                 for participant_user_id in list(self.api.group_keyboard_manager.active_keyboards[session_id].keys()):
                     self.api.conversation_manager.cancel_conversation(participant_user_id)
-                    print(f"🔕 Cancelled conversation for user {participant_user_id} due to session suspension")
-            
             # Notify user of generic failure
             await self.api.message_manager.send_text(
                 submitted_by_user_id,
@@ -445,7 +464,6 @@ class SessionManager:
                 vanish=False,
                 conv=False
             )
-            
             # Don't send summary or completion messages - orders failed
             return False
         
@@ -456,6 +474,8 @@ class SessionManager:
 
         # Send notifications to participants captured earlier
         for participant_user_id in participant_user_ids:
+            if participant_user_id is None:
+                continue
             if participant_user_id == submitted_by_user_id:
                 # Send completion message to submitter (persistent)
                 await self.api.message_manager.send_text(
@@ -475,10 +495,11 @@ class SessionManager:
                     conv=False,
                     silent=True
                 )
-                
+
         # Remove conversation state for all participants so they are unblocked
         for participant_user_id in participant_user_ids:
-            self.api.conversation_manager.cancel_conversation(participant_user_id)
+            if participant_user_id is not None:
+                self.api.conversation_manager.cancel_conversation(participant_user_id)
 
         # Delete persisted initial session notifications (they were sent with vanish=False)
         try:
@@ -513,7 +534,11 @@ class SessionManager:
                 except Exception as e:
                     print(f"❌ Failed to send session summary to TelegramUser {user_id_to_notify}: {e}")
         except Exception as e:
-            print(f"❌ Failed to build/send session summary: {e}")
+            log_unexpected_error(
+                operation="build_or_send_session_summary",
+                error=str(e),
+                context={"session_id": session_id}
+            )
         
         # Clear current session reference
         if self.session and str(self.session.id) == session_id:
