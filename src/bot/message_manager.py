@@ -12,7 +12,7 @@ from .telethon_models import MessageModel
 from ..common.log import log_telegram_message_sent, log_telegram_keyboard_sent, log_telegram_api_error, log_telegram_message_deleted
 
 if TYPE_CHECKING:
-    from telethon import TelegramClient
+    from telethon import TelegramClient, types
 
 class MessageManager:
     """
@@ -21,7 +21,7 @@ class MessageManager:
     This class handles sending messages, keyboards, and managing message
     lifecycle including cleanup and conversation grouping.
     """
-    
+
     def __init__(self, bot_client: "TelegramClient"):
         """
         Initialize MessageManager with bot client.
@@ -31,14 +31,32 @@ class MessageManager:
         """
         self.bot: "TelegramClient" = bot_client
         self.latest_messages: List[Union["MessageModel", List["MessageModel"], Any]] = []
-    
+
+    async def send_message(self, *args: Any, **kwargs: Any) -> 'types.Message':
+        """
+        Unified low-level message sender used by higher-level helpers.
+        
+        Accepts all Telethon send_message params.
+        """
+        message = await self.bot.send_message(*args, **kwargs)
+        return message
+
+    async def edit_message(self, message: 'MessageModel', text: str, **kwargs: Any) -> None:
+        """
+        Edit an existing message.
+        
+        Note: Reply keyboards cannot be changed via edit.
+        """
+        edited = await message.edit(text, **kwargs)
+        return edited
+
     async def send_text(
         self, 
         user_id: int, 
         text: str, 
         vanish: bool = True, 
         conv: bool = False,
-        silent: bool = False,
+        silent: bool = True,
         link_preview: bool = False  # Disable link preview by default
     ) -> Optional["MessageModel"]:
         """
@@ -56,9 +74,9 @@ class MessageManager:
             The sent message object or None if failed
         """
         try:
-            telegram_message = await self.bot.send_message(
-                user_id, 
-                text, 
+            telegram_message = await self.send_message(
+                user_id,
+                text,
                 silent=silent,
                 link_preview=link_preview
             )
@@ -80,7 +98,7 @@ class MessageManager:
         keyboard_layout: Any,
         vanish: bool = True,
         conv: bool = False,
-        silent: bool = False,
+        silent: bool = True,
         link_preview: bool = False  # Disable link preview by default
     ) -> Optional["MessageModel"]:
         """
@@ -99,7 +117,7 @@ class MessageManager:
             The sent message with keyboard or None if failed
         """
         try:
-            telegram_message = await self.bot.send_message(
+            telegram_message = await self.send_message(
                 user_id,
                 text,
                 buttons=keyboard_layout,

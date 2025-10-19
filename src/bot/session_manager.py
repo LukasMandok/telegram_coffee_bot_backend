@@ -144,7 +144,7 @@ class SessionManager:
                 # send silently and persist until session end (vanish=False)
                 msg = await self.api.message_manager.send_text(
                     member.user_id,
-                    f"{initiator_display_name} started a new coffee session and is entering coffees. You can join with /group.",
+                    f"{initiator_display_name} started a new coffee session and is entering coffees. You can join with /order.",
                     vanish=False,
                     conv=False,
                     silent=True

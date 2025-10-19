@@ -10,6 +10,7 @@ from telethon import events
 from ..models.beanie_models import TelegramUser
 from ..models.coffee_models import CoffeeCard
 from .conversations import ConversationManager
+from .keyboards import KeyboardManager
 from ..handlers import handlers
 from ..dependencies import dependencies as dep
 from ..exceptions.coffee_exceptions import (
@@ -46,8 +47,7 @@ class CommandManager:
             api: The TelethonAPI instance for bot communication
         """
         self.api = api
-        self.conversation_manager = ConversationManager(api)
-    
+        
     async def _check_and_notify_active_conversation(self, user_id: int) -> bool:
         """
         Check if user has an active conversation and notify them if they do.
@@ -59,7 +59,7 @@ class CommandManager:
             bool: True if user has an active conversation (command should abort),
                   False if user is free to start a new conversation
         """
-        if self.conversation_manager.has_active_conversation(user_id):
+        if self.api.conversation_manager.has_active_conversation(user_id):
             await self.api.message_manager.send_text(
                 user_id,
                 "❌ You already have an active conversation. Please finish it first or use /cancel.",
@@ -81,16 +81,16 @@ class CommandManager:
 
         # Check if user is already registered
         if await handlers.check_user(user_id):
-            await self.api.message_manager.send_text(
+            await self.api.message_manager.send_keyboard(
                 user_id, 
                 "There is nothing more to do. You are already registered.", 
-                True, 
+                KeyboardManager.get_persistent_keyboard(),
                 True
             )
             return 
 
         # Use conversation manager for registration
-        await self.conversation_manager.register_conversation(user_id)
+        await self.api.conversation_manager.register_conversation(user_id)
 
     async def handle_cancel_command(self, event: events.NewMessage.Event) -> None:
         """
@@ -103,8 +103,8 @@ class CommandManager:
         log_telegram_command(user_id, "/cancel", getattr(event, 'chat_id', None))
         
         # Check if user has an active conversation
-        if self.conversation_manager.has_active_conversation(user_id):
-            conversation_cancelled = self.conversation_manager.cancel_conversation(user_id)
+        if self.api.conversation_manager.has_active_conversation(user_id):
+            conversation_cancelled = self.api.conversation_manager.cancel_conversation(user_id)
             if conversation_cancelled:
                 await self.api.message_manager.send_text(
                     user_id,
@@ -126,6 +126,23 @@ class CommandManager:
                 True,
                 True
             )
+
+    async def handle_persistent_button(self, event: events.NewMessage.Event) -> None:
+        """
+        Handle persistent keyboard button presses.
+        
+        Args:
+            event: The NewMessage event containing button text
+        """
+        user_id = event.sender_id
+        button_text = event.message.message
+        log_telegram_command(user_id, f"button:{button_text}", getattr(event, 'chat_id', None))
+        
+        # Map button text to commands
+        if button_text == "Place Order":
+            await self.handle_order_command(event)
+        elif button_text == "Show Debts":
+            await self.handle_debt_command(event)
 
 
     async def handle_password_command(self, event: events.NewMessage.Event) -> None:
@@ -187,7 +204,7 @@ class CommandManager:
         log_telegram_command(user_id, "/add_user", getattr(event, 'chat_id', None))
         
         # # Check if user already has an active conversation
-        # if self.conversation_manager.has_active_conversation(user_id):
+        # if self.api.conversation_manager.has_active_conversation(user_id):
         #     await self.api.message_manager.send_text(
         #         user_id,
         #         "❌ You already have an active conversation. Please finish it first or use /cancel.",
@@ -197,25 +214,25 @@ class CommandManager:
         #     return
         
         # Start the conversation for adding passive users
-        await self.conversation_manager.add_passive_user_conversation(user_id)
+        await self.api.conversation_manager.add_passive_user_conversation(user_id)
 
     @dep.verify_user
-    async def handle_group_command(self, event: events.NewMessage.Event) -> None:
+    async def handle_order_command(self, event: events.NewMessage.Event) -> None:
         """
-        Handle the /group command to start group coffee ordering.
+        Handle the /order command to start coffee ordering.
         
         Args:
-            event: The NewMessage event containing /group command
+            event: The NewMessage event containing /order command
         """
         user_id = event.sender_id
-        log_telegram_command(user_id, "/group", getattr(event, 'chat_id', None))
+        log_telegram_command(user_id, "/order", getattr(event, 'chat_id', None))
 
         # Check if user already has an active conversation
         if await self._check_and_notify_active_conversation(user_id):
             return
         
         # Start the group selection conversation
-        await self.conversation_manager.group_selection(user_id)
+        await self.api.conversation_manager.group_selection(user_id)
 
     @dep.verify_user
     async def handle_new_card_command(self, event: events.NewMessage.Event) -> None:
@@ -233,7 +250,7 @@ class CommandManager:
             return
         
         # Start the coffee card creation conversation
-        await self.conversation_manager.create_coffee_card_conversation(user_id)
+        await self.api.conversation_manager.create_coffee_card_conversation(user_id)
 
     @dep.verify_user
     async def handle_paypal_command(self, event: events.NewMessage.Event) -> None:
@@ -256,7 +273,7 @@ class CommandManager:
         # Start a conversation and use the PayPal setup subconversation
         # The sub-conversation will manage its own state and handle timeouts
         async with self.api.bot.conversation(user_id) as conv:
-            setup_success = await self.conversation_manager.setup_paypal_link_subconversation(
+            setup_success = await self.api.conversation_manager.setup_paypal_link_subconversation(
                 user_id, user=user, show_current=True, existing_conv=conv
             )
             
@@ -281,7 +298,7 @@ class CommandManager:
         user_id = event.sender_id
         
         # Don't process digits if user is in an active conversation
-        if self.conversation_manager.has_active_conversation(user_id):
+        if self.api.conversation_manager.has_active_conversation(user_id):
             return
         
         await self.api.message_manager.send_text(user_id, f'catches digits: {event.text}', True, True)
@@ -304,12 +321,12 @@ class CommandManager:
         # if not message.startswith('/'):
         #     return  # Not a command, don't process
         
-        if self.conversation_manager.has_active_conversation(sender_id):
+        if self.api.conversation_manager.has_active_conversation(sender_id):
             print(f"Command ignored due to active conversation: {message}")
             return
         
         print(f"Processing unknown command: {message}")
-        active_conversations = self.conversation_manager.get_active_conversations()
+        active_conversations = self.api.conversation_manager.get_active_conversations()
         print(f"Active conversation: {active_conversations}")
         
         await self.api.message_manager.send_text(sender_id, f"**{message}** is an unknown command.", True, True)
@@ -464,7 +481,7 @@ class CommandManager:
                 return
             
             # Start the completion conversation (handles confirmation if needed)
-            success = await self.conversation_manager.close_card_conversation(
+            success = await self.api.conversation_manager.close_card_conversation(
                 user_id,
                 card=oldest_card
             )
@@ -505,7 +522,7 @@ class CommandManager:
             return
         
         # Start the debt overview conversation
-        await self.conversation_manager.debt_overview_conversation(user_id)
+        await self.api.conversation_manager.debt_overview_conversation(user_id)
 
     @dep.verify_user
     async def handle_credit_command(self, event: events.NewMessage.Event) -> None:
@@ -523,5 +540,5 @@ class CommandManager:
             return
         
         # Start the credit overview conversation
-        await self.conversation_manager.credit_overview_conversation(user_id)
+        await self.api.conversation_manager.credit_overview_conversation(user_id)
 

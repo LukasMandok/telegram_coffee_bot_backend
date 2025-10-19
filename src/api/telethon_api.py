@@ -39,6 +39,7 @@ from ..common.log import (
 
 from ..bot.message_manager import MessageManager
 from ..bot.commands import CommandManager
+from ..bot.conversations import ConversationManager
 from ..bot.group_keyboard_manager import GroupKeyboardManager
 from ..bot.session_manager import SessionManager
 from ..bot.coffee_card_manager import CoffeeCardManager
@@ -89,8 +90,9 @@ class TelethonAPI:
         ).start(bot_token=self.config.bot_token)
         
         log_telegram_bot_started(self.config.api_id)
-        
+
         self.message_manager = MessageManager(self.bot)
+        self.conversation_manager = ConversationManager(self)
         self.command_manager = CommandManager(self)
         self.group_keyboard_manager = GroupKeyboardManager(self)
         self.session_manager = SessionManager(self)
@@ -104,7 +106,7 @@ class TelethonAPI:
         """Register all bot event handlers."""
         # Use CommandManager methods directly for cleaner architecture
         self.add_handler(lambda event: self.command_manager.handle_start_command(event), '/start')
-        self.add_handler(lambda event: self.command_manager.handle_group_command(event), '/group')
+        self.add_handler(lambda event: self.command_manager.handle_order_command(event), '/order')
         self.add_handler(lambda event: self.command_manager.handle_password_command(event), '/password')
         self.add_handler(lambda event: self.command_manager.handle_user_verification_command(event), "/user")
         self.add_handler(lambda event: self.command_manager.handle_admin_verification_command(event), "/admin")
@@ -118,6 +120,9 @@ class TelethonAPI:
         # TODO: check if I actually need them
         self.add_handler(lambda event: self.command_manager.handle_complete_session_command(event), "/complete_session")
         self.add_handler(lambda event: self.command_manager.handle_cancel_session_command(event), "/cancel_session")
+        
+        # Handle persistent keyboard button presses
+        self.add_handler(lambda event: self.command_manager.handle_persistent_button(event), events.NewMessage(incoming=True, pattern=re.compile(r'^(Place Order|Show Debts)$')))
         
         self.add_handler(lambda event: self.command_manager.handle_digits_command(event), events.NewMessage(incoming=True, pattern=re.compile(r'[0-9]+')))
         self.add_handler(lambda event: self.command_manager.handle_unknown_command(event))
@@ -199,7 +204,7 @@ class TelethonAPI:
                 except asyncio.TimeoutError as e:
                     log_telegram_api_error("conversation_timeout", str(e), sender_id)
                     # Remove conversation state on timeout
-                    self.command_manager.conversation_manager.remove_conversation_state(sender_id)
+                    self.conversation_manager.remove_conversation_state(sender_id)
                     await self.message_manager.send_text(sender_id, "Your request has expired. Please start again from the beginning.")
                     raise events.StopPropagation
                     

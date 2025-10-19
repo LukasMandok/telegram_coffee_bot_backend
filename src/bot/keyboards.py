@@ -31,6 +31,24 @@ class KeyboardManager:
     """
     
     @staticmethod
+    def get_persistent_keyboard() -> Any:
+        """
+        Generate the persistent reply keyboard layout.
+        
+        This keyboard appears at the bottom of the chat after registration
+        and provides quick access to common actions.
+        
+        Returns:
+            Button layout for the persistent keyboard with two buttons in one row:
+            - Place Order (triggers /order command)
+            - Show Debts (triggers /debt command)
+        """
+        return [
+            [Button.text("Place Order", resize=True, single_use=False), 
+             Button.text("Show Debts", resize=True, single_use=False)]
+        ]
+    
+    @staticmethod
     def get_confirmation_keyboard() -> Any:
         """
         Generate a simple Yes/No confirmation keyboard.
