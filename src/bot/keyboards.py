@@ -139,7 +139,7 @@ class KeyboardManager:
         navigation_buttons = []
         
         if current_page > 0:
-            navigation_buttons.append(Button.inline("◀ Previous", "page_prev"))
+            navigation_buttons.append(Button.inline("◀ Prev", "page_prev"))
             
         # Add page indicator
         navigation_buttons.append(

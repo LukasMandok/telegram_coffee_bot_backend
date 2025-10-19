@@ -97,7 +97,7 @@ class GroupKeyboardManager:
         
         Creates an inline keyboard for coffee ordering with:
         - Member names with +/- buttons for coffee counts
-        - Pagination controls for large groups (>15 members)
+        - Pagination controls for large groups (>5 members)
         - Submit button (when orders > 0) and Cancel button
         - Warning icons based on coffee availability
         
@@ -114,33 +114,38 @@ class GroupKeyboardManager:
         total = group_state.get_total_coffees()
         
         items = list(group_state.members.items())
-        pages = len(items) // 15
+        pages = len(items) // 5
         
-        i_start = current_page * 15
-        i_end = ((current_page + 1) * 15) if (current_page < pages) else None
+        i_start = current_page * 5
+        i_end = ((current_page + 1) * 5) if (current_page < pages) else None
         
         for name, value in items[i_start : i_end]:
             # value is a GroupMember; display only the coffee_count
             coffee_count = getattr(value, 'coffee_count', 0)
             keyboard_group.append([
-                Button.inline(str(name), "group_name"),
-                Button.inline(str(coffee_count), "group_value"),
-                Button.inline("+", f"group_minus_{name}"),
-                Button.inline("-", f"group_plus_{name}")
+                # Make name act like an info/label (non-actionable)
+                Button.inline(str(name), "group_info"),
+                # Tapping the count resets to 0
+                Button.inline(str(coffee_count), f"group_reset_{name}"),
+                # Correct mapping: + increases, - decreases
+                Button.inline("-", f"group_minus_{name}"),
+                Button.inline("+", f"group_plus_{name}")
             ])
             
         if pages > 0:
+            # Integrate original pagination style: arrows + page indicator
+            total_pages = pages + 1
             navigation_buttons = []
             if current_page > 0:
-                navigation_buttons.append(
-                    Button.inline("prev", "group_prev")
-                )
-                
+                navigation_buttons.append(Button.inline("◀ Prev", "group_prev"))
+
+            navigation_buttons.append(
+                Button.inline(f"{current_page + 1}/{total_pages}", "group_info")
+            )
+
             if current_page < pages:
-                navigation_buttons.append(
-                    Button.inline("next", "group_next")
-                )
-    
+                navigation_buttons.append(Button.inline("Next ▶", "group_next"))
+
             if navigation_buttons:
                 keyboard_group.append(navigation_buttons)
             
@@ -160,6 +165,40 @@ class GroupKeyboardManager:
             keyboard_group[-1].append(Button.inline(submit_text, "group_submit"))
         
         return keyboard_group
+
+    async def handle_member_reset(self, session: CoffeeSession, member_name: str) -> None:
+        """
+        Reset the specified member's coffee count to 0 and sync all keyboards.
+
+        Args:
+            session: The coffee session
+            member_name: The member whose count should be reset
+        """
+        try:
+            group_state = session.group_state
+            if not group_state or not group_state.members:
+                return
+
+            member = group_state.members.get(member_name)
+            if member is None:
+                return
+
+            # Support attribute-style or dict-style storage
+            if hasattr(member, 'coffee_count'):
+                setattr(member, 'coffee_count', 0)
+            elif isinstance(member, dict):
+                member['coffee_count'] = 0
+            else:
+                # Fallback: attempt attribute set; if it fails, stop silently
+                try:
+                    group_state.members[member_name].coffee_count = 0  # type: ignore[attr-defined]
+                except Exception:
+                    return
+
+            # Propagate update to all active keyboards for this session
+            await self.sync_all_keyboards_for_session(session)
+        except Exception as e:
+            print(f"❌ [KEYBOARD] Failed to reset count for '{member_name}': {e}")
     
     async def create_and_send_keyboard(self, user_id: int, session: CoffeeSession, initial_page: int = 0) -> Optional[Any]:
         """
@@ -285,7 +324,7 @@ class GroupKeyboardManager:
         Args:
             session: The coffee session
             user_id: Telegram user ID of the participant
-            direction: 'next' or 'prev'
+            direction: 'next'|'prev' or 'group_next'|'group_prev'
         """
         session_id = str(session.id)
         if session_id not in self.active_keyboards:
@@ -295,11 +334,11 @@ class GroupKeyboardManager:
             return
         
         active_keyboard = self.active_keyboards[session_id][user_id]
-        total_pages = (len(session.group_state.members) - 1) // 15 + 1 if session.group_state.members else 1
+        total_pages = (len(session.group_state.members) - 1) // 5 + 1 if session.group_state.members else 1
         
-        if direction == 'next':
+        if direction in ('next', 'group_next'):
             new_page = min(active_keyboard.current_page + 1, total_pages - 1)
-        elif direction == 'prev':
+        elif direction in ('prev', 'group_prev'):
             new_page = max(active_keyboard.current_page - 1, 0)
         else:
             return

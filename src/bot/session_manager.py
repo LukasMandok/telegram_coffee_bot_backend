@@ -430,8 +430,8 @@ class SessionManager:
                 submitted_by_user_id,
                 f"⚠️ **Session Suspended!**\n\n"
                 f"❌ Not enough coffees remaining on your cards.\n"
-                f"• Requested: {getattr(e, 'requested', '?')}\n"
-                f"• Available: {getattr(e, 'available', '?')}\n\n"
+                f"• Requested: {e.requested}\n"
+                f"• Available: {e.available}\n\n"
                 f"💡 Someone needs to buy and open a new coffee card!\n"
                 f"Use /new_card to add a new card.\n\n"
                 f"Your session is still active and you can submit again once a new card is available.",

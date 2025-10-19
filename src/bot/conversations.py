@@ -849,6 +849,13 @@ class ConversationManager:
                 await self.api.session_manager.update_session_member_coffee(
                     name, 'remove'
                 )
+            elif "group_reset" in button_data:
+                name = button_data.split("_")[2]
+                # Reset this member's count to 0 and sync keyboards
+                await self.api.group_keyboard_manager.handle_member_reset(session, name)
+            elif button_data == "group_info":
+                # Non-actionable label/indicator; ignore
+                pass
                 
             elif "group_next" in button_data:
                 await self.api.group_keyboard_manager.handle_pagination(
