@@ -100,6 +100,7 @@ class GroupKeyboardManager:
         - Pagination controls for large groups (>5 members)
         - Submit button (when orders > 0) and Cancel button
         - Warning icons based on coffee availability
+        - 'Show More' button to reveal archived users (if any exist and not shown)
         
         Args:
             group_state: Current state of group coffee ordering
@@ -113,55 +114,88 @@ class GroupKeyboardManager:
         keyboard_group = []
         total = group_state.get_total_coffees()
         
-        items = list(group_state.members.items())
-        pages = len(items) // 5
+        # Filter members based on show_archived flag
+        if group_state.show_archived:
+            # Show active users first (alphabetically), then archived users (alphabetically)
+            active_members = sorted(
+                ((name, member) for name, member in group_state.members.items() if not member.is_archived),
+                key=lambda x: x[0].lower()
+            )
+            archived_members = sorted(
+                ((name, member) for name, member in group_state.members.items() if member.is_archived),
+                key=lambda x: x[0].lower()
+            )
+            items = active_members + archived_members
+        else:
+            # Show only non-archived members, sorted alphabetically
+            items = sorted(
+                ((name, member) for name, member in group_state.members.items() if not member.is_archived),
+                key=lambda x: x[0].lower()
+            )
         
-        i_start = current_page * 5
-        i_end = ((current_page + 1) * 5) if (current_page < pages) else None
+        # Check if there are any archived users not currently shown
+        has_archived = any(member.is_archived for member in group_state.members.values())
+        show_more_button_needed = has_archived and not group_state.show_archived
+
+        # Calculate pagination with potential placement of Show More on the last member page
+        total_items = len(items)
+        member_total_pages = (total_items + 4) // 5 if total_items > 0 else 1
+        last_page_count = (total_items - 5 * (member_total_pages - 1)) if total_items > 0 else 0
+        show_more_on_last_page = show_more_button_needed and last_page_count < 5
+
+        # Render current page
+        if current_page < member_total_pages:
+            # Render member rows for this page
+            i_start = current_page * 5
+            i_end = min(i_start + 5, total_items)
+            for name, member in items[i_start : i_end]:
+                keyboard_group.append([
+                    Button.inline(str(name), "group_info"),
+                    Button.inline(str(member.coffee_count), f"group_reset_{name}"),
+                    Button.inline("-", f"group_minus_{name}"),
+                    Button.inline("+", f"group_plus_{name}")
+                ])
+
+            # If this is the last member page and there's space left, append Show More here
+            if (current_page == member_total_pages - 1) and show_more_on_last_page:
+                keyboard_group.append([Button.inline("Show More …", "group_show_archived")])
+        else:
+            # If beyond member pages, only show the Show More page when it needs its own page
+            if show_more_button_needed and not show_more_on_last_page and current_page == member_total_pages:
+                keyboard_group.append([Button.inline("Show More …", "group_show_archived")])
+
+        # Pagination navigation
+        # Total pages = member pages + 1 if Show More needs its own page
+        total_pages = member_total_pages + (1 if (show_more_button_needed and not show_more_on_last_page) else 0)
+        max_page = max(0, total_pages - 1)
         
-        for name, value in items[i_start : i_end]:
-            # value is a GroupMember; display only the coffee_count
-            coffee_count = getattr(value, 'coffee_count', 0)
-            keyboard_group.append([
-                # Make name act like an info/label (non-actionable)
-                Button.inline(str(name), "group_info"),
-                # Tapping the count resets to 0
-                Button.inline(str(coffee_count), f"group_reset_{name}"),
-                # Correct mapping: + increases, - decreases
-                Button.inline("-", f"group_minus_{name}"),
-                Button.inline("+", f"group_plus_{name}")
-            ])
-            
-        if pages > 0:
-            # Integrate original pagination style: arrows + page indicator
-            total_pages = pages + 1
+        if total_pages > 1:
             navigation_buttons = []
             if current_page > 0:
-                navigation_buttons.append(Button.inline("◀ Prev", "group_prev"))
+                # U+1F8A0 (LEFTWARDS ARROW WITH TAIL FROM BAR) from Supplemental Arrows-C
+                navigation_buttons.append(Button.inline("◁  Prev", "group_prev"))
 
             navigation_buttons.append(
                 Button.inline(f"{current_page + 1}/{total_pages}", "group_info")
             )
 
-            if current_page < pages:
-                navigation_buttons.append(Button.inline("Next ▶", "group_next"))
+            if current_page < max_page:
+                # U+1F8A1 (RIGHTWARDS ARROW WITH TAIL FROM BAR) from Supplemental Arrows-C
+                navigation_buttons.append(Button.inline("Next  ▷", "group_next"))
 
             if navigation_buttons:
                 keyboard_group.append(navigation_buttons)
-            
+
         keyboard_group.append([
             Button.inline("Cancel", "group_cancel")
         ])
-        
+
         if total > 0:
-            # Build submit button text with appropriate icon
             submit_text = f"Submit ({total})"
-            
             if is_insufficient:
                 submit_text = f"⚠️ Submit ({total})"
             elif is_multi_card:
                 submit_text = f"🔄 Submit ({total})"
-            
             keyboard_group[-1].append(Button.inline(submit_text, "group_submit"))
         
         return keyboard_group
@@ -199,6 +233,32 @@ class GroupKeyboardManager:
             await self.sync_all_keyboards_for_session(session)
         except Exception as e:
             print(f"❌ [KEYBOARD] Failed to reset count for '{member_name}': {e}")
+    
+    async def handle_show_archived(self, session: CoffeeSession, user_id: int) -> None:
+        """
+        Toggle the show_archived flag to reveal archived users.
+        Keeps the user on their current page.
+
+        Args:
+            session: The coffee session
+            user_id: The user who pressed the button
+        """
+        try:
+            group_state = session.group_state
+            if not group_state:
+                return
+            
+            group_state.show_archived = True
+            
+            # Save the updated session state
+            await session.save()
+            
+            # Sync all keyboards to show the archived members
+            await self.sync_all_keyboards_for_session(session)
+            
+            print(f"📂 [KEYBOARD] Showing archived users for session {session.id}")
+        except Exception as e:
+            print(f"❌ [KEYBOARD] Failed to show archived users: {e}")
     
     async def create_and_send_keyboard(self, user_id: int, session: CoffeeSession, initial_page: int = 0) -> Optional[Any]:
         """

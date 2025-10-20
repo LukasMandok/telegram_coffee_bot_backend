@@ -17,6 +17,9 @@ class BaseUser(ABC):
     
 class PassiveUser(BaseUser, ABC):
     display_name: str  # Required unique display name for passive users
+    inactive_card_count: int  # Track consecutive cards without orders
+    is_archived: bool  # Whether user is archived due to inactivity (2-9 cards)
+    is_disabled: bool  # Whether user is disabled due to long inactivity (10+ cards)
     
     # should be in passive_users collection
     # These users don't have Telegram accounts but can have coffee orders/debts managed by admins

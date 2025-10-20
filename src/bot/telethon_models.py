@@ -17,8 +17,10 @@ class GroupMember(BaseModel):
     name validation and coffee count constraints.
     """
     name: str = Field(..., description="The member's name")
-    user_id: Optional[int] = Field(default=None, description="The member's user ID")
+    stable_id: str = Field(..., description="The member's stable UUID (persists across user type changes)")
+    user_id: Optional[int] = Field(default=None, description="Telegram user_id (only for TelegramUsers, None for PassiveUsers)")
     coffee_count: int = Field(default=0, ge=0, description="Number of coffees ordered")
+    is_archived: bool = Field(default=False, description="Whether this member is archived (inactive)")
 
 
 class MessageModel(BaseModel):
@@ -109,22 +111,28 @@ class BotConfiguration(BaseModel):
 class GroupState(BaseModel):
     """Represents the current state of the coffee group ordering system.
 
-    members maps display_name -> GroupMember. GroupMember contains name, user_id
-    and coffee_count. We keep the mapping key as display_name for quick lookup
-    while storing richer member data in the value.
+    members maps display_name -> GroupMember. GroupMember contains name, stable_id,
+    coffee_count, and is_archived flag. We keep the mapping key as display_name 
+    for quick lookup while storing richer member data in the value.
     """
-    members: Dict[str, GroupMember] = Field(default_factory=dict, description="Member names and their data")
+    members: Dict[str, GroupMember] = Field(default_factory=dict, description="All members (active and archived)")
+    show_archived: bool = Field(default=False, description="Whether to show archived members in keyboard")
     
-    def add_member(self, member_name: str, user_id: Optional[int] = None) -> None:
+    def add_member(self, member_name: str, stable_id: str, user_id: Optional[int] = None, is_archived: bool = False) -> None:
         """Add a new member to the group with zero coffee count."""
         if member_name not in self.members:
-            self.members[member_name] = GroupMember(name=member_name, user_id=user_id, coffee_count=0)
+            self.members[member_name] = GroupMember(name=member_name, stable_id=stable_id, user_id=user_id, coffee_count=0, is_archived=is_archived)
         else:
             raise ValueError(f"Member {member_name} already exists in the group")
     
     def get_total_coffees(self) -> int:
-        """Calculate total coffee orders across all members."""
-        return sum(member.coffee_count for member in self.members.values())
+        """Calculate total coffee orders across all visible members."""
+        if self.show_archived:
+            # Count all members
+            return sum(member.coffee_count for member in self.members.values())
+        else:
+            # Count only non-archived members
+            return sum(member.coffee_count for member in self.members.values() if not member.is_archived)
     
     def reset_orders(self) -> None:
         """Reset all coffee orders to zero."""
@@ -147,7 +155,9 @@ class GroupState(BaseModel):
     
     def get_coffee(self, member_name: str) -> int:
         """Get coffee count for a member (0 if missing)."""
-        return self.members.get(member_name, GroupMember(name=member_name, user_id=None, coffee_count=0)).coffee_count
+        if member_name in self.members:
+            return self.members[member_name].coffee_count
+        return 0
     
     def export_state(self) -> str:
         """
@@ -186,7 +196,7 @@ class GroupState(BaseModel):
             "total_coffees": total_coffees,
             "members_with_orders": members_with_orders,
             "members_summary": [
-                {"name": name, "coffee_count": member_data.coffee_count, "user_id": member_data.user_id}
+                {"name": name, "coffee_count": member_data.coffee_count, "stable_id": member_data.stable_id}
                     for name, member_data in self.members.items()
                     if member_data.coffee_count > 0
             ]

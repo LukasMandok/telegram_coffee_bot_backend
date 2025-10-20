@@ -16,28 +16,47 @@ async def initialize_group_state_from_db() -> GroupState:
     """
     Initialize a GroupState by loading all users from the database.
     
-    Creates a GroupState with all TelegramUser and PassiveUser display names
-    as members, each starting with 0 coffee orders.
+    Creates a GroupState with all non-disabled users. Archived status is stored
+    in the GroupMember itself.
     
     Returns:
         GroupState: Initialized group state with database users
     """
     repo = get_repo()
     all_users = await repo.find_all_users() or []
-    
-    # Create members dictionary with display_name as key and GroupMember as value
+
+    # Create members dictionary - include all except disabled users
     members = {}
+    disabled_count = 0
+    
     for user in all_users:
-        if hasattr(user, 'display_name') and user.display_name:
-            user_id = user.user_id if hasattr(user, 'user_id') else None
-            members[user.display_name] = GroupMember(name=user.display_name, user_id=user_id, coffee_count=0)
-        else:
+        if not hasattr(user, 'display_name') or not user.display_name:
             raise ValueError(f"User {user.id} has no display name")
+        
+        # Skip disabled users completely (10+ inactive cards)
+        if user.is_disabled:
+            disabled_count += 1
+            continue
+        
+        # Add to members with archived flag
+        # Include user_id for TelegramUsers (None for PassiveUsers)
+        user_id = user.user_id if hasattr(user, 'user_id') else None
+        members[user.display_name] = GroupMember(
+            name=user.display_name, 
+            stable_id=user.stable_id,
+            user_id=user_id,
+            coffee_count=0,
+            is_archived=user.is_archived
+        )
+
+    active_count = sum(1 for m in members.values() if not m.is_archived)
+    archived_count = sum(1 for m in members.values() if m.is_archived)
     
-    print(f"[GROUP STATE] Initialized with {len(members)} users from database")
+    print(f"[GROUP STATE] Initialized with {active_count} active, {archived_count} archived, {disabled_count} disabled users")
     for name in sorted(members.keys()):
-        print(f"  - {name}")
-    
+        status = " (archived)" if members[name].is_archived else ""
+        print(f"  - {name}{status}")
+
     return GroupState(members=members)
 
 
@@ -58,21 +77,22 @@ async def refresh_group_state_members(group_state: GroupState) -> GroupState:
     repo = get_repo()
     all_users = await repo.find_all_users() or []
     
-    # Get current database user display names
-    current_db_users = set()
+    # Get current database users
+    current_db_users = {}
     for user in all_users:
         if hasattr(user, 'display_name') and user.display_name:
-            current_db_users.add(user.display_name)
+            user_id = user.user_id if hasattr(user, 'user_id') else None
+            current_db_users[user.display_name] = (user.stable_id, user_id)
     
     # Preserve existing coffee counts for users that still exist
     new_members = {}
-    for display_name in current_db_users:
+    for display_name, (stable_id, user_id) in current_db_users.items():
         if display_name in group_state.members:
             # Keep existing GroupMember object
             new_members[display_name] = group_state.members[display_name]
         else:
             # New user, create GroupMember with 0 coffees
-            new_members[display_name] = GroupMember(name=display_name, user_id=None, coffee_count=0)
+            new_members[display_name] = GroupMember(name=display_name, stable_id=stable_id, user_id=user_id, coffee_count=0)
     
     # Update the group state
     old_count = len(group_state.members)

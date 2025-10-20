@@ -140,11 +140,14 @@ class SessionManager:
             self.session_notifications.setdefault(session_key, [])
 
             for name, member in group_state.members.items():
+                # Skip PassiveUsers (who don't have user_id)
                 if member.user_id is None:
                     continue
+                
                 # don't notify the initiator about their own session
                 if initiator_user_id is not None and member.user_id == initiator_user_id:
                     continue
+                
                 # send silently and persist until session end (vanish=False)
                 msg = await self.api.message_manager.send_text(
                     member.user_id,
@@ -304,21 +307,21 @@ class SessionManager:
                 
     #     await self.session.save()
 
-    async def add_member_to_group_state(self, member_name: str, user_id: Optional[int] = None) -> None:
+    async def add_member_to_group_state(self, member_name: str, stable_id: str, user_id: Optional[int] = None) -> None:
         """Add a member to the session's group state."""
         if not self.session:
             raise SessionNotActiveError()
             
         if member_name not in self.session.group_state.members:
             from .telethon_models import GroupMember
-            self.session.group_state.members[member_name] = GroupMember(name=member_name, user_id=user_id, coffee_count=0)
+            self.session.group_state.members[member_name] = GroupMember(name=member_name, stable_id=stable_id, user_id=user_id, coffee_count=0)
             await self.session.save()
 
-    async def get_member_user_id(self, member_name: str) -> Optional[int]:
-        """Get the user_id for a member by name."""
+    async def get_member_stable_id(self, member_name: str) -> Optional[str]:
+        """Get the stable_id for a member by name."""
         if not self.session or member_name not in self.session.group_state.members:
             return None
-        return self.session.group_state.members[member_name].user_id
+        return self.session.group_state.members[member_name].stable_id
 
     async def _handle_insufficient_coffee_capacity(self, requested: int, available: int) -> None:
         """Handle insufficient coffee capacity by notifying participants."""
@@ -388,7 +391,11 @@ class SessionManager:
         
         # Notify Telegram Users about their orders (but not session participants - they get the full summary)
         for name, group_member_data in self.session.group_state.members.items():
-            if group_member_data.coffee_count > 0 and group_member_data.user_id is not None:
+            if group_member_data.coffee_count > 0:
+                # Skip PassiveUsers (who don't have user_id)
+                if group_member_data.user_id is None:
+                    continue
+                
                 # Skip users who were active participants in the session
                 if group_member_data.user_id in participant_user_ids:
                     continue

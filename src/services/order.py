@@ -102,5 +102,15 @@ async def place_order(
             if session not in card.sessions:
                 card.sessions.append(session)  # type: ignore[attr-defined]
                 await card.save()
+    
+    # Reset inactive_card_count for the consumer since they just ordered
+    # Also unarchive and re-enable them if necessary
+    if consumer.inactive_card_count > 0 or consumer.is_archived or consumer.is_disabled:
+        consumer.inactive_card_count = 0
+        consumer.is_archived = False
+        consumer.is_disabled = False
+        await consumer.save()
+        print(f"✅ Reset inactive counter for {consumer.display_name} (placed order)")
 
     return order
+

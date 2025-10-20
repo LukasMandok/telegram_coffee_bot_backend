@@ -58,6 +58,59 @@ class CoffeeCardManager:
             await self._update_available()
         else:
             raise ValueError("Card not found in manager")
+    
+    async def _update_inactive_counters(self, card: CoffeeCard) -> None:
+        """
+        Update inactive_card_count for all users when a card is closed.
+        
+        Users who ordered on this card get their counter reset to 0.
+        Users who didn't order get their counter incremented by 1.
+        Users with inactive_card_count >= 2 get archived.
+        Users with inactive_card_count >= 10 get disabled.
+        
+        Args:
+            card: The coffee card that is being closed
+        """
+        repo = get_repo()
+        
+        # Get all users (both TelegramUser and PassiveUser)
+        all_users = await repo.find_all_users() or []
+        
+        # Get set of user IDs who ordered on this card (from consumer_stats)
+        users_who_ordered = set(card.consumer_stats.keys())
+        
+        # Update each user's inactive counter
+        for user in all_users:
+            user_id = user.stable_id
+            
+            if user_id in users_who_ordered:
+                # User ordered on this card - reset counter to 0
+                if user.inactive_card_count != 0:
+                    user.inactive_card_count = 0
+                    # Unarchive and re-enable if they were archived/disabled
+                    if user.is_archived:
+                        user.is_archived = False
+                    if user.is_disabled:
+                        user.is_disabled = False
+                    await user.save()
+                    print(f"✅ Reset inactive counter for {user.display_name} (ordered on card)")
+            else:
+                # User didn't order - increment counter
+                user.inactive_card_count += 1
+                print(f"⏭️ Incremented inactive counter for {user.display_name} to {user.inactive_card_count}")
+                
+                # TODO: move this to the settigs
+                # Disable if counter reaches 10
+                if user.inactive_card_count >= 10 and not user.is_disabled:
+                    user.is_disabled = True
+                    user.is_archived = True  # Also mark as archived
+                    print(f"🚫 Disabled {user.display_name} (inactive for {user.inactive_card_count} cards)")
+                # Archive if counter reaches 2 (but not disabled)
+                elif user.inactive_card_count >= 2 and not user.is_archived and not user.is_disabled:
+                    user.is_archived = True
+                    print(f"📦 Archived {user.display_name} (inactive for {user.inactive_card_count} cards)")
+                
+                await user.save()
         
 
     async def create_coffee_card(
@@ -166,6 +219,10 @@ class CoffeeCardManager:
         # Create or update debts FIRST (before deactivating card)
         # because debt_manager checks if card is active
         debts = await self.api.debt_manager.create_or_update_debts_for_card(card)
+        
+        # Update inactive_card_count for all users
+        # Reset to 0 for users who ordered on this card, increment for users who didn't
+        await self._update_inactive_counters(card)
         
         # NOW mark card as completed and deactivate
         await self._deactivate_coffee_card(card)

@@ -367,7 +367,11 @@ class CommandManager:
             # Notify all participants who have made orders
             for name, group_member in session.group_state.members.items():
                 # todo: also check, that they were not part of the session (as a participant)
-                if group_member.coffee_count > 0 and group_member.user_id is not None:
+                if group_member.coffee_count > 0:
+                    # Skip PassiveUsers (who don't have user_id)
+                    if group_member.user_id is None:
+                        continue
+                    
                     await session.fetch_link("initiator")
                     initiator_display_name = session.initiator.display_name # type: ignore
                     

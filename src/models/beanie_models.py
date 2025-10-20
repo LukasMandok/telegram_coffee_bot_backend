@@ -68,6 +68,9 @@ class BaseUser(base.BaseUser, Document):
 
 class PassiveUser(base.PassiveUser, BaseUser):
     display_name: Annotated[str, Indexed(unique=True)]  # Required unique display name
+    inactive_card_count: int = Field(default=0, ge=0, description="Number of consecutive coffee cards user was inactive for")
+    is_archived: bool = Field(default=False, description="Whether user is archived due to inactivity (2-9 inactive cards)")
+    is_disabled: bool = Field(default=False, description="Whether user is disabled due to long inactivity (10+ inactive cards)")
     
     class Settings(BaseUser.Settings):
         name = "passive_users"

@@ -853,6 +853,9 @@ class ConversationManager:
                 name = button_data.split("_")[2]
                 # Reset this member's count to 0 and sync keyboards
                 await self.api.group_keyboard_manager.handle_member_reset(session, name)
+            elif button_data == "group_show_archived":
+                # Toggle show_archived to reveal archived users
+                await self.api.group_keyboard_manager.handle_show_archived(session, user_id)
             elif button_data == "group_info":
                 # Non-actionable label/indicator; ignore
                 pass
