@@ -117,6 +117,7 @@ class TelethonAPI:
         self.add_handler(lambda event: self.command_manager.handle_debt_command(event), "/debt")
         self.add_handler(lambda event: self.command_manager.handle_credit_command(event), "/credit")
         self.add_handler(lambda event: self.command_manager.handle_settings_command(event), "/settings")
+        self.add_handler(lambda event: self.command_manager.handle_help_command(event), "/help")
         self.add_handler(lambda event: self.command_manager.handle_cancel_command(event), "/cancel")
         # TODO: check if I actually need them
         self.add_handler(lambda event: self.command_manager.handle_complete_session_command(event), "/complete_session")
@@ -128,6 +129,39 @@ class TelethonAPI:
         self.add_handler(lambda event: self.command_manager.handle_digits_command(event), events.NewMessage(incoming=True, pattern=re.compile(r'[0-9]+')))
         self.add_handler(lambda event: self.command_manager.handle_unknown_command(event))
     
+    async def setup_bot_commands(self) -> None:
+        """
+        Set up the bot's command list using Telegram's setMyCommands API.
+        
+        This configures the commands that appear in the Telegram UI when users
+        type '/' in the chat with the bot.
+        """
+        from telethon.tl.functions.bots import SetBotCommandsRequest
+        from telethon.tl.types import BotCommand, BotCommandScopeDefault
+        
+        commands = [
+            BotCommand(command="order", description="Create or join a session to place an order"),
+            BotCommand(command="debt", description="Show and manage your debts"),
+            BotCommand(command="credit", description="Manage the debts others owe to you"),
+            BotCommand(command="settings", description="Adjust your personal preferences"),
+            BotCommand(command="card", description="Show the current status and manage all coffee cards"),
+            BotCommand(command="new_card", description="Create a new coffee card that you paid for"),
+            BotCommand(command="close_card", description="Close the last active coffee card"),
+            BotCommand(command="paypal", description="Setup your paypal.me link"),
+            BotCommand(command="help", description="Show help and available commands"),
+        ]
+        
+        try:
+            # Set commands for all users (default scope)
+            await self.bot(SetBotCommandsRequest(
+                scope=BotCommandScopeDefault(),
+                lang_code="",  # Empty = all languages
+                commands=commands
+            ))
+            print("[BOT] Bot commands configured successfully")
+        except Exception as e:
+            print(f"[BOT] Error setting bot commands: {e}")
+    
     async def run(self) -> None:
         """
         Start the message vanisher task and run the bot until disconnected.
@@ -135,6 +169,9 @@ class TelethonAPI:
         This method starts background tasks and keeps the bot running
         until manually disconnected or an error occurs.
         """
+        # Set up bot commands in Telegram UI
+        await self.setup_bot_commands()
+        
         asyncio.create_task(self.message_manager.message_vanisher()) 
         asyncio.create_task(self.coffee_card_manager.load_from_db())
         

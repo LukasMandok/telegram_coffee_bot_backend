@@ -564,3 +564,49 @@ class CommandManager:
         # Start the settings conversation
         await self.api.conversation_manager.settings_conversation(user_id)
 
+    async def handle_help_command(self, event: events.NewMessage.Event) -> None:
+        """
+        Handle the /help command to show available commands and their descriptions.
+        
+        Args:
+            event: The NewMessage event containing /help command
+        """
+        user_id = event.sender_id
+        log_telegram_command(user_id, "/help", getattr(event, 'chat_id', None))
+        
+        help_text = (
+            "🤖 **Coffee Bot Commands**\n\n"
+            "**Getting Started:**\n"
+            "• `/start` - Register with the bot\n\n"
+            
+            "**Coffee Orders:**\n"
+            "• `/order` - Create or join a session to place an order\n"
+            "• `/cancel` - Cancel the current conversation\n\n"
+            
+            "**Coffee Cards:**\n"
+            "• `/card` - Show status and manage all coffee cards\n"
+            "• `/new_card` - Create a new coffee card that you paid for\n"
+            "• `/close_card` - Close the last active coffee card\n\n"
+            
+            "**Finances:**\n"
+            "• `/debt` - Show and manage your debts\n"
+            "• `/credit` - Display and manage debts others owe to you\n"
+            "• `/paypal` - Setup your paypal.me link\n\n"
+            
+            "**Settings:**\n"
+            "• `/settings` - Adjust your personal preferences\n"
+            "  - Group page size (5-20 users per page)\n"
+            "  - Group sorting (alphabetical or coffee count)\n\n"
+            
+            "**Other:**\n"
+            "• `/help` - Show this help message\n\n"
+        )
+        
+        await self.api.message_manager.send_text(
+            user_id,
+            help_text,
+            vanish=True,
+            conv=True,
+            link_preview=False
+        )
+
