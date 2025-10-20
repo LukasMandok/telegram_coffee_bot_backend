@@ -1773,3 +1773,266 @@ class ConversationManager:
         
         return len(debts) > 0  # True if debts were created, False otherwise
 
+    @managed_conversation("settings", 180)
+    async def settings_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
+        """
+        Handle the settings conversation flow where users can adjust their preferences.
+        
+        Args:
+            user_id: User ID
+            conv: Active conversation (provided by decorator)
+            state: Conversation state (provided by decorator)
+            
+        Returns:
+            True if settings were accessed successfully, False otherwise
+        """
+        from telethon import Button
+        from ..dependencies.dependencies import get_repo
+        
+        # Get current user settings
+        repo = get_repo()
+        settings = await repo.get_user_settings(user_id)
+        
+        if not settings:
+            await self.api.message_manager.send_text(
+                user_id, 
+                "❌ Failed to load your settings. Please try again later.",
+                True, True
+            )
+            return False
+        
+        # Main settings menu
+        while True:
+            settings_text = (
+                "⚙️ **Your Settings**\n\n"
+                f"**Group Page Size:** {settings.group_page_size} users per page\n"
+                f"**Group Sorting:** {settings.group_sort_by.title()}\n\n"
+                "Select a setting to adjust:"
+            )
+            
+            keyboard = [
+                [Button.inline("📄 Group Page Size", b"page_size")],
+                [Button.inline("🔤 Group Sorting", b"sorting")],
+                [Button.inline("✅ Done", b"done")]
+            ]
+            
+            data, message = await self.send_keyboard_and_wait_response(
+                conv, user_id, settings_text, keyboard, 120
+            )
+            
+            if data is None or data == "done":
+                await self.send_or_edit_message(
+                    user_id, 
+                    "✅ Settings saved!", 
+                    message, 
+                    remove_buttons=True
+                )
+                return True
+            
+            if data == "page_size":
+                # Page size adjustment flow
+                success = await self._settings_page_size_flow(user_id, conv, settings, message)
+                if not success:
+                    return False
+                # Reload settings after update
+                settings = await repo.get_user_settings(user_id)
+                
+            elif data == "sorting":
+                # Sorting adjustment flow
+                success = await self._settings_sorting_flow(user_id, conv, settings, message)
+                if not success:
+                    return False
+                # Reload settings after update
+                settings = await repo.get_user_settings(user_id)
+
+    async def _settings_page_size_flow(self, user_id: int, conv: Conversation, settings, message) -> bool:
+        """
+        Handle the page size adjustment sub-flow.
+        
+        Args:
+            user_id: User ID
+            conv: Active conversation
+            settings: Current user settings
+            message: Message to edit
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        from telethon import Button
+        from ..dependencies.dependencies import get_repo
+        
+        # Show description and current value
+        page_size_text = (
+            "📄 **Group Page Size**\n\n"
+            "This setting controls how many users are displayed per page "
+            "when selecting a group for a coffee order.\n\n"
+            f"**Current value:** {settings.group_page_size} users\n"
+            f"**Allowed range:** 5-20 users\n\n"
+            "Please enter a number between 5 and 20, or press Cancel:"
+        )
+        
+        keyboard = [
+            [Button.inline("❌ Cancel", b"cancel")]
+        ]
+        
+        await self.send_or_edit_message(user_id, page_size_text, message, remove_buttons=False)
+        await self.api.message_manager.send_keyboard(user_id, "Choose an option:", keyboard, True)
+        
+        # Wait for either button press or text message
+        max_attempts = 3
+        attempts = 0
+        
+        while attempts < max_attempts:
+            try:
+                # Wait for either text or button
+                done, pending = await asyncio.wait(
+                    [
+                        asyncio.create_task(conv.wait_event(events.NewMessage(incoming=True, from_users=user_id), timeout=60)),
+                        asyncio.create_task(conv.wait_event(self.api.keyboard_callback(user_id), timeout=60))
+                    ],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                # Cancel pending tasks
+                for task in pending:
+                    task.cancel()
+                
+                result = done.pop().result()
+                
+                # Check if it's a button press
+                if hasattr(result, 'data'):
+                    button_data = result.data.decode('utf-8')
+                    if button_data == "cancel":
+                        await result.answer()
+                        await self.api.message_manager.send_text(
+                            user_id,
+                            "❌ Cancelled page size adjustment.",
+                            True, True
+                        )
+                        return True
+                else:
+                    # It's a text message
+                    user_input = result.message.message.strip()
+                    
+                    try:
+                        page_size = int(user_input)
+                        
+                        if page_size < 5 or page_size > 20:
+                            raise ValueError("Value out of range")
+                        
+                        # Update settings
+                        repo = get_repo()
+                        updated_settings = await repo.update_user_settings(user_id, group_page_size=page_size)
+                        
+                        if updated_settings:
+                            await self.api.message_manager.send_text(
+                                user_id,
+                                f"✅ Page size updated to {page_size} users per page!",
+                                True, True
+                            )
+                            return True
+                        else:
+                            await self.api.message_manager.send_text(
+                                user_id,
+                                "❌ Failed to update settings. Please try again.",
+                                True, True
+                            )
+                            return False
+                            
+                    except ValueError:
+                        attempts += 1
+                        remaining = max_attempts - attempts
+                        
+                        if remaining > 0:
+                            await self.api.message_manager.send_text(
+                                user_id,
+                                f"❌ Invalid input. Please enter a number between 5 and 20.\n"
+                                f"Attempts remaining: {remaining}",
+                                True, True
+                            )
+                        else:
+                            await self.api.message_manager.send_text(
+                                user_id,
+                                "❌ Too many invalid attempts. Settings unchanged.",
+                                True, True
+                            )
+                            return False
+                            
+            except asyncio.TimeoutError:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "⏱️ Response timeout. Settings unchanged.",
+                    True, True
+                )
+                return False
+        
+        return False
+
+    async def _settings_sorting_flow(self, user_id: int, conv: Conversation, settings, message) -> bool:
+        """
+        Handle the sorting adjustment sub-flow.
+        
+        Args:
+            user_id: User ID
+            conv: Active conversation
+            settings: Current user settings
+            message: Message to edit
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        from telethon import Button
+        from ..dependencies.dependencies import get_repo
+        
+        # Show description and options
+        sorting_text = (
+            "🔤 **Group Sorting**\n\n"
+            "This setting controls how users are sorted when selecting a group for a coffee order.\n\n"
+            f"**Current setting:** {settings.group_sort_by.title()}\n\n"
+            "**Options:**\n"
+            "• **Alphabetical** - Sort users by name (A-Z)\n"
+            "• **Coffee Count** - Sort by number of coffees ordered (highest first, with alphabetical tiebreaker)\n\n"
+            "Choose your preferred sorting:"
+        )
+        
+        keyboard = [
+            [Button.inline("🔤 Alphabetical", b"alphabetical")],
+            [Button.inline("☕ Coffee Count", b"coffee_count")],
+            [Button.inline("❌ Cancel", b"cancel")]
+        ]
+        
+        data, message = await self.send_keyboard_and_wait_response(
+            conv, user_id, sorting_text, keyboard, 60
+        )
+        
+        if data is None or data == "cancel":
+            await self.send_or_edit_message(
+                user_id,
+                "❌ Cancelled sorting adjustment.",
+                message,
+                remove_buttons=True
+            )
+            return True
+        
+        # Update settings
+        repo = get_repo()
+        updated_settings = await repo.update_user_settings(user_id, group_sort_by=data)
+        
+        if updated_settings:
+            sort_name = "Alphabetical" if data == "alphabetical" else "Coffee Count"
+            await self.send_or_edit_message(
+                user_id,
+                f"✅ Sorting updated to {sort_name}!",
+                message,
+                remove_buttons=True
+            )
+            return True
+        else:
+            await self.send_or_edit_message(
+                user_id,
+                "❌ Failed to update settings. Please try again.",
+                message,
+                remove_buttons=True
+            )
+            return False
+

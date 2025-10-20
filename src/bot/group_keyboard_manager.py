@@ -88,6 +88,7 @@ class GroupKeyboardManager:
     async def create_group_keyboard(
         self, 
         group_state: GroupState, 
+        user_id: Optional[int] = None,
         current_page: int = 0, 
         is_insufficient: bool = False,
         is_multi_card: bool = False
@@ -97,13 +98,15 @@ class GroupKeyboardManager:
         
         Creates an inline keyboard for coffee ordering with:
         - Member names with +/- buttons for coffee counts
-        - Pagination controls for large groups (>5 members)
+        - Pagination controls with user-configurable page size (5-20, default 10)
         - Submit button (when orders > 0) and Cancel button
         - Warning icons based on coffee availability
         - 'Show More' button to reveal archived users (if any exist and not shown)
+        - User-configurable sorting (alphabetical or by coffee count)
         
         Args:
             group_state: Current state of group coffee ordering
+            user_id: Optional Telegram user ID to fetch personalized settings
             current_page: Current page for pagination
             is_insufficient: Whether there are insufficient coffees
             is_multi_card: Whether orders will be split across multiple cards
@@ -114,24 +117,33 @@ class GroupKeyboardManager:
         keyboard_group = []
         total = group_state.get_total_coffees()
         
-        # Filter members based on show_archived flag
+        # Get user settings for page size and sorting
+        page_size = 10  # Default
+        sort_by = "alphabetical"  # Default
+        if user_id:
+            from ..dependencies.dependencies import get_repo
+            repo = get_repo()
+            settings = await repo.get_user_settings(user_id)
+            if settings:
+                page_size = settings.group_page_size
+                sort_by = settings.group_sort_by
+        
+        # Show only non-archived members, sorted by user preference
+        items = [(name, member) for name, member in group_state.members.items() if not member.is_archived]
+        if sort_by == "coffee_count":
+            # Sort by coffee count (descending), then alphabetically for ties
+            items = sorted(items, key=lambda x: (-x[1].coffee_count, x[0].lower()))
+        else:
+            # Sort alphabetically
+            items = sorted(items, key=lambda x: x[0].lower())
+        
+        # Filter and sort members based on show_archived flag and user preferences
         if group_state.show_archived:
-            # Show active users first (alphabetically), then archived users (alphabetically)
-            active_members = sorted(
-                ((name, member) for name, member in group_state.members.items() if not member.is_archived),
-                key=lambda x: x[0].lower()
-            )
             archived_members = sorted(
                 ((name, member) for name, member in group_state.members.items() if member.is_archived),
                 key=lambda x: x[0].lower()
             )
-            items = active_members + archived_members
-        else:
-            # Show only non-archived members, sorted alphabetically
-            items = sorted(
-                ((name, member) for name, member in group_state.members.items() if not member.is_archived),
-                key=lambda x: x[0].lower()
-            )
+            items = items + archived_members
         
         # Check if there are any archived users not currently shown
         has_archived = any(member.is_archived for member in group_state.members.values())
@@ -139,15 +151,15 @@ class GroupKeyboardManager:
 
         # Calculate pagination with potential placement of Show More on the last member page
         total_items = len(items)
-        member_total_pages = (total_items + 4) // 5 if total_items > 0 else 1
-        last_page_count = (total_items - 5 * (member_total_pages - 1)) if total_items > 0 else 0
-        show_more_on_last_page = show_more_button_needed and last_page_count < 5
+        member_total_pages = (total_items + page_size - 1) // page_size if total_items > 0 else 1
+        last_page_count = (total_items - page_size * (member_total_pages - 1)) if total_items > 0 else 0
+        show_more_on_last_page = show_more_button_needed and last_page_count < page_size
 
         # Render current page
         if current_page < member_total_pages:
             # Render member rows for this page
-            i_start = current_page * 5
-            i_end = min(i_start + 5, total_items)
+            i_start = current_page * page_size
+            i_end = min(i_start + page_size, total_items)
             for name, member in items[i_start : i_end]:
                 keyboard_group.append([
                     Button.inline(str(name), "group_info"),
@@ -278,8 +290,8 @@ class GroupKeyboardManager:
         # Determine flags and build complete message text
         is_insufficient, is_multi_card, message_text = await self._determine_flags_and_message(session)
         
-        # Generate keyboard for this user's page with flags
-        keyboard = await self.create_group_keyboard(group_state, initial_page, is_insufficient, is_multi_card)
+        # Generate keyboard for this user's page with flags and their personal settings
+        keyboard = await self.create_group_keyboard(group_state, user_id, initial_page, is_insufficient, is_multi_card)
         
         # Send the keyboard message
         message = await self.api.message_manager.send_keyboard(
@@ -359,8 +371,8 @@ class GroupKeyboardManager:
         
         for participant_user_id, active_keyboard in keyboards_to_update:
             try:
-                # Generate updated keyboard for this participant using their current page with flags
-                keyboard = await self.create_group_keyboard(group_state, active_keyboard.current_page, is_insufficient, is_multi_card)
+                # Generate updated keyboard for this participant using their current page with flags and personal settings
+                keyboard = await self.create_group_keyboard(group_state, participant_user_id, active_keyboard.current_page, is_insufficient, is_multi_card)
                 
                 # Update the message
                 await self.api.bot.edit_message(
@@ -394,7 +406,16 @@ class GroupKeyboardManager:
             return
         
         active_keyboard = self.active_keyboards[session_id][user_id]
-        total_pages = (len(session.group_state.members) - 1) // 5 + 1 if session.group_state.members else 1
+        
+        # Get user's page size setting
+        page_size = 10  # Default
+        from ..dependencies.dependencies import get_repo
+        repo = get_repo()
+        settings = await repo.get_user_settings(user_id)
+        if settings:
+            page_size = settings.group_page_size
+        
+        total_pages = (len(session.group_state.members) - 1) // page_size + 1 if session.group_state.members else 1
         
         if direction in ('next', 'group_next'):
             new_page = min(active_keyboard.current_page + 1, total_pages - 1)
@@ -435,8 +456,8 @@ class GroupKeyboardManager:
             # Determine flags and build complete message text
             is_insufficient, is_multi_card, message_text = await self._determine_flags_and_message(session)
             
-            # Generate updated keyboard with this participant's current page
-            keyboard = await self.create_group_keyboard(group_state, active_keyboard.current_page, is_insufficient, is_multi_card)
+            # Generate updated keyboard with this participant's current page and personal settings
+            keyboard = await self.create_group_keyboard(group_state, user_id, active_keyboard.current_page, is_insufficient, is_multi_card)
             
             # Update the message
             await self.api.bot.edit_message(

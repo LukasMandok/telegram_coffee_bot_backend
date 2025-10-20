@@ -31,7 +31,7 @@ from telethon import TelegramClient, events, errors
 from ..handlers import handlers, exceptions
 from ..dependencies import dependencies as dep
 from ..bot.telethon_models import ( MessageModel, BotConfiguration )
-from ..bot.keyboards import KeyboardButton
+from ..bot.keyboards import KeyboardButton, KeyboardManager
 from ..common.log import (
     log_telegram_bot_started, log_telegram_command, log_telegram_callback,
     log_telegram_message_sent, log_telegram_api_error, log_unexpected_error
@@ -47,7 +47,7 @@ from ..bot.debt_manager import DebtManager
 
 # Type-only imports - only needed for type annotations
 if TYPE_CHECKING:
-    from ..bot.keyboards import KeyboardManager
+    pass
 
 # --- Pydantic Models for Type Safety and Data Validation ---
 # Models have been moved to bot/telethon_models.py for better organization
@@ -116,6 +116,7 @@ class TelethonAPI:
         self.add_handler(lambda event: self.command_manager.handle_paypal_command(event), "/paypal")
         self.add_handler(lambda event: self.command_manager.handle_debt_command(event), "/debt")
         self.add_handler(lambda event: self.command_manager.handle_credit_command(event), "/credit")
+        self.add_handler(lambda event: self.command_manager.handle_settings_command(event), "/settings")
         self.add_handler(lambda event: self.command_manager.handle_cancel_command(event), "/cancel")
         # TODO: check if I actually need them
         self.add_handler(lambda event: self.command_manager.handle_complete_session_command(event), "/complete_session")

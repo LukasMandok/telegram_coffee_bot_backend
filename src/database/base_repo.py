@@ -44,7 +44,15 @@ class BaseRepository(ABC):
     async def is_user_admin(self, user_id: int) -> bool:
         pass
     
+    ### User Settings
     
+    @abstractmethod
+    async def get_user_settings(self, user_id: int) -> Optional[Any]:
+        pass
+    
+    @abstractmethod
+    async def update_user_settings(self, user_id: int, **kwargs) -> Any:
+        pass
     
     ### Configuration
         

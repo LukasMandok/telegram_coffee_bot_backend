@@ -169,7 +169,19 @@ class Config(base.Config, Document):
         name = "config"
         
 class UserSettings(Document):
-    """Stores user-specific settings."""
+    """Stores user-specific settings for a Telegram user."""
+    user_id: Annotated[int, Indexed(unique=True)] = Field(..., description="Telegram user ID")
+    
+    # Group keyboard settings
+    group_page_size: int = Field(default=10, ge=5, le=20, description="Number of users displayed per group selection page (5-20)")
+    group_sort_by: str = Field(default="alphabetical", description="How to sort active users: 'alphabetical' or 'coffee_count'")
+    
+    @field_validator('group_sort_by')
+    @classmethod
+    def validate_sort_by(cls, v: str) -> str:
+        if v not in ['alphabetical', 'coffee_count']:
+            raise ValueError("group_sort_by must be 'alphabetical' or 'coffee_count'")
+        return v
     
     class Settings:
         name = "user_settings"

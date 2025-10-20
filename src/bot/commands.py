@@ -546,3 +546,21 @@ class CommandManager:
         # Start the credit overview conversation
         await self.api.conversation_manager.credit_overview_conversation(user_id)
 
+    @dep.verify_user
+    async def handle_settings_command(self, event: events.NewMessage.Event) -> None:
+        """
+        Handle the /settings command to adjust user preferences.
+        
+        Args:
+            event: The NewMessage event containing /settings command
+        """
+        user_id = event.sender_id
+        log_telegram_command(user_id, "/settings", getattr(event, 'chat_id', None))
+        
+        # Check if user already has an active conversation
+        if await self._check_and_notify_active_conversation(user_id):
+            return
+        
+        # Start the settings conversation
+        await self.api.conversation_manager.settings_conversation(user_id)
+

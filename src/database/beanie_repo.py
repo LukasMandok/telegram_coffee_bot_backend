@@ -49,6 +49,7 @@ class BeanieRepository(BaseRepository):
                 models.PassiveUser,
                 models.Password,
                 models.Config,
+                models.UserSettings,
                 # Coffee models
                 CoffeeCard,
                 CoffeeOrder,
@@ -485,3 +486,49 @@ class BeanieRepository(BaseRepository):
         except Exception as e:
             log_database_error("remove_admin", str(e), {"user_id": user_id})
             return False
+
+    ### User Settings ###
+
+    async def get_user_settings(self, user_id: int) -> Optional[models.UserSettings]:
+        """Get user settings by user_id, creating default settings if not found."""
+        try:
+            settings = await models.UserSettings.find_one(models.UserSettings.user_id == user_id)
+            if not settings:
+                # Create default settings for this user
+                try:
+                    settings = models.UserSettings(user_id=user_id)
+                    await settings.insert()
+                    print(f"[SETTINGS] Created default settings for user {user_id}")
+                except Exception as create_error:
+                    print(f"[SETTINGS] Error creating settings for user {user_id}: {create_error}")
+                    # If creation failed, try to find it again (might have been created by another request)
+                    settings = await models.UserSettings.find_one(models.UserSettings.user_id == user_id)
+                    if not settings:
+                        raise create_error
+            return settings
+        except Exception as e:
+            import traceback
+            print(f"[SETTINGS] Exception in get_user_settings for user {user_id}: {e}")
+            print(f"[SETTINGS] Traceback: {traceback.format_exc()}")
+            log_database_error("get_user_settings", str(e), {"user_id": user_id})
+            return None
+
+    async def update_user_settings(self, user_id: int, **kwargs) -> Optional[models.UserSettings]:
+        """Update user settings by user_id."""
+        try:
+            settings = await self.get_user_settings(user_id)
+            if not settings:
+                return None
+            
+            # Update only provided fields
+            for key, value in kwargs.items():
+                if hasattr(settings, key):
+                    setattr(settings, key, value)
+            
+            await settings.save()
+            print(f"Updated settings for user {user_id}: {kwargs}")
+            return settings
+        except Exception as e:
+            log_database_error("update_user_settings", str(e), {"user_id": user_id, "kwargs": kwargs})
+            return None
+
