@@ -129,11 +129,36 @@ class BeanieRepository(BaseRepository):
 
     ### Users ###
 
-    async def find_all_users(self):
+    async def find_all_users(self, exclude_archived: bool = False, exclude_disabled: bool = False):
+        """
+        Find all users (both TelegramUser and PassiveUser).
+        
+        Args:
+            exclude_archived: If True, exclude users with is_archived=True
+            exclude_disabled: If True, exclude users with is_disabled=True
+            
+        Returns:
+            List of all users matching the criteria
+        """
         try:
-            # Get both telegram users and passive users
-            telegram_users = await models.TelegramUser.find_all().to_list()
-            passive_users = await models.PassiveUser.find_all().to_list()
+            # Get telegram users using the dedicated method
+            telegram_users = await self.find_all_telegram_users(
+                exclude_archived=exclude_archived,
+                exclude_disabled=exclude_disabled
+            )
+            
+            # Build query for passive users
+            passive_query = {}
+            if exclude_archived:
+                passive_query['is_archived'] = False
+            if exclude_disabled:
+                passive_query['is_disabled'] = False
+            
+            # Get passive users with filters
+            if passive_query:
+                passive_users = await models.PassiveUser.find(passive_query).to_list()
+            else:
+                passive_users = await models.PassiveUser.find_all().to_list()
             
             all_users = telegram_users + passive_users
             log_performance_metric("find_all_users", len(all_users), "records")
@@ -142,6 +167,39 @@ class BeanieRepository(BaseRepository):
         except Exception as e:
             log_database_error("find_all_users", str(e))
             return []
+    
+    async def find_all_telegram_users(self, exclude_archived: bool = False, exclude_disabled: bool = False):
+        """
+        Find all Telegram users (users with user_id).
+        
+        Args:
+            exclude_archived: If True, exclude users with is_archived=True
+            exclude_disabled: If True, exclude users with is_disabled=True
+            
+        Returns:
+            List of TelegramUser objects matching the criteria
+        """
+        try:
+            # Build query
+            query = {}
+            if exclude_archived:
+                query['is_archived'] = False
+            if exclude_disabled:
+                query['is_disabled'] = False
+            
+            # Get telegram users with filters
+            if query:
+                telegram_users = await models.TelegramUser.find(query).to_list()
+            else:
+                telegram_users = await models.TelegramUser.find_all().to_list()
+            
+            log_performance_metric("find_all_telegram_users", len(telegram_users), "records")
+            return telegram_users
+
+        except Exception as e:
+            log_database_error("find_all_telegram_users", str(e))
+            return []
+        
 
     async def find_user_by_id(self, id: int):
         print(f"DEBUG: find_user_by_id called with id={id}")

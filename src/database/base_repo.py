@@ -13,7 +13,11 @@ class BaseRepository(ABC):
     ### Users
     
     @abstractmethod
-    async def find_all_users(self) -> Optional[List[Any]]:
+    async def find_all_users(self, exclude_archived: bool = False, exclude_disabled: bool = False) -> Optional[List[Any]]:
+        pass
+    
+    @abstractmethod
+    async def find_all_telegram_users(self, exclude_archived: bool = False, exclude_disabled: bool = False) -> Optional[List[Any]]:
         pass
 
     @abstractmethod
