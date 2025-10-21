@@ -131,13 +131,13 @@ class SettingsManager:
         return [
             [Button.inline("🔤 Alphabetical", b"alphabetical")],
             [Button.inline("☕ Coffee Count", b"coffee_count")],
-            [Button.inline(f"{self.ICON_CANCEL} Cancel", b"cancel")]
+            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
         ]
     
     def get_cancel_keyboard(self) -> List[List[Button]]:
-        """Generate a simple cancel button keyboard."""
+        """Generate a simple back button keyboard."""
         return [
-            [Button.inline(f"{self.ICON_CANCEL} Cancel", b"cancel")]
+            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
         ]
     
     # === Input Handlers ===
@@ -182,8 +182,7 @@ class SettingsManager:
             f"🔢 **{setting_name}**\n\n"
             f"{description}\n\n"
             f"**Current value:** {current_value}\n"
-            f"**Allowed range:** {min_value}-{max_value}\n\n"
-            f"Please enter a number between {min_value} and {max_value}, or press Cancel:"
+            f"**Allowed range:** {min_value}-{max_value}"
         )
         
         await self.api.message_manager.edit_message(
@@ -217,15 +216,16 @@ class SettingsManager:
                 
                 result = done.pop().result()
                 
-                # Check if it's a button press (cancel)
+                # Check if it's a button press (back)
                 if hasattr(result, 'data'):
                     button_data = result.data.decode('utf-8')
-                    if button_data == "cancel":
+                    if button_data == "back":
                         await result.answer()
                         return None
                 else:
                     # It's a text message
                     user_input = result.message.message.strip()
+                    user_message = result.message
                     
                     try:
                         value = int(user_input)
@@ -233,12 +233,33 @@ class SettingsManager:
                         if value < min_value or value > max_value:
                             raise ValueError("Value out of range")
                         
-                        # Success!
+                        # Success! Delete the user's input message to keep chat clean
+                        try:
+                            await user_message.delete()
+                        except Exception:
+                            pass  # Ignore if we can't delete
+                        
+                        # Send a temporary success message that will auto-delete after 2 seconds
+                        # Don't add to vanish queue since it auto-deletes itself
+                        await self.api.message_manager.send_text(
+                            user_id,
+                            f"✅ **{setting_name} updated to {value}!**",
+                            vanish=False,  # Don't add to vanish queue - it auto-deletes
+                            conv=False,    # Not part of conversation group
+                            delete_after=2
+                        )
+                        
                         return value
                         
                     except ValueError:
                         attempts += 1
                         remaining = max_attempts - attempts
+                        
+                        # Delete invalid input message
+                        try:
+                            await user_message.delete()
+                        except Exception:
+                            pass
                         
                         if remaining > 0:
                             await self.api.message_manager.send_text(
