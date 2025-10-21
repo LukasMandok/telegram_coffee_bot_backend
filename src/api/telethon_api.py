@@ -207,7 +207,16 @@ class TelethonAPI:
             message = event_obj.message
             # Convert telegram message to our MessageModel for consistency
             message_model = MessageModel.from_telegram_message(message)
-            self.message_manager.add_latest_message(message_model, True, True)
+            
+            # Check if there's an active conversation for this user
+            sender_id = event_obj.sender_id
+            has_active_conversation = self.conversation_manager.has_conversation(sender_id)
+            
+            # Only create a new conversation group if there's no active conversation
+            # Otherwise, add to the existing conversation
+            new_conversation = not has_active_conversation
+            self.message_manager.add_latest_message(message_model, conv=True, new=new_conversation)
+            
             await handler(event_obj)
             
             # print("stop propagation")
