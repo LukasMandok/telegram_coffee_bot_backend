@@ -176,6 +176,10 @@ class UserSettings(Document):
     group_page_size: int = Field(default=10, ge=5, le=20, description="Number of users displayed per group selection page (5-20)")
     group_sort_by: str = Field(default="alphabetical", description="How to sort active users: 'alphabetical' or 'coffee_count'")
     
+    # Vanishing messages settings
+    vanishing_enabled: bool = Field(default=True, description="Whether vanishing messages are enabled")
+    vanishing_threshold: int = Field(default=2, ge=1, le=10, description="Number of messages/conversations before message vanishes (1-10)")
+    
     @field_validator('group_sort_by')
     @classmethod
     def validate_sort_by(cls, v: str) -> str:

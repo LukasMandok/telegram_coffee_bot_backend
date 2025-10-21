@@ -595,11 +595,14 @@ class CommandManager:
             
             "**Settings:**\n"
             "• `/settings` - Adjust your personal preferences\n"
-            "  - Group page size (5-20 users per page)\n"
-            "  - Group sorting (alphabetical or coffee count)\n\n"
+            "  📋 **Ordering:** Page size, group sorting\n"
+            "  💬 **Vanishing Messages:** Auto-cleanup, threshold\n"
+            "  🔧 **Administration:** Admin features (coming soon)\n\n"
             
             "**Other:**\n"
             "• `/help` - Show this help message\n\n"
+            
+            "💡 **Tip:** Most commands use interactive inline keyboards for easy navigation!"
         )
         
         await self.api.message_manager.send_text(

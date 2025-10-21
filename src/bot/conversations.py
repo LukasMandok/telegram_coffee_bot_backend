@@ -18,6 +18,7 @@ from pymongo.errors import DuplicateKeyError
 from ..handlers import handlers
 from ..handlers.paypal import create_paypal_link, validate_paypal_link
 from ..dependencies import dependencies as dep
+from .settings import SettingsManager
 from .keyboards import KeyboardManager
 
 logger = logging.getLogger(__name__)
@@ -153,6 +154,8 @@ class ConversationManager:
         self.api = api
         # Manage active conversations within the conversation manager
         self.active_conversations: Dict[int, ConversationState] = {}
+        # Initialize settings manager for handling settings UI
+        self.settings_manager = SettingsManager(api)
     
     # === Conversation Managment === 
     
@@ -389,6 +392,36 @@ class ConversationManager:
             # Return the message object even if button response failed
             # so caller can still use it for error handling
             return None, message
+
+    async def edit_keyboard_and_wait_response(self, conv: Conversation, user_id: int, message_text: str, keyboard, message_to_edit: Any, timeout: int = 60) -> tuple[Optional[str], Optional[Any]]:
+        """
+        Edit an existing message with a new keyboard and wait for button response.
+        
+        This method is used for navigating between menus without sending new messages.
+        
+        Args:
+            conv: The active Telethon conversation object
+            user_id: The user ID for the conversation
+            message_text: The new text for the message
+            keyboard: The new keyboard to display
+            message_to_edit: The existing message to edit
+            timeout: Timeout in seconds for waiting for the button response
+            
+        Returns:
+            tuple: (button_data, message_object) - Both the button response data and the message object
+                   (None, message_object) if button response failed but message was edited
+        """
+        try:
+            # Edit the message with new text and keyboard
+            await self.api.message_manager.edit_message(message_to_edit, message_text, buttons=keyboard)
+            
+            # Wait for button response
+            data = await self.receive_button_response(conv, user_id, timeout)
+            return data, message_to_edit
+        except Exception as e:
+            # Return the message object even if button response failed
+            print(f"Error in edit_keyboard_and_wait_response: {e}")
+            return None, message_to_edit
 
     async def send_or_edit_message(self, user_id: int, text: str, message_to_edit: Optional[Any] = None, remove_buttons: bool = False):
         """
@@ -1786,7 +1819,6 @@ class ConversationManager:
         Returns:
             True if settings were accessed successfully, False otherwise
         """
-        from telethon import Button
         from ..dependencies.dependencies import get_repo
         
         # Get current user settings
@@ -1802,23 +1834,21 @@ class ConversationManager:
             return False
         
         # Main settings menu
+        message = None
         while True:
-            settings_text = (
-                "⚙️ **Your Settings**\n\n"
-                f"**Group Page Size:** {settings.group_page_size} users per page\n"
-                f"**Group Sorting:** {settings.group_sort_by.title()}\n\n"
-                "Select a setting to adjust:"
-            )
+            # Use SettingsManager to generate menu
+            settings_text = self.settings_manager.get_main_menu_text()
+            keyboard = self.settings_manager.get_main_menu_keyboard()
             
-            keyboard = [
-                [Button.inline("📄 Group Page Size", b"page_size")],
-                [Button.inline("🔤 Group Sorting", b"sorting")],
-                [Button.inline("✅ Done", b"done")]
-            ]
-            
-            data, message = await self.send_keyboard_and_wait_response(
-                conv, user_id, settings_text, keyboard, 120
-            )
+            # First time: send message, subsequent times: edit message
+            if message is None:
+                data, message = await self.send_keyboard_and_wait_response(
+                    conv, user_id, settings_text, keyboard, 120
+                )
+            else:
+                data, message = await self.edit_keyboard_and_wait_response(
+                    conv, user_id, settings_text, keyboard, message, 120
+                )
             
             if data is None or data == "done":
                 await self.send_or_edit_message(
@@ -1829,12 +1859,70 @@ class ConversationManager:
                 )
                 return True
             
+            if data == "ordering":
+                # Ordering settings submenu
+                success = await self._settings_ordering_submenu(user_id, conv, settings, message)
+                if not success:
+                    return False
+                # Reload settings after update
+                settings = await repo.get_user_settings(user_id)
+                
+            elif data == "vanishing":
+                # Vanishing messages submenu
+                success = await self._settings_vanishing_submenu(user_id, conv, settings, message)
+                if not success:
+                    return False
+                # Reload settings after update
+                settings = await repo.get_user_settings(user_id)
+                
+            elif data == "admin":
+                # Administration submenu (placeholder for now)
+                await self.send_or_edit_message(
+                    user_id,
+                    "🔧 **Administration**\n\n"
+                    "⚠️ This feature is currently under development.\n"
+                    "Administration features will be available for users with admin rights.",
+                    message,
+                    remove_buttons=True
+                )
+                # Short delay before returning to main menu
+                await asyncio.sleep(2)
+
+    async def _settings_ordering_submenu(self, user_id: int, conv: Conversation, settings, message) -> bool:
+        """
+        Handle the ordering settings submenu.
+        
+        Args:
+            user_id: User ID
+            conv: Active conversation
+            settings: Current user settings
+            message: Message to edit
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        from ..dependencies.dependencies import get_repo
+        
+        while True:
+            # Use SettingsManager to generate submenu
+            ordering_text = self.settings_manager.get_ordering_submenu_text(settings)
+            keyboard = self.settings_manager.get_ordering_submenu_keyboard()
+            
+            # Edit the existing message instead of sending a new one
+            data, message = await self.edit_keyboard_and_wait_response(
+                conv, user_id, ordering_text, keyboard, message, 120
+            )
+            
+            if data is None or data == "back":
+                return True
+            
             if data == "page_size":
                 # Page size adjustment flow
                 success = await self._settings_page_size_flow(user_id, conv, settings, message)
                 if not success:
                     return False
                 # Reload settings after update
+                repo = get_repo()
                 settings = await repo.get_user_settings(user_id)
                 
             elif data == "sorting":
@@ -1843,6 +1931,64 @@ class ConversationManager:
                 if not success:
                     return False
                 # Reload settings after update
+                repo = get_repo()
+                settings = await repo.get_user_settings(user_id)
+
+    async def _settings_vanishing_submenu(self, user_id: int, conv: Conversation, settings, message) -> bool:
+        """
+        Handle the vanishing messages settings submenu.
+        
+        Args:
+            user_id: User ID
+            conv: Active conversation
+            settings: Current user settings
+            message: Message to edit
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        from ..dependencies.dependencies import get_repo
+        
+        while True:
+            # Use SettingsManager to generate submenu
+            vanishing_text = self.settings_manager.get_vanishing_submenu_text(settings)
+            keyboard = self.settings_manager.get_vanishing_submenu_keyboard()
+            
+            # Edit the existing message instead of sending a new one
+            data, message = await self.edit_keyboard_and_wait_response(
+                conv, user_id, vanishing_text, keyboard, message, 120
+            )
+            
+            if data is None or data == "back":
+                return True
+            
+            if data == "toggle":
+                # Toggle vanishing messages on/off
+                repo = get_repo()
+                new_value = not settings.vanishing_enabled
+                updated_settings = await repo.update_user_settings(user_id, vanishing_enabled=new_value)
+                
+                if updated_settings:
+                    settings = updated_settings
+                    status = "enabled" if new_value else "disabled"
+                    # Show brief confirmation using SettingsManager
+                    await self.settings_manager.show_brief_confirmation(
+                        message,
+                        f"✅ Vanishing messages {status}!"
+                    )
+                else:
+                    await self.settings_manager.show_brief_confirmation(
+                        message,
+                        "❌ Failed to update settings. Please try again."
+                    )
+                    
+            elif data == "threshold":
+                # Adjust vanishing threshold
+                success = await self._settings_vanishing_threshold_flow(user_id, conv, settings, message)
+                if not success:
+                    return False
+                # Reload settings after update
+                repo = get_repo()
                 settings = await repo.get_user_settings(user_id)
 
     async def _settings_page_size_flow(self, user_id: int, conv: Conversation, settings, message) -> bool:
@@ -1858,115 +2004,42 @@ class ConversationManager:
         Returns:
             True if successful, False otherwise
         """
-        from telethon import Button
         from ..dependencies.dependencies import get_repo
         
-        # Show description and current value
-        page_size_text = (
-            "📄 **Group Page Size**\n\n"
-            "This setting controls how many users are displayed per page "
-            "when selecting a group for a coffee order.\n\n"
-            f"**Current value:** {settings.group_page_size} users\n"
-            f"**Allowed range:** 5-20 users\n\n"
-            "Please enter a number between 5 and 20, or press Cancel:"
+        # Use SettingsManager's generic number input handler
+        page_size = await self.settings_manager.get_number_input(
+            conv=conv,
+            user_id=user_id,
+            message_to_edit=message,
+            setting_name="Group Page Size",
+            description="This setting controls how many users are displayed per page when selecting a group for a coffee order.",
+            current_value=settings.group_page_size,
+            min_value=5,
+            max_value=20
         )
         
-        keyboard = [
-            [Button.inline("❌ Cancel", b"cancel")]
-        ]
+        if page_size is None:
+            # Cancelled or timeout
+            return True
         
-        await self.send_or_edit_message(user_id, page_size_text, message, remove_buttons=False)
-        await self.api.message_manager.send_keyboard(user_id, "Choose an option:", keyboard, True)
+        # Update settings
+        repo = get_repo()
+        updated_settings = await repo.update_user_settings(user_id, group_page_size=page_size)
         
-        # Wait for either button press or text message
-        max_attempts = 3
-        attempts = 0
-        
-        while attempts < max_attempts:
-            try:
-                # Wait for either text or button
-                done, pending = await asyncio.wait(
-                    [
-                        asyncio.create_task(conv.wait_event(events.NewMessage(incoming=True, from_users=user_id), timeout=60)),
-                        asyncio.create_task(conv.wait_event(self.api.keyboard_callback(user_id), timeout=60))
-                    ],
-                    return_when=asyncio.FIRST_COMPLETED
-                )
-                
-                # Cancel pending tasks
-                for task in pending:
-                    task.cancel()
-                
-                result = done.pop().result()
-                
-                # Check if it's a button press
-                if hasattr(result, 'data'):
-                    button_data = result.data.decode('utf-8')
-                    if button_data == "cancel":
-                        await result.answer()
-                        await self.api.message_manager.send_text(
-                            user_id,
-                            "❌ Cancelled page size adjustment.",
-                            True, True
-                        )
-                        return True
-                else:
-                    # It's a text message
-                    user_input = result.message.message.strip()
-                    
-                    try:
-                        page_size = int(user_input)
-                        
-                        if page_size < 5 or page_size > 20:
-                            raise ValueError("Value out of range")
-                        
-                        # Update settings
-                        repo = get_repo()
-                        updated_settings = await repo.update_user_settings(user_id, group_page_size=page_size)
-                        
-                        if updated_settings:
-                            await self.api.message_manager.send_text(
-                                user_id,
-                                f"✅ Page size updated to {page_size} users per page!",
-                                True, True
-                            )
-                            return True
-                        else:
-                            await self.api.message_manager.send_text(
-                                user_id,
-                                "❌ Failed to update settings. Please try again.",
-                                True, True
-                            )
-                            return False
-                            
-                    except ValueError:
-                        attempts += 1
-                        remaining = max_attempts - attempts
-                        
-                        if remaining > 0:
-                            await self.api.message_manager.send_text(
-                                user_id,
-                                f"❌ Invalid input. Please enter a number between 5 and 20.\n"
-                                f"Attempts remaining: {remaining}",
-                                True, True
-                            )
-                        else:
-                            await self.api.message_manager.send_text(
-                                user_id,
-                                "❌ Too many invalid attempts. Settings unchanged.",
-                                True, True
-                            )
-                            return False
-                            
-            except asyncio.TimeoutError:
-                await self.api.message_manager.send_text(
-                    user_id,
-                    "⏱️ Response timeout. Settings unchanged.",
-                    True, True
-                )
-                return False
-        
-        return False
+        if updated_settings:
+            await self.api.message_manager.send_text(
+                user_id,
+                f"✅ Page size updated to {page_size} users per page!",
+                True, True
+            )
+            return True
+        else:
+            await self.api.message_manager.send_text(
+                user_id,
+                "❌ Failed to update settings. Please try again.",
+                True, True
+            )
+            return False
 
     async def _settings_sorting_flow(self, user_id: int, conv: Conversation, settings, message) -> bool:
         """
@@ -1981,37 +2054,19 @@ class ConversationManager:
         Returns:
             True if successful, False otherwise
         """
-        from telethon import Button
         from ..dependencies.dependencies import get_repo
         
-        # Show description and options
-        sorting_text = (
-            "🔤 **Group Sorting**\n\n"
-            "This setting controls how users are sorted when selecting a group for a coffee order.\n\n"
-            f"**Current setting:** {settings.group_sort_by.title()}\n\n"
-            "**Options:**\n"
-            "• **Alphabetical** - Sort users by name (A-Z)\n"
-            "• **Coffee Count** - Sort by number of coffees ordered (highest first, with alphabetical tiebreaker)\n\n"
-            "Choose your preferred sorting:"
-        )
+        # Use SettingsManager to generate sorting options
+        sorting_text = self.settings_manager.get_sorting_options_text(settings)
+        keyboard = self.settings_manager.get_sorting_options_keyboard()
         
-        keyboard = [
-            [Button.inline("🔤 Alphabetical", b"alphabetical")],
-            [Button.inline("☕ Coffee Count", b"coffee_count")],
-            [Button.inline("❌ Cancel", b"cancel")]
-        ]
-        
-        data, message = await self.send_keyboard_and_wait_response(
-            conv, user_id, sorting_text, keyboard, 60
+        # Edit the existing message instead of sending a new one
+        data, message = await self.edit_keyboard_and_wait_response(
+            conv, user_id, sorting_text, keyboard, message, 60
         )
         
         if data is None or data == "cancel":
-            await self.send_or_edit_message(
-                user_id,
-                "❌ Cancelled sorting adjustment.",
-                message,
-                remove_buttons=True
-            )
+            # Just return True to go back to submenu without saving
             return True
         
         # Update settings
@@ -2033,6 +2088,56 @@ class ConversationManager:
                 "❌ Failed to update settings. Please try again.",
                 message,
                 remove_buttons=True
+            )
+            return False
+
+    async def _settings_vanishing_threshold_flow(self, user_id: int, conv: Conversation, settings, message) -> bool:
+        """
+        Handle the vanishing threshold adjustment sub-flow.
+        
+        Args:
+            user_id: User ID
+            conv: Active conversation
+            settings: Current user settings
+            message: Message to edit
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        from ..dependencies.dependencies import get_repo
+        
+        # Use SettingsManager's generic number input handler
+        threshold = await self.settings_manager.get_number_input(
+            conv=conv,
+            user_id=user_id,
+            message_to_edit=message,
+            setting_name="Vanishing Threshold",
+            description="This setting controls after how many messages or conversations old messages will automatically vanish to keep your chat clean.",
+            current_value=settings.vanishing_threshold,
+            min_value=1,
+            max_value=10
+        )
+        
+        if threshold is None:
+            # Cancelled or timeout
+            return True
+        
+        # Update settings
+        repo = get_repo()
+        updated_settings = await repo.update_user_settings(user_id, vanishing_threshold=threshold)
+        
+        if updated_settings:
+            await self.api.message_manager.send_text(
+                user_id,
+                f"✅ Vanishing threshold updated to {threshold} messages!",
+                True, True
+            )
+            return True
+        else:
+            await self.api.message_manager.send_text(
+                user_id,
+                "❌ Failed to update settings. Please try again.",
+                True, True
             )
             return False
 
