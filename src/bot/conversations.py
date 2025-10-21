@@ -232,6 +232,18 @@ class ConversationManager:
         """
         return self.active_conversations.get(user_id)
     
+    def has_conversation(self, user_id: int) -> bool:
+        """
+        Check if a user has an active conversation.
+        
+        Args:
+            user_id: Telegram user ID
+            
+        Returns:
+            True if user has an active conversation, False otherwise
+        """
+        return user_id in self.active_conversations
+    
     def update_conversation_step(self, user_id: int, step: str) -> bool:
         """
         Update the conversation step for a user.
@@ -322,7 +334,7 @@ class ConversationManager:
         
         return message_event
 
-    async def receive_button_response(self, conv: Conversation, user_id: int, timeout: int = 60) -> Optional[str]:
+    async def receive_button_response(self, conv: Conversation, user_id: int, timeout: int = 60, return_event: bool = False):
         """
         Receive a button callback response from a conversation.
         
@@ -333,9 +345,11 @@ class ConversationManager:
             conv: The active Telethon conversation object
             user_id: The user ID for the conversation
             timeout: Timeout in seconds for waiting for the button response
+            return_event: If True, return tuple of (data, event) instead of just data
             
         Returns:
             str: The button data if successful, None if failed
+            tuple: (button_data, button_event) if return_event=True
             
         Raises:
             TimeoutError: If no button response is received within timeout
@@ -345,10 +359,17 @@ class ConversationManager:
                 KeyboardManager.get_keyboard_callback_filter(user_id),
                 timeout=timeout
             )
-            await button_event.answer()
+            
             data = button_event.data.decode('utf8')
             log_telegram_callback(user_id, data)
-            return data
+            
+            if return_event:
+                # Don't answer yet - let caller send custom popup notification
+                return data, button_event
+            else:
+                # Answer without notification by default for backward compatibility
+                await button_event.answer()
+                return data
         except Exception as e:
             # Let the caller handle the exception
             raise e
@@ -393,7 +414,7 @@ class ConversationManager:
             # so caller can still use it for error handling
             return None, message
 
-    async def edit_keyboard_and_wait_response(self, conv: Conversation, user_id: int, message_text: str, keyboard, message_to_edit: Any, timeout: int = 60) -> tuple[Optional[str], Optional[Any]]:
+    async def edit_keyboard_and_wait_response(self, conv: Conversation, user_id: int, message_text: str, keyboard, message_to_edit: Any, timeout: int = 60, return_event: bool = False):
         """
         Edit an existing message with a new keyboard and wait for button response.
         
@@ -406,9 +427,11 @@ class ConversationManager:
             keyboard: The new keyboard to display
             message_to_edit: The existing message to edit
             timeout: Timeout in seconds for waiting for the button response
+            return_event: If True, return tuple of (data, message, event) instead of (data, message)
             
         Returns:
             tuple: (button_data, message_object) - Both the button response data and the message object
+                   (button_data, message_object, button_event) if return_event=True
                    (None, message_object) if button response failed but message was edited
         """
         try:
@@ -416,11 +439,17 @@ class ConversationManager:
             await self.api.message_manager.edit_message(message_to_edit, message_text, buttons=keyboard)
             
             # Wait for button response
-            data = await self.receive_button_response(conv, user_id, timeout)
-            return data, message_to_edit
+            if return_event:
+                data, event = await self.receive_button_response(conv, user_id, timeout, return_event=True)
+                return data, message_to_edit, event
+            else:
+                data = await self.receive_button_response(conv, user_id, timeout)
+                return data, message_to_edit
         except Exception as e:
             # Return the message object even if button response failed
             print(f"Error in edit_keyboard_and_wait_response: {e}")
+            if return_event:
+                return None, message_to_edit, None
             return None, message_to_edit
 
     async def send_or_edit_message(self, user_id: int, text: str, message_to_edit: Optional[Any] = None, remove_buttons: bool = False):
@@ -1954,12 +1983,15 @@ class ConversationManager:
             vanishing_text = self.settings_manager.get_vanishing_submenu_text(settings)
             keyboard = self.settings_manager.get_vanishing_submenu_keyboard()
             
-            # Edit the existing message instead of sending a new one
-            data, message = await self.edit_keyboard_and_wait_response(
-                conv, user_id, vanishing_text, keyboard, message, 120
+            # Edit the existing message and get button event for popup notifications
+            data, message, event = await self.edit_keyboard_and_wait_response(
+                conv, user_id, vanishing_text, keyboard, message, 120, return_event=True
             )
             
             if data is None or data == "back":
+                # Answer the callback without notification for back button
+                if event:
+                    await event.answer()
                 return True
             
             if data == "toggle":
@@ -1968,21 +2000,35 @@ class ConversationManager:
                 new_value = not settings.vanishing_enabled
                 updated_settings = await repo.update_user_settings(user_id, vanishing_enabled=new_value)
                 
+                # Answer the callback event
+                if event:
+                    await event.answer()
+                
                 if updated_settings:
                     settings = updated_settings
                     status = "enabled" if new_value else "disabled"
-                    # Show brief confirmation using SettingsManager
-                    await self.settings_manager.show_brief_confirmation(
-                        message,
-                        f"✅ Vanishing messages {status}!"
+                    # Show self-deleting success message
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        f"✅ **Vanishing messages {status}!**",
+                        vanish=False,
+                        conv=False,
+                        delete_after=2
                     )
                 else:
-                    await self.settings_manager.show_brief_confirmation(
-                        message,
-                        "❌ Failed to update settings. Please try again."
+                    # Show self-deleting error message
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ **Failed to update settings**",
+                        vanish=False,
+                        conv=False,
+                        delete_after=3
                     )
                     
             elif data == "threshold":
+                # Answer the threshold button
+                if event:
+                    await event.answer()
                 # Adjust vanishing threshold
                 success = await self._settings_vanishing_threshold_flow(user_id, conv, settings, message)
                 if not success:
@@ -2022,21 +2068,17 @@ class ConversationManager:
             # Cancelled or timeout
             return True
         
-        # Update settings
+        # Update settings (success message already shown by get_number_input)
         repo = get_repo()
         updated_settings = await repo.update_user_settings(user_id, group_page_size=page_size)
         
         if updated_settings:
-            await self.api.message_manager.send_text(
-                user_id,
-                f"✅ Page size updated to {page_size} users per page!",
-                True, True
-            )
             return True
         else:
+            # Only show error if database update fails
             await self.api.message_manager.send_text(
                 user_id,
-                "❌ Failed to update settings. Please try again.",
+                "❌ Failed to save settings. Please try again.",
                 True, True
             )
             return False
@@ -2060,14 +2102,20 @@ class ConversationManager:
         sorting_text = self.settings_manager.get_sorting_options_text(settings)
         keyboard = self.settings_manager.get_sorting_options_keyboard()
         
-        # Edit the existing message instead of sending a new one
-        data, message = await self.edit_keyboard_and_wait_response(
-            conv, user_id, sorting_text, keyboard, message, 60
+        # Edit the existing message and get button event
+        data, message, event = await self.edit_keyboard_and_wait_response(
+            conv, user_id, sorting_text, keyboard, message, 60, return_event=True
         )
         
-        if data is None or data == "cancel":
-            # Just return True to go back to submenu without saving
+        if data is None or data == "back":
+            # Answer the callback without notification for back button
+            if event:
+                await event.answer()
             return True
+        
+        # Answer the callback event
+        if event:
+            await event.answer()
         
         # Update settings
         repo = get_repo()
@@ -2075,19 +2123,23 @@ class ConversationManager:
         
         if updated_settings:
             sort_name = "Alphabetical" if data == "alphabetical" else "Coffee Count"
-            await self.send_or_edit_message(
+            # Show self-deleting success message
+            await self.api.message_manager.send_text(
                 user_id,
-                f"✅ Sorting updated to {sort_name}!",
-                message,
-                remove_buttons=True
+                f"✅ **Sorting set to {sort_name}!**",
+                vanish=False,
+                conv=False,
+                delete_after=2
             )
             return True
         else:
-            await self.send_or_edit_message(
+            # Show self-deleting error message
+            await self.api.message_manager.send_text(
                 user_id,
-                "❌ Failed to update settings. Please try again.",
-                message,
-                remove_buttons=True
+                "❌ **Failed to update settings**",
+                vanish=False,
+                conv=False,
+                delete_after=3
             )
             return False
 
@@ -2122,21 +2174,17 @@ class ConversationManager:
             # Cancelled or timeout
             return True
         
-        # Update settings
+        # Update settings (success message already shown by get_number_input)
         repo = get_repo()
         updated_settings = await repo.update_user_settings(user_id, vanishing_threshold=threshold)
         
         if updated_settings:
-            await self.api.message_manager.send_text(
-                user_id,
-                f"✅ Vanishing threshold updated to {threshold} messages!",
-                True, True
-            )
             return True
         else:
+            # Only show error if database update fails
             await self.api.message_manager.send_text(
                 user_id,
-                "❌ Failed to update settings. Please try again.",
+                "❌ Failed to save settings. Please try again.",
                 True, True
             )
             return False
