@@ -23,20 +23,15 @@ async def initialize_group_state_from_db() -> GroupState:
         GroupState: Initialized group state with database users
     """
     repo = get_repo()
-    all_users = await repo.find_all_users() or []
+    # Exclude disabled users from the start
+    all_users = await repo.find_all_users(exclude_disabled=True) or []
 
-    # Create members dictionary - include all except disabled users
+    # Create members dictionary
     members = {}
-    disabled_count = 0
     
     for user in all_users:
         if not hasattr(user, 'display_name') or not user.display_name:
             raise ValueError(f"User {user.id} has no display name")
-        
-        # Skip disabled users completely (10+ inactive cards)
-        if user.is_disabled:
-            disabled_count += 1
-            continue
         
         # Add to members with archived flag
         # Include user_id for TelegramUsers (None for PassiveUsers)
@@ -52,7 +47,7 @@ async def initialize_group_state_from_db() -> GroupState:
     active_count = sum(1 for m in members.values() if not m.is_archived)
     archived_count = sum(1 for m in members.values() if m.is_archived)
     
-    print(f"[GROUP STATE] Initialized with {active_count} active, {archived_count} archived, {disabled_count} disabled users")
+    print(f"[GROUP STATE] Initialized with {active_count} active, {archived_count} archived users (disabled users excluded)")
     for name in sorted(members.keys()):
         status = " (archived)" if members[name].is_archived else ""
         print(f"  - {name}{status}")
@@ -75,7 +70,8 @@ async def refresh_group_state_members(group_state: GroupState) -> GroupState:
         GroupState: Updated group state with current database users
     """
     repo = get_repo()
-    all_users = await repo.find_all_users() or []
+    # Exclude disabled users from the start
+    all_users = await repo.find_all_users(exclude_disabled=True) or []
     
     # Get current database users
     current_db_users = {}
