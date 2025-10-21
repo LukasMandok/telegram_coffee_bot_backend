@@ -57,7 +57,8 @@ class MessageManager:
         vanish: bool = True, 
         conv: bool = False,
         silent: bool = True,
-        link_preview: bool = False  # Disable link preview by default
+        link_preview: bool = False,  # Disable link preview by default
+        delete_after: int = 0  # Auto-delete message after N seconds (0 = no auto-delete)
     ) -> Optional["MessageModel"]:
         """
         Send a text message to a user and optionally add it to latest_messages.
@@ -69,6 +70,7 @@ class MessageManager:
             conv: If True, add to conversation group
             silent: If True, send message silently
             link_preview: If True, enable link preview (default: False)
+            delete_after: If > 0, automatically delete the message after this many seconds (default: 0)
             
         Returns:
             The sent message object or None if failed
@@ -84,6 +86,20 @@ class MessageManager:
             
             if vanish:
                 self.add_latest_message(message_model, conv)
+            
+            # Auto-delete message after delay if requested
+            if delete_after > 0:
+                async def delete_after_delay():
+                    import asyncio
+                    await asyncio.sleep(delete_after)
+                    try:
+                        await message_model.delete()
+                    except Exception:
+                        pass  # Ignore deletion errors
+                
+                # Start deletion task in background
+                import asyncio
+                asyncio.create_task(delete_after_delay())
 
             log_telegram_message_sent(user_id, "text", text[:50] if text else "")
             return message_model
@@ -166,6 +182,15 @@ class MessageManager:
                 self.latest_messages.append([message]) 
         else:
             self.latest_messages.append(message)
+        
+        # Debug logging: Print structure after each addition
+        structure = []
+        for m in self.latest_messages:
+            if isinstance(m, list):
+                structure.append(len(m))
+            else:
+                structure.append(1)
+        print(f"[VANISH DEBUG] Structure after add (new={new}, conv={conv}): {structure}")
     
     async def delete_oldest_message(self) -> None:
         """
@@ -176,13 +201,33 @@ class MessageManager:
         """
         if not self.latest_messages:
             return
+        
+        # Debug logging: Print structure before deletion
+        structure_before = []
+        for m in self.latest_messages:
+            if isinstance(m, list):
+                structure_before.append(len(m))
+            else:
+                structure_before.append(1)
+        print(f"[VANISH DEBUG] Structure before delete: {structure_before}")
             
         message = self.latest_messages.pop(0)
         if isinstance(message, list):
             import asyncio
             await asyncio.gather(*(m.delete() for m in message))
+            print(f"[VANISH DEBUG] Deleted list with {len(message)} messages")
         else:
             await message.delete()
+            print(f"[VANISH DEBUG] Deleted single message")
+        
+        # Debug logging: Print structure after deletion
+        structure_after = []
+        for m in self.latest_messages:
+            if isinstance(m, list):
+                structure_after.append(len(m))
+            else:
+                structure_after.append(1)
+        print(f"[VANISH DEBUG] Structure after delete: {structure_after}")
     
     def get_latest_messages_length(self) -> List[Union[int, bool]]:
         """
@@ -226,3 +271,119 @@ class MessageManager:
                         await self.delete_oldest_message()
         
                 i += 1
+    
+    async def send_notification_to_all_users(
+        self,
+        text: str,
+        silent: bool = False,
+        link_preview: bool = False,
+        exclude_user_ids: Optional[List[int]] = None,
+        exclude_archived: bool = True,
+        exclude_disabled: bool = True
+    ) -> int:
+        """
+        Send a notification message to all registered Telegram users.
+        
+        This is useful for broadcasting important information like:
+        - Coffee order summaries
+        - Coffee card closures
+        - System announcements
+        
+        Args:
+            text: The notification message text
+            silent: If True, send message silently without notification sound
+            link_preview: If True, enable link preview (default: False)
+            exclude_user_ids: Optional list of user IDs to exclude from notification
+            exclude_archived: If True, exclude archived users (default: True)
+            exclude_disabled: If True, exclude disabled users (default: True)
+            
+        Returns:
+            Number of users who successfully received the notification
+        """
+        from ..dependencies.dependencies import get_repo
+        
+        repo = get_repo()
+        # Use find_all_telegram_users to only get users with user_id
+        telegram_users = await repo.find_all_telegram_users(
+            exclude_archived=exclude_archived,
+            exclude_disabled=exclude_disabled
+        ) or []
+        
+        exclude_set = set(exclude_user_ids or [])
+        sent_count = 0
+        
+        for user in telegram_users:
+            # Skip excluded users
+            if user.user_id in exclude_set:
+                continue
+            
+            try:
+                await self.send_text(
+                    user_id=user.user_id,
+                    text=text,
+                    vanish=False,  # Don't add to cleanup queue for broadcasts
+                    conv=False,
+                    silent=silent,
+                    link_preview=link_preview
+                )
+                sent_count += 1
+            except Exception as e:
+                log_telegram_api_error("send_notification_to_all_users", str(e), user.user_id)
+        
+        return sent_count
+    
+    async def send_popup_notification(
+        self,
+        button_event: Any,
+        text: str,
+        show_alert: bool = False,
+        cache_time: int = 0
+    ) -> bool:
+        """
+        Send a popup notification in response to a callback query (button press).
+        
+        This shows a brief notification at the top of the chat or an alert popup.
+        Perfect for:
+        - Confirming setting changes ("✅ Settings updated!")
+        - Acknowledging user actions ("✅ Value saved!")
+        - Showing errors ("❌ Invalid input")
+        
+        Args:
+            button_event: The Telethon button callback event
+            text: The notification text (0-200 characters)
+            show_alert: If True, show as alert popup; if False, show as brief notification (default: False)
+            cache_time: Maximum time in seconds to cache the result client-side (default: 0)
+            
+        Returns:
+            True if notification was sent successfully, False otherwise
+            
+        Note:
+            - For brief confirmations, use show_alert=False (default)
+            - For important alerts/errors, use show_alert=True
+            - Text is limited to 200 characters by Telegram
+            
+        Usage:
+            ```python
+            # Get button event with return_event=True
+            data, message, event = await self.edit_keyboard_and_wait_response(..., return_event=True)
+            
+            # Send popup notification
+            await self.api.message_manager.send_popup_notification(
+                event, 
+                "✅ Setting saved!", 
+                show_alert=False
+            )
+            ```
+        """
+        try:
+            # Telethon's answer() method on callback queries
+            # This is equivalent to answerCallbackQuery in Bot API
+            await button_event.answer(
+                message=text[:200] if text else None,  # Limit to 200 chars
+                alert=show_alert,
+                cache_time=cache_time
+            )
+            return True
+        except Exception as e:
+            log_telegram_api_error("send_popup_notification", str(e), None)
+            return False
