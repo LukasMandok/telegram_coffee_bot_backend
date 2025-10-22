@@ -21,7 +21,6 @@ Note: Telegram-specific models have been moved to bot/telethon_models.py.
 """
 
 import asyncio
-import uuid
 import re
 from typing import Callable, Optional, Dict, Union, Any, TYPE_CHECKING
 
@@ -83,8 +82,10 @@ class TelethonAPI:
             bot_token=bot_token
         )
 
+        session_name = "coffee_bot_session"
+        
         self.bot: TelegramClient = TelegramClient(
-            'bot_' + str(uuid.uuid4()),  #'coffee_bot_session',  
+            session_name,
             self.config.api_id,
             self.config.api_hash
         ).start(bot_token=self.config.bot_token)
@@ -101,7 +102,7 @@ class TelethonAPI:
 
         # Register all handlers
         self._register_handlers()
-    
+        
     def _register_handlers(self) -> None:
         """Register all bot event handlers."""
         # Use CommandManager methods directly for cleaner architecture
