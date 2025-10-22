@@ -6,6 +6,7 @@ and handles keyboard creation, real-time updates, and pagination.
 """
 
 from typing import Dict, List, Optional, TYPE_CHECKING, Any
+from ..common.log import Logger
 from ..models.coffee_models import CoffeeSession
 from .telethon_models import GroupState
 from telethon import Button
@@ -39,6 +40,7 @@ class GroupKeyboardManager:
     
     def __init__(self, api: "TelethonAPI"):
         self.api = api
+        self.logger = Logger("GroupKeyboardManager")
         # session_id -> {user_id -> ActiveKeyboard}
         self.active_keyboards: Dict[str, Dict[int, ActiveKeyboard]] = {}
     
@@ -244,7 +246,7 @@ class GroupKeyboardManager:
             # Propagate update to all active keyboards for this session
             await self.sync_all_keyboards_for_session(session)
         except Exception as e:
-            print(f"❌ [KEYBOARD] Failed to reset count for '{member_name}': {e}")
+            self.logger.error(f"Failed to reset count for '{member_name}': {e}", extra_tag="KEYBOARD", exc_info=e)
     
     async def handle_show_archived(self, session: CoffeeSession, user_id: int) -> None:
         """
@@ -268,9 +270,9 @@ class GroupKeyboardManager:
             # Sync all keyboards to show the archived members
             await self.sync_all_keyboards_for_session(session)
             
-            print(f"📂 [KEYBOARD] Showing archived users for session {session.id}")
+            self.logger.debug(f"Showing archived users for session {session.id}", extra_tag="KEYBOARD")
         except Exception as e:
-            print(f"❌ [KEYBOARD] Failed to show archived users: {e}")
+            self.logger.error(f"Failed to show archived users: {e}", extra_tag="KEYBOARD", exc_info=e)
     
     async def create_and_send_keyboard(self, user_id: int, session: CoffeeSession, initial_page: int = 0) -> Optional[Any]:
         """
@@ -325,7 +327,7 @@ class GroupKeyboardManager:
             user_id, message_id, session_id, current_page
         )
         
-        print(f"📋 [KEYBOARD] Registered keyboard for user {user_id} in session {session_id}")
+        self.logger.debug(f"Registered keyboard for user {user_id} in session {session_id}", extra_tag="KEYBOARD")
     
     def unregister_keyboard(self, user_id: int, session_id: str) -> None:
         """
@@ -338,7 +340,7 @@ class GroupKeyboardManager:
         if session_id in self.active_keyboards:
             if user_id in self.active_keyboards[session_id]:
                 del self.active_keyboards[session_id][user_id]
-                print(f"📋 [KEYBOARD] Unregistered keyboard for user {user_id} in session {session_id}")
+                self.logger.debug(f"Unregistered keyboard for user {user_id} in session {session_id}", extra_tag="KEYBOARD")
             
             # Clean up empty session
             if not self.active_keyboards[session_id]:
@@ -383,11 +385,11 @@ class GroupKeyboardManager:
                 )
                 
             except Exception as e:
-                print(f"❌ [KEYBOARD] Failed to update keyboard for user {participant_user_id}: {e}")
+                self.logger.error(f"Failed to update keyboard for user {participant_user_id}: {e}", extra_tag="KEYBOARD", exc_info=e)
                 # Remove invalid keyboard
                 self.unregister_keyboard(participant_user_id, session_id)
         
-        print(f"🔄 [KEYBOARD] Synced {len(keyboards_to_update)} keyboards for session {session_id}")
+        self.logger.debug(f"Synced {len(keyboards_to_update)} keyboards for session {session_id}", extra_tag="KEYBOARD")
     
     async def handle_pagination(self, session: CoffeeSession, user_id: int, direction: str) -> None:
         """
@@ -468,7 +470,7 @@ class GroupKeyboardManager:
             )
             
         except Exception as e:
-            print(f"❌ [KEYBOARD] Failed to sync keyboard for user {user_id}: {e}")
+            self.logger.error(f"Failed to sync keyboard for user {user_id}: {e}", extra_tag="KEYBOARD", exc_info=e)
             self.unregister_keyboard(user_id, session_id)
     
     async def cleanup_session_keyboards(self, session_id: str) -> None:
@@ -481,7 +483,7 @@ class GroupKeyboardManager:
         if session_id in self.active_keyboards:
             participant_count = len(self.active_keyboards[session_id])
             del self.active_keyboards[session_id]
-            print(f"🧹 [KEYBOARD] Cleaned up {participant_count} keyboards for session {session_id}")
+            self.logger.debug(f"Cleaned up {participant_count} keyboards for session {session_id}", extra_tag="KEYBOARD")
     
     def get_active_sessions(self) -> List[str]:
         """Get list of session IDs with active keyboards."""

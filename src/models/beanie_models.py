@@ -8,8 +8,11 @@ from pydantic import Field, field_validator
 from datetime import datetime
 
 from . import base_models as base 
+from ..common.log import Logger
 from ..common.helpers import hash_password, compare_password, is_valid_hash
 from ..handlers.paypal import create_paypal_link, validate_paypal_link
+
+logger = Logger("BeanieModels")
 
 """
 ### IDEAS
@@ -149,20 +152,17 @@ class Config(base.Config, Document):
     user_settings: Dict[int, Link["UserSettings"]] = Field(default_factory=dict, description="List of user settings links")
     
     async def get_password(self) -> Optional[Password]:
-        print("Config - get_password")
         # Instead of using Link, query Password collection directly
         try:
             # Query the first (and should be only) password document
             password = await Password.find_one()
-            print(f"Config - get_password - found password: {password}")
             if password:
-                print(f"Config - get_password - password hash_value: {getattr(password, 'hash_value', 'NO_HASH_VALUE')}")
                 return password
             else:
-                print("Config - get_password - no password document found in database")
+                logger.warning("No password document found in database")
                 return None
         except Exception as e:
-            print(f"Error fetching password: {e}")
+            logger.error(f"Error fetching password: {e}", exc_info=e)
             return None
         
     class Settings:

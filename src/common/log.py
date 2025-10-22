@@ -4,6 +4,7 @@
 import logging
 import sys
 import os
+import inspect
 from typing import Optional, Dict, Any
 
 # Simple request context tracking
@@ -28,9 +29,9 @@ class BotFormatter(logging.Formatter):
     
     # Color codes for different log levels
     COLORS = {
-        'TRACE': '\033[90m',    # Dark gray
-        'DEBUG': '\033[36m',    # Cyan
-        'INFO': '\033[0m',      # Default
+        'TRACE': '\033[90m',    # Gray
+        'DEBUG': '\033[34m',    # Blue
+        'INFO': '\033[32m',     # Green
         'WARNING': '\033[33m',  # Yellow
         'ERROR': '\033[31m',    # Red
         'CRITICAL': '\033[91m', # Bright red
@@ -42,64 +43,20 @@ class BotFormatter(logging.Formatter):
         self.logger = logging.getLogger(__name__)
     
     def format(self, record):
-        # Add caller context (file:function:line)
-        if hasattr(record, 'pathname') and hasattr(record, 'funcName'):
-            filename = record.pathname.split('/')[-1].split('\\')[-1]
-            record.caller_context = f"{filename}:{record.funcName}:{record.lineno}"
-        else:
-            record.caller_context = "unknown"
-        
         # Add color coding if terminal supports it
         if hasattr(sys.stderr, 'isatty') and sys.stderr.isatty():
             color = self.COLORS.get(record.levelname, self.COLORS['RESET'])
-            record.levelname = f"{color}{record.levelname}{self.COLORS['RESET']}"
+            levelname_colored = f"{color}{record.levelname}{self.COLORS['RESET']}"
+        else:
+            levelname_colored = record.levelname
         
-        return super().format(record)
-    
-    def trace(self, message: str, **kwargs):
-        """Log trace level message with automatic context."""
-        context = get_context_suffix()
-        if kwargs:
-            params = ", ".join([f"{k}={v}" for k, v in kwargs.items()])
-            self.logger.log(TRACE_LEVEL, f"[TRACE] {message} | {params}{context}")
-        else:
-            self.logger.log(TRACE_LEVEL, f"[TRACE] {message}{context}")
-    
-    def debug(self, message: str, **kwargs):
-        """Log debug level message with automatic context."""
-        context = get_context_suffix()
-        if kwargs:
-            params = ", ".join([f"{k}={v}" for k, v in kwargs.items()])
-            self.logger.debug(f"[DEBUG] {message} | {params}{context}")
-        else:
-            self.logger.debug(f"[DEBUG] {message}{context}")
-    
-    def info(self, message: str, **kwargs):
-        """Log info level message with automatic context."""
-        context = get_context_suffix()
-        if kwargs:
-            params = ", ".join([f"{k}={v}" for k, v in kwargs.items()])
-            self.logger.info(f"[INFO] {message} | {params}{context}")
-        else:
-            self.logger.info(f"[INFO] {message}{context}")
-    
-    def warning(self, message: str, **kwargs):
-        """Log warning level message with automatic context."""
-        context = get_context_suffix()
-        if kwargs:
-            params = ", ".join([f"{k}={v}" for k, v in kwargs.items()])
-            self.logger.warning(f"[WARNING] {message} | {params}{context}")
-        else:
-            self.logger.warning(f"[WARNING] {message}{context}")
-    
-    def error(self, message: str, **kwargs):
-        """Log error level message with automatic context."""
-        context = get_context_suffix()
-        if kwargs:
-            params = ", ".join([f"{k}={v}" for k, v in kwargs.items()])
-            self.logger.error(f"[ERROR] {message} | {params}{context}")
-        else:
-            self.logger.error(f"[ERROR] {message}{context}")
+        # Extract caller info (filename:function)
+        filename = os.path.basename(record.pathname).replace('.py', '')
+        caller_info = f"{filename}:{record.funcName}"
+        
+        # Format: time - LEVEL - [filename:function] - message
+        formatted_time = self.formatTime(record, self.datefmt)
+        return f"{formatted_time} - {levelname_colored} - [{caller_info}] - {record.getMessage()}"
 
 # Get log level from environment variable or default to INFO
 log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
@@ -112,17 +69,17 @@ level_map = {
     'CRITICAL': logging.CRITICAL
 }
 
+# Configure logging format - will show colored level and message
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(caller_context)s - %(message)s", 
-    level=level_map.get(log_level, logging.INFO)
+    format="%(asctime)s - %(levelname)s - %(message)s", 
+    level=level_map.get(log_level, logging.INFO),
+    datefmt="%H:%M:%S"
 )
 
 logger = logging.getLogger(__name__)
 
-# Create a global formatter instance with logging methods
-bot_formatter = BotFormatter()
-
-# Apply custom formatter to all handlers
+# Apply custom formatter to all handlers with color support
+bot_formatter = BotFormatter(datefmt="%H:%M:%S")
 for handler in logging.root.handlers:
     handler.setFormatter(bot_formatter)
 
@@ -451,3 +408,86 @@ def log_auth_route_bypassed(route: str, level: int = logging.INFO):
 
 def log_auth_token_received(level: int = logging.INFO):
     logger.log(level, "[AUTH] Authentication token received for validation")
+
+
+# === LOGGER UTILITY CLASS ===
+
+class Logger:
+    """
+    Utility logger class that provides color-coded logging with class context.
+    
+    Example usage:
+        logger = Logger("MyClassName")
+        logger.info("Something happened", extra_tag="Auth")
+        logger.debug("Debug information")
+        logger.error("An error occurred", exc=e)
+    
+    Output format: [LEVEL] [ClassName] [ExtraTag] Message
+    Colors: INFO=green, DEBUG=blue, TRACE=gray, WARNING=yellow, ERROR=red
+    """
+    
+    def __init__(self, class_name: Optional[str] = None):
+        """
+        Initialize logger with optional class name.
+        If class_name is not provided, it will be auto-detected from the caller.
+        """
+        if class_name is None:
+            # Auto-detect class name from caller
+            frame = inspect.currentframe()
+            if frame and frame.f_back:
+                caller_locals = frame.f_back.f_locals
+                if 'self' in caller_locals:
+                    class_name = caller_locals['self'].__class__.__name__
+                elif '__class__' in caller_locals:
+                    class_name = caller_locals['__class__'].__name__
+                else:
+                    class_name = "Unknown"
+        
+        self.class_name = class_name
+        self._logger = logging.getLogger(class_name or __name__)
+    
+    def _format_message(self, message: str, extra_tag: Optional[str] = None) -> str:
+        """Format message with class name and optional extra tag."""
+        parts = []
+        if self.class_name:
+            parts.append(f"[{self.class_name}]")
+        if extra_tag:
+            parts.append(f"[{extra_tag}]")
+        parts.append(message)
+        return " ".join(parts)
+    
+    def trace(self, message: str, extra_tag: Optional[str] = None, **kwargs):
+        """Log TRACE level message."""
+        formatted_msg = self._format_message(message, extra_tag)
+        self._logger.log(TRACE_LEVEL, formatted_msg, **kwargs)
+    
+    def debug(self, message: str, extra_tag: Optional[str] = None, **kwargs):
+        """Log DEBUG level message."""
+        formatted_msg = self._format_message(message, extra_tag)
+        self._logger.debug(formatted_msg, **kwargs)
+    
+    def info(self, message: str, extra_tag: Optional[str] = None, **kwargs):
+        """Log INFO level message."""
+        formatted_msg = self._format_message(message, extra_tag)
+        self._logger.info(formatted_msg, **kwargs)
+    
+    def warning(self, message: str, extra_tag: Optional[str] = None, **kwargs):
+        """Log WARNING level message."""
+        formatted_msg = self._format_message(message, extra_tag)
+        self._logger.warning(formatted_msg, **kwargs)
+    
+    def error(self, message: str, extra_tag: Optional[str] = None, exc: Optional[Exception] = None, **kwargs):
+        """Log ERROR level message with optional exception info."""
+        formatted_msg = self._format_message(message, extra_tag)
+        if exc:
+            formatted_msg += f" - {type(exc).__name__}: {str(exc)}"
+            kwargs['exc_info'] = True
+        self._logger.error(formatted_msg, **kwargs)
+    
+    def critical(self, message: str, extra_tag: Optional[str] = None, exc: Optional[Exception] = None, **kwargs):
+        """Log CRITICAL level message with optional exception info."""
+        formatted_msg = self._format_message(message, extra_tag)
+        if exc:
+            formatted_msg += f" - {type(exc).__name__}: {str(exc)}"
+            kwargs['exc_info'] = True
+        self._logger.critical(formatted_msg, **kwargs)

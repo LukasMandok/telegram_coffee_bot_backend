@@ -9,7 +9,7 @@ from typing import Any, Optional, List, Union, TYPE_CHECKING
 from pydantic import BaseModel
 
 from .telethon_models import MessageModel
-from ..common.log import log_telegram_message_sent, log_telegram_keyboard_sent, log_telegram_api_error, log_telegram_message_deleted
+from ..common.log import log_telegram_message_sent, log_telegram_keyboard_sent, log_telegram_api_error, log_telegram_message_deleted, Logger
 
 if TYPE_CHECKING:
     from telethon import TelegramClient, types
@@ -31,6 +31,7 @@ class MessageManager:
         """
         self.bot: "TelegramClient" = bot_client
         self.latest_messages: List[Union["MessageModel", List["MessageModel"], Any]] = []
+        self.logger = Logger("MessageManager")
 
     async def send_message(self, *args: Any, **kwargs: Any) -> 'types.Message':
         """
@@ -190,7 +191,7 @@ class MessageManager:
                 structure.append(len(m))
             else:
                 structure.append(1)
-        print(f"[VANISH DEBUG] Structure after add (new={new}, conv={conv}): {structure}")
+        self.logger.trace(f"Structure after add (new={new}, conv={conv}): {structure}", extra_tag="VANISH DEBUG")
     
     async def delete_oldest_message(self) -> None:
         """
@@ -209,16 +210,16 @@ class MessageManager:
                 structure_before.append(len(m))
             else:
                 structure_before.append(1)
-        print(f"[VANISH DEBUG] Structure before delete: {structure_before}")
+        self.logger.trace(f"Structure before delete: {structure_before}", extra_tag="VANISH DEBUG")
             
         message = self.latest_messages.pop(0)
         if isinstance(message, list):
             import asyncio
             await asyncio.gather(*(m.delete() for m in message))
-            print(f"[VANISH DEBUG] Deleted list with {len(message)} messages")
+            self.logger.trace(f"Deleted list with {len(message)} messages", extra_tag="VANISH DEBUG")
         else:
             await message.delete()
-            print(f"[VANISH DEBUG] Deleted single message")
+            self.logger.trace(f"Deleted single message", extra_tag="VANISH DEBUG")
         
         # Debug logging: Print structure after deletion
         structure_after = []
@@ -227,7 +228,7 @@ class MessageManager:
                 structure_after.append(len(m))
             else:
                 structure_after.append(1)
-        print(f"[VANISH DEBUG] Structure after delete: {structure_after}")
+        self.logger.trace(f"Structure after delete: {structure_after}", extra_tag="VANISH DEBUG")
     
     def get_latest_messages_length(self) -> List[Union[int, bool]]:
         """

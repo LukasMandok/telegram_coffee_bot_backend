@@ -1,13 +1,15 @@
 from typing import TYPE_CHECKING, Optional
 from fastapi import Depends, HTTPException
 
-from ..common.log import log_user_login_attempt, log_user_login_success, log_admin_verification
+from ..common.log import log_user_login_attempt, log_user_login_success, log_admin_verification, Logger
 from ..dependencies.dependencies import get_repo, repo
 from .paypal import create_paypal_link, validate_paypal_link
 from ..common.log import log_database_error
 
 if TYPE_CHECKING:
     from ..database.base_repo import BaseRepository
+
+logger = Logger("Handlers")
 
 
 async def get_all_users(repo: "BaseRepository"):
@@ -23,8 +25,6 @@ async def check_user(repo: "BaseRepository", user_id: int):
     log_user_login_attempt(user_id)
     user = await repo.find_user_by_id(user_id)
     
-    print(f"handlers: check_user - user found: {user}")
-    
     if user:
         log_user_login_success(user_id, user.username if hasattr(user, 'username') else None)
         return True
@@ -33,14 +33,12 @@ async def check_user(repo: "BaseRepository", user_id: int):
 
 @repo
 async def check_password(repo: "BaseRepository", password_input):
-    print(f"handlers: check_password - input: '{password_input}'")
     password = await repo.get_password()
-    print(f"handlers: check_password - retrieved password object: {password}")
     if password is None:
-        print("handlers: check_password - no password found in database")
+        logger.warning("No password found in database")
         return False
     is_correct = password.verify_password(password_input)
-    print(f"handlers: check_password - verification result: {is_correct}")
+    logger.debug(f"Password verification: {'correct' if is_correct else 'incorrect'}")
     
     return is_correct
     

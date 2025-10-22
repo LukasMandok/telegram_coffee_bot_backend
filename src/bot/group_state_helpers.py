@@ -6,10 +6,11 @@ instead of using hardcoded member lists.
 """
 
 from typing import Dict
+from ..common.log import Logger
 from ..dependencies.dependencies import get_repo
 from .telethon_models import GroupState, GroupMember
 
-# TODO: implement log states here
+logger = Logger("GroupStateHelpers")
 
 
 async def initialize_group_state_from_db() -> GroupState:
@@ -47,10 +48,10 @@ async def initialize_group_state_from_db() -> GroupState:
     active_count = sum(1 for m in members.values() if not m.is_archived)
     archived_count = sum(1 for m in members.values() if m.is_archived)
     
-    print(f"[GROUP STATE] Initialized with {active_count} active, {archived_count} archived users (disabled users excluded)")
+    logger.debug(f"Initialized with {active_count} active, {archived_count} archived users (disabled users excluded)", extra_tag="GROUP STATE")
     for name in sorted(members.keys()):
         status = " (archived)" if members[name].is_archived else ""
-        print(f"  - {name}{status}")
+        logger.trace(f"  - {name}{status}", extra_tag="GROUP STATE")
 
     return GroupState(members=members)
 
@@ -95,7 +96,7 @@ async def refresh_group_state_members(group_state: GroupState) -> GroupState:
     group_state.members = new_members
     new_count = len(new_members)
     
-    print(f"🔄 [GROUP STATE] Refreshed members: {old_count} -> {new_count} users")
+    logger.debug(f"Refreshed members: {old_count} -> {new_count} users", extra_tag="GROUP STATE")
     
     return group_state
 

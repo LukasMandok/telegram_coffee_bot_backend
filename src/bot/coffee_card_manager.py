@@ -12,7 +12,7 @@ from ..models.beanie_models import TelegramUser, PassiveUser
 from ..dependencies.dependencies import repo, get_repo
 from ..utils.beanie_utils import requires_beanie
 
-from src.common.log import log_coffee_card_created
+from src.common.log import log_coffee_card_created, Logger
 from .keyboards import KeyboardManager
 
 # Type-only imports - only needed for type annotations
@@ -28,6 +28,7 @@ class CoffeeCardManager:
         self.api = api
         
         self.cards = []
+        self.logger = Logger("CoffeeCardManager")
         self.available = 0
 
     @requires_beanie(CoffeeCard)
@@ -35,7 +36,7 @@ class CoffeeCardManager:
         """Load active coffee cards from database."""
         self.cards = await CoffeeCard.find(CoffeeCard.is_active == True).to_list()
         await self._update_available()
-        print(f"✅ Loaded {len(self.cards)} active coffee cards from database")
+        self.logger.info(f"Loaded {len(self.cards)} active coffee cards from database")
 
     async def _update_available(self):
         self.available = sum(card.remaining_coffees for card in self.cards)
@@ -93,22 +94,22 @@ class CoffeeCardManager:
                     if user.is_disabled:
                         user.is_disabled = False
                     await user.save()
-                    print(f"✅ Reset inactive counter for {user.display_name} (ordered on card)")
+                    self.logger.info(f"Reset inactive counter for {user.display_name} (ordered on card)")
             else:
                 # User didn't order - increment counter
                 user.inactive_card_count += 1
-                print(f"⏭️ Incremented inactive counter for {user.display_name} to {user.inactive_card_count}")
+                self.logger.info(f"Incremented inactive counter for {user.display_name} to {user.inactive_card_count}")
                 
                 # TODO: move this to the settigs
                 # Disable if counter reaches 10
                 if user.inactive_card_count >= 10 and not user.is_disabled:
                     user.is_disabled = True
                     user.is_archived = True  # Also mark as archived
-                    print(f"🚫 Disabled {user.display_name} (inactive for {user.inactive_card_count} cards)")
+                    self.logger.info(f"Disabled {user.display_name} (inactive for {user.inactive_card_count} cards)")
                 # Archive if counter reaches 2 (but not disabled)
                 elif user.inactive_card_count >= 2 and not user.is_archived and not user.is_disabled:
                     user.is_archived = True
-                    print(f"📦 Archived {user.display_name} (inactive for {user.inactive_card_count} cards)")
+                    self.logger.info(f"Archived {user.display_name} (inactive for {user.inactive_card_count} cards)")
                 
                 await user.save()
         
@@ -141,7 +142,7 @@ class CoffeeCardManager:
             purchaser=purchaser
         )
 
-        print(f"Coffee card created: {card}")
+        self.logger.info(f"Coffee card created: {card}")
 
         await card.insert()
         log_coffee_card_created(card_name, total_coffees, purchaser_id, cost_per_coffee)
@@ -227,7 +228,7 @@ class CoffeeCardManager:
         # NOW mark card as completed and deactivate
         await self._deactivate_coffee_card(card)
         
-        print(f"✅ Card '{card.name}' marked as completed")
+        self.logger.info(f"Card '{card.name}' marked as completed")
         
         # Build debt summary message for purchaser
         if debts:
@@ -316,7 +317,7 @@ class CoffeeCardManager:
                 silent=False
             )
         
-        print(f"✅ Card '{card.name}' completed with {len(debts)} debts created, {len(debts)} notifications sent")
+        self.logger.info(f"Card '{card.name}' completed with {len(debts)} debts created, {len(debts)} notifications sent")
         
         return debts
         
@@ -482,13 +483,13 @@ class CoffeeCardManager:
             # Find the consumer by display name
             consumer = await repo.find_user_by_display_name(member_name)
             if not consumer:
-                print(f"⚠️  Warning: Consumer '{member_name}' not found, skipping order")
+                self.logger.warning(f"Consumer '{member_name}' not found, skipping order")
                 continue
             
             # Get the quantity this member ordered from the session
             member_data = session.group_state.members.get(member_name)
             if not member_data:
-                print(f"⚠️  Warning: Member '{member_name}' not found in session data")
+                self.logger.warning(f"Member '{member_name}' not found in session data")
                 continue
             
             quantity = member_data.coffee_count

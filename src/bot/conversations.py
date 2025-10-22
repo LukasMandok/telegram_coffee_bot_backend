@@ -21,11 +21,9 @@ from ..dependencies import dependencies as dep
 from .settings import SettingsManager
 from .keyboards import KeyboardManager
 
-logger = logging.getLogger(__name__)
-            
 from ..common.log import (
     log_telegram_callback, log_conversation_started, log_conversation_step, log_unexpected_error,
-    log_conversation_completed, log_conversation_timeout, log_conversation_cancelled
+    log_conversation_completed, log_conversation_timeout, log_conversation_cancelled, Logger
 )
 
 if TYPE_CHECKING:
@@ -156,6 +154,8 @@ class ConversationManager:
         self.active_conversations: Dict[int, ConversationState] = {}
         # Initialize settings manager for handling settings UI
         self.settings_manager = SettingsManager(api)
+        # Initialize logger with class name
+        self.logger = Logger("ConversationManager")
     
     # === Conversation Managment === 
     
@@ -199,7 +199,7 @@ class ConversationManager:
         )
         
         self.active_conversations[user_id] = conversation_state
-        print(f"Created conversation state for user {user_id}: {conversation_type}")
+        self.logger.info(f"Created conversation state for user {user_id}: {conversation_type}")
         
         return conversation_state
     
@@ -215,7 +215,7 @@ class ConversationManager:
         """
         if user_id in self.active_conversations:
             del self.active_conversations[user_id]
-            print(f"Removed conversation state for user {user_id}")
+            self.logger.info(f"Removed conversation state for user {user_id}")
             
             return True
         return False
@@ -257,7 +257,7 @@ class ConversationManager:
         """
         if user_id in self.active_conversations:
             self.active_conversations[user_id].step = step
-            print(f"Updated conversation step for user {user_id} to: {step}")
+            self.logger.debug(f"Updated conversation step for user {user_id} to: {step}")
             return True
         return False
     
@@ -285,9 +285,9 @@ class ConversationManager:
                 try:
                     # Cancel the conversation - this will cause TimeoutError in wait_event calls
                     conversation_state.conv.cancel()
-                    print(f"Cancelled Telethon conversation for user {user_id}")
+                    self.logger.info(f"Cancelled Telethon conversation for user {user_id}", extra_tag="Telegram")
                 except Exception as e:
-                    print(f"Error cancelling Telethon conversation for user {user_id}: {e}")
+                    self.logger.error(f"Error cancelling Telethon conversation for user {user_id}", extra_tag="Telegram", exc=e)
             
             # Remove from active conversations (this will also show the persistent keyboard)
             self.remove_conversation_state(user_id)
@@ -296,7 +296,7 @@ class ConversationManager:
             
             return True
         
-        print(f"No active conversation found for user {user_id} to cancel")
+        self.logger.warning(f"No active conversation found for user {user_id} to cancel")
         return False
     
     # === Messages ===
@@ -447,7 +447,7 @@ class ConversationManager:
                 return data, message_to_edit
         except Exception as e:
             # Return the message object even if button response failed
-            print(f"Error in edit_keyboard_and_wait_response: {e}")
+            self.logger.error(f"Error in edit_keyboard_and_wait_response", exc=e)
             if return_event:
                 return None, message_to_edit, None
             return None, message_to_edit
@@ -473,7 +473,7 @@ class ConversationManager:
                     await self.api.message_manager.edit_message(message_to_edit, text)
             except Exception as e:
                 # If editing fails, fall back to sending new message
-                print(f"Failed to edit message, sending new one: {e}")
+                self.logger.warning(f"Failed to edit message, sending new one", exc=e, extra_tag="Telegram")
                 await self.api.message_manager.send_text(user_id, text, True, True)
         else:
             await self.api.message_manager.send_text(user_id, text, True, True)
@@ -565,14 +565,14 @@ class ConversationManager:
             phone = None
         
         # Debug logging to see what we're getting from Telegram
-        print(f"DEBUG: Telegram user entity for user_id {user_id}:")
-        print(f"  - username: {username}")
-        print(f"  - first_name: {first_name}")
-        print(f"  - last_name: {last_name}")
-        print(f"  - phone: {phone} (type: {type(phone)})")
-        print(f"  - photo_id: {photo_id}")
-        print(f"  - lang_code: {lang_code}")
-        print(f"  - user_entity type: {type(user_entity)}")
+        self.logger.debug(f"Telegram user entity for user_id {user_id}:", extra_tag="Telegram")
+        self.logger.debug(f"  - username: {username}", extra_tag="Telegram")
+        self.logger.debug(f"  - first_name: {first_name}", extra_tag="Telegram")
+        self.logger.debug(f"  - last_name: {last_name}", extra_tag="Telegram")
+        self.logger.debug(f"  - phone: {phone} (type: {type(phone)})", extra_tag="Telegram")
+        self.logger.debug(f"  - photo_id: {photo_id}", extra_tag="Telegram")
+        self.logger.debug(f"  - lang_code: {lang_code}", extra_tag="Telegram")
+        self.logger.debug(f"  - user_entity type: {type(user_entity)}", extra_tag="Telegram")
         
         # Extract photo_id if photo exists
         if photo_id and hasattr(photo_id, 'photo_id'):
@@ -612,12 +612,12 @@ class ConversationManager:
         # Check if a passive user with the same name already exists
         # TODO: maybe a search only for the last name 
         log_conversation_step(user_id, "registration", "checking_for_existing_passive_user")
-        print(f"DEBUG: Checking for passive user with name: '{first_name}' '{last_name}'")
+        self.logger.debug(f"Checking for passive user with name: '{first_name}' '{last_name}'")
         existing_passive_user = await handlers.find_passive_user_by_name(
             first_name=first_name,
             last_name=last_name
         )
-        print(f"DEBUG: Found existing passive user: {existing_passive_user}")
+        self.logger.debug(f"Found existing passive user: {existing_passive_user}")
         
         if existing_passive_user:
             # Ask if user wants to take over the passive user account
@@ -948,7 +948,7 @@ class ConversationManager:
             try:
                 await self.api.session_manager.remove_participant(user_id)
             except ValueError as e:
-                print(f"Failed to remove participant {user_id} from session: {e}")
+                self.logger.error(f"Failed to remove participant {user_id} from session", exc=e)
                 # Check if any active participants/keyboards remain; cancel session if none
             
             try:
@@ -960,7 +960,7 @@ class ConversationManager:
                     await self.api.session_manager.cancel_session()
 
             except Exception as e:
-                print(f"Error finalizing cancel for participant {user_id}: {e}")
+                self.logger.error(f"Error finalizing cancel for participant {user_id}", exc=e)
             
             return False
         
@@ -1118,18 +1118,18 @@ class ConversationManager:
 
             try:
                 # Validate & format the PayPal input BEFORE assigning to the model or saving
-                logger.info(f"[PayPal Setup] User input: {paypal_input}")
+                self.logger.info(f"User input: {paypal_input}", extra_tag="PayPal Setup")
                 formatted = create_paypal_link(paypal_input)
-                logger.info(f"[PayPal Setup] Normalized link: {formatted}")
+                self.logger.info(f"Normalized link: {formatted}", extra_tag="PayPal Setup")
                 is_valid = False
                 validation_error = None
                 try:
                     is_valid = validate_paypal_link(formatted)
                 except Exception as ve:
                     validation_error = ve
-                    logger.error(f"[PayPal Setup] Exception during validation: {ve}", exc_info=True)
+                    self.logger.error(f"Exception during validation", extra_tag="PayPal Setup", exc=ve)
 
-                logger.info(f"[PayPal Setup] Validation result: {is_valid}")
+                self.logger.info(f"Validation result: {is_valid}", extra_tag="PayPal Setup")
 
                 if not is_valid:
                     # Treat as validation failure; do NOT assign or save
@@ -1149,7 +1149,7 @@ class ConversationManager:
 
             except Exception as e:
                 # Field validation failed or other error; do NOT persist invalid value
-                logger.error(f"[PayPal Setup] Exception: {e}", exc_info=True)
+                self.logger.error(f"Exception during PayPal setup", extra_tag="PayPal Setup", exc=e)
                 attempts += 1
                 remaining = max_attempts - attempts
 
@@ -1597,7 +1597,7 @@ class ConversationManager:
                                 )
                                 notified_count += 1
                             except Exception as e:
-                                logger.error(f"Failed to notify debtor {getattr(debt.debtor, 'user_id', None)}: {e}")
+                                self.logger.error(f"Failed to notify debtor {getattr(debt.debtor, 'user_id', None)}", exc=e)
                     
                     await self.send_or_edit_message(
                         user_id,

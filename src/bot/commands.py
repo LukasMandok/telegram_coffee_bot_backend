@@ -22,7 +22,7 @@ from ..exceptions.coffee_exceptions import (
 from ..common.log import (
     log_telegram_command, log_telegram_callback, log_coffee_session_started,
     log_coffee_session_cancelled, log_unexpected_error, log_user_login_success,
-    log_user_login_failed
+    log_user_login_failed, Logger
 )
 
 if TYPE_CHECKING:
@@ -47,6 +47,7 @@ class CommandManager:
             api: The TelethonAPI instance for bot communication
         """
         self.api = api
+        self.logger = Logger("CommandManager")
         
     async def _check_and_notify_active_conversation(self, user_id: int) -> bool:
         """
@@ -322,12 +323,12 @@ class CommandManager:
         #     return  # Not a command, don't process
         
         if self.api.conversation_manager.has_active_conversation(sender_id):
-            print(f"Command ignored due to active conversation: {message}")
+            self.logger.debug(f"Command ignored due to active conversation: {message}")
             return
         
-        print(f"Processing unknown command: {message}")
+        self.logger.debug(f"Processing unknown command: {message}")
         active_conversations = self.api.conversation_manager.get_active_conversations()
-        print(f"Active conversation: {active_conversations}")
+        self.logger.debug(f"Active conversation: {active_conversations}")
         
         await self.api.message_manager.send_text(sender_id, f"**{message}** is an unknown command.", True, True)
 
@@ -466,7 +467,7 @@ class CommandManager:
         try:
             # Get all active coffee cards from the manager (already loaded)
             cards = self.api.coffee_card_manager.cards
-            print("!! cards:", len(cards))
+            self.logger.trace(f"Active cards: {len(cards)}")
             
             
             if not cards:
@@ -502,8 +503,8 @@ class CommandManager:
             )
         except Exception as e:
             import traceback
-            print(f"❌ Unexpected error in handle_close_card_command for user {user_id}: {e}")
-            print(f"Full traceback:\n{traceback.format_exc()}")
+            self.logger.error(f"Unexpected error in handle_close_card_command for user {user_id}", exc=e)
+            self.logger.debug(f"Full traceback:\n{traceback.format_exc()}")
             await self.api.message_manager.send_text(
                 user_id,
                 f"❌ Failed to complete coffee card: {str(e)}",

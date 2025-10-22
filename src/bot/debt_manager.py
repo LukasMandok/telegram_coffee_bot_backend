@@ -8,6 +8,7 @@ Debts are created once per card completion, not on individual orders.
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 
+from ..common.log import Logger
 from ..models.coffee_models import CoffeeCard, Payment, UserDebt, PaymentMethod
 from ..models.beanie_models import TelegramUser, PassiveUser
 from ..dependencies.dependencies import get_repo
@@ -25,6 +26,7 @@ class DebtManager:
     
     def __init__(self, api):
         self.api = api
+        self.logger = Logger("DebtManager")
     
     @staticmethod
     def calculate_debt_amount(total_coffees: int, cost_per_coffee: float) -> float:
@@ -77,7 +79,7 @@ class DebtManager:
             if not consumer:
                 consumer = await PassiveUser.find_one(PassiveUser.stable_id == stable_id)
             if not consumer:
-                print(f"⚠️  Warning: Consumer with stable_id '{stable_id}' not found, skipping debt creation")
+                self.logger.warning(f"Consumer with stable_id '{stable_id}' not found, skipping debt creation")
                 continue
             
             # Check if debt already exists for this debtor and card
@@ -99,7 +101,7 @@ class DebtManager:
                 # Note: Don't reset paid_amount - keep existing payments
                 await existing_debt.save()
                 processed_debts.append(existing_debt)
-                print(f"🔄 Updated debt: {stats.display_name} owes {creditor.display_name} €{total_amount:.2f} ({stats.total_coffees} coffees)")
+                self.logger.info(f"Updated debt: {stats.display_name} owes {creditor.display_name} €{total_amount:.2f} ({stats.total_coffees} coffees)")
             else:
                 # Create new debt record
                 debt = UserDebt(
@@ -115,7 +117,7 @@ class DebtManager:
                 )
                 await debt.insert()
                 processed_debts.append(debt)
-                print(f"💰 Created debt: {stats.display_name} owes {creditor.display_name} €{total_amount:.2f} ({stats.total_coffees} coffees)")
+                self.logger.info(f"Created debt: {stats.display_name} owes {creditor.display_name} €{total_amount:.2f} ({stats.total_coffees} coffees)")
         
         return processed_debts
     
@@ -267,7 +269,7 @@ class DebtManager:
         )
         await payment.insert()
         
-        print(f"💳 Payment recorded: {payer.display_name} → {recipient.display_name}: €{amount:.2f}")
+        self.logger.info(f"Payment recorded: {payer.display_name} → {recipient.display_name}: €{amount:.2f}")
         
         # Apply payment to debts
         if specific_debt:
@@ -326,7 +328,7 @@ class DebtManager:
             if not hasattr(debt.coffee_card, 'name'):
                 await debt.fetch_link("coffee_card")
             
-            print(f"✅ Debt settled: {debt.debtor.display_name} → {debt.creditor.display_name} for card '{debt.coffee_card.name}'")  # type: ignore
+            self.logger.info(f"Debt settled: {debt.debtor.display_name} → {debt.creditor.display_name} for card '{debt.coffee_card.name}'")  # type: ignore
         
         debt.updated_at = datetime.now()
         await debt.save()

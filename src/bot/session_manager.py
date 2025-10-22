@@ -15,7 +15,7 @@ from ..exceptions.coffee_exceptions import (
 from ..common.log import (
     log_coffee_session_started, log_coffee_session_participant_added,
     log_coffee_session_participant_removed, log_unexpected_error,
-    logger
+    Logger
 )
 from ..bot.group_state_helpers import initialize_group_state_from_db
 from .telethon_models import GroupState
@@ -41,6 +41,7 @@ class SessionManager:
         # Keep track of notification messages sent per session so we can
         # delete them when the session finishes or is cancelled.
         self.session_notifications = {}
+        self.logger = Logger("SessionManager")
 
     # DB access
 
@@ -80,7 +81,7 @@ class SessionManager:
             )
             return session
         except Exception as e:
-            print(f"Error getting user active session: {e}")
+            self.logger.error(f"Error getting user active session", exc=e)
             return None
 
     # async def get_active_coffee_cards(self) -> List[CoffeeCard]:
@@ -347,7 +348,7 @@ class SessionManager:
             
             # Complete each filled card
             for card in cards_to_complete:
-                print(f"🎯 Auto-completing fully filled card: {card.name}")
+                self.logger.info(f"Auto-completing fully filled card: {card.name}")
                 # Use the shared completion function (no confirmation needed for auto-complete)
                 await self.api.coffee_card_manager.close_card(
                     card,
@@ -420,8 +421,9 @@ class SessionManager:
             await self.create_orders()
         except InsufficientCoffeeError as e:
             # Expected: user requested more coffees than available
-            logger.warning(
-                f"[ORDER] Insufficient coffee capacity: requested={getattr(e, 'requested', '?')}, available={getattr(e, 'available', '?')}, session_id={session_id}"
+            self.logger.warning(
+                f"Insufficient coffee capacity: requested={getattr(e, 'requested', '?')}, available={getattr(e, 'available', '?')}, session_id={session_id}",
+                extra_tag="ORDER"
             )
             self.session.is_active = True  # Re-activate session
             self.session.completed_date = None
@@ -539,7 +541,7 @@ class SessionManager:
                         silent=True
                     )
                 except Exception as e:
-                    print(f"❌ Failed to send session summary to TelegramUser {user_id_to_notify}: {e}")
+                    self.logger.error(f"Failed to send session summary to TelegramUser {user_id_to_notify}", exc=e)
         except Exception as e:
             log_unexpected_error(
                 operation="build_or_send_session_summary",
