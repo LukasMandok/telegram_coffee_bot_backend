@@ -302,6 +302,7 @@ class CommandManager:
         if self.api.conversation_manager.has_active_conversation(user_id):
             return
         
+        # TODO: This handler can be used for quick coffee ordering via digit shortcuts
         await self.api.message_manager.send_text(user_id, f'catches digits: {event.text}', True, True)
 
     async def handle_unknown_command(self, event: events.NewMessage.Event) -> None:

@@ -124,7 +124,8 @@ def managed_conversation(conversation_type: str, timeout: int = 60, use_existing
                 return False
             finally:
                 # Only clean up if not timed out (let exception handler handle timeouts)
-                if not timed_out:
+                # For sub-conversations using existing_conv, don't remove state - parent will handle it
+                if not timed_out and not (use_existing_conv and existing_conv is not None):
                     try:
                         self.remove_conversation_state(user_id)
                     except Exception:
