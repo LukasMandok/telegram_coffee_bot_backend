@@ -1,7 +1,7 @@
 from typing import Annotated, Optional, List, Dict, TYPE_CHECKING
 import uuid
 
-from beanie import Document, Indexed, Link, before_event, Insert
+from beanie import Document, Indexed, Link, before_event, Insert, Replace, Save
 from pymongo import IndexModel, ASCENDING
 from pydantic import BaseModel, Field, field_validator
 
@@ -90,14 +90,10 @@ class TelegramUser(base.TelegramUser, PassiveUser):
         
     @field_validator('paypal_link', mode='before')
     @classmethod
-    def validate_and_format_paypal_link(cls, v: Optional[str]) -> Optional[str]:
+    def normalize_paypal_link(cls, v: Optional[str]) -> Optional[str]:
         """
-        Validate and format PayPal link automatically.
-        
-        This validator:
-        1. Formats various PayPal input formats into proper paypal.me links
-        2. Validates that the PayPal link actually exists
-        3. Makes PayPal handling consistent across the application
+        Normalize PayPal link input without performing network validation.
+        Network validation is enforced on save via Beanie lifecycle hooks.
         """
         if not v:
             return None
@@ -106,15 +102,28 @@ class TelegramUser(base.TelegramUser, PassiveUser):
         if not v:
             return None
         
-        # Format the PayPal link using the existing logic
+        # Only format/normalize here (no HTTP calls during model parsing/loading)
         formatted_link = create_paypal_link(v)
-        
-        # Validate the link exists (synchronous validation)
-        is_valid = validate_paypal_link(formatted_link)
-        if not is_valid:
-            raise ValueError(f"PayPal link is not valid or doesn't exist: {formatted_link}")
-        
-        return formatted_link
+        return formatted_link or None
+
+    # Enforce PayPal link validation only when persisting changes
+    @before_event(Insert)
+    def _validate_paypal_on_insert(self):
+        if self.paypal_link:
+            formatted = create_paypal_link(self.paypal_link)
+            if not validate_paypal_link(formatted):
+                raise ValueError(f"PayPal link is not valid or doesn't exist: {formatted}")
+            # ensure normalized form is stored
+            self.paypal_link = formatted
+
+    @before_event(Replace)
+    @before_event(Save)
+    def _validate_paypal_on_save(self):
+        if self.paypal_link:
+            formatted = create_paypal_link(self.paypal_link)
+            if not validate_paypal_link(formatted):
+                raise ValueError(f"PayPal link is not valid or doesn't exist: {formatted}")
+            self.paypal_link = formatted
     
     class Settings(PassiveUser.Settings):
         name = "telegram_users"
