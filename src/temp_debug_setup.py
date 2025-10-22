@@ -21,10 +21,13 @@ import asyncio
 from typing import List, Tuple
 from .handlers import handlers
 from .dependencies.dependencies import get_repo
-from .common.log import log_database_error
+from .common.log import log_database_error, Logger
+
+logger = Logger("DebugSetup")
 
 # Predefined list of passive users to create for debugging/testing
 DEBUG_PASSIVE_USERS: List[Tuple[str, str]] = [
+    ("Lukas", "Mandok"),
     ("Heiko", "Augustin"),
     ("David", "Immig"),
     ("David", "Fritz"),
@@ -38,6 +41,7 @@ DEBUG_PASSIVE_USERS: List[Tuple[str, str]] = [
     ("Frosso", "Zachou"),
     ("Sebastian", "Dittmeier"),
     ("Giulia", "Fazzino"),
+    ("Abhi", "Nandi")
 ]
 
 
@@ -55,7 +59,7 @@ async def setup_debug_passive_users() -> None:
     Raises:
         Exception: If there are issues with database operations
     """
-    print("🔧 [DEBUG SETUP] Starting passive user creation...")
+    logger.info("Starting passive user creation...")
     
     created_count = 0
     existing_count = 0
@@ -73,7 +77,7 @@ async def setup_debug_passive_users() -> None:
             )
             
             if existing_user:
-                print(f"  ✓ User already exists: {existing_user.display_name}")
+                logger.debug(f"User already exists: {existing_user.display_name}")
                 existing_count += 1
                 continue
             
@@ -83,11 +87,15 @@ async def setup_debug_passive_users() -> None:
                 last_name=last_name_to_use
             )
             
-            print(f"  ✅ Created: {new_user.display_name}")
+            logger.info(f"Created: {new_user.display_name}")
             created_count += 1
             
+        except ValueError as e:
+            # User already exists as Telegram user - this is expected, not an error
+            logger.debug(f"Skipped {first_name} {last_name}: {str(e)}")
+            existing_count += 1
         except Exception as e:
-            print(f"  ❌ Failed to create {first_name} {last_name}: {str(e)}")
+            logger.error(f"Failed to create {first_name} {last_name}: {str(e)}", exc_info=e)
             log_database_error(
                 "debug_setup_passive_user", 
                 str(e), 
@@ -95,7 +103,7 @@ async def setup_debug_passive_users() -> None:
             )
             failed_count += 1
     
-    print(f"🔧 [DEBUG SETUP] Complete: {created_count} created, {existing_count} existing, {failed_count} failed")
+    logger.info(f"Debug setup complete: {created_count} created, {existing_count} existing, {failed_count} failed")
 
 
 async def cleanup_debug_passive_users() -> None:
@@ -114,7 +122,7 @@ async def cleanup_debug_passive_users() -> None:
     Raises:
         Exception: If there are issues with database operations
     """
-    print("🧹 [DEBUG CLEANUP] Starting passive user removal...")
+    logger.info("Starting passive user removal...")
     
     removed_count = 0
     not_found_count = 0
@@ -132,18 +140,18 @@ async def cleanup_debug_passive_users() -> None:
             )
             
             if not existing_user:
-                print(f"  User not found: {first_name} {last_name or '(no last name)'}")
+                logger.debug(f"User not found: {first_name} {last_name or '(no last name)'}")
                 not_found_count += 1
                 continue
             
             # Remove the user (you'll need to implement this method)
             # await repo.delete_passive_user(existing_user.id)
-            print(f"  Would remove: {existing_user.display_name} (deletion not implemented)")
+            logger.debug(f"Would remove: {existing_user.display_name} (deletion not implemented)")
             # For now, just count as removed since deletion method needs to be implemented
             removed_count += 1
             
         except Exception as e:
-            print(f"  ❌ Failed to remove {first_name} {last_name}: {str(e)}")
+            logger.error(f"Failed to remove {first_name} {last_name}: {str(e)}", exc_info=e)
             log_database_error(
                 "debug_cleanup_passive_user", 
                 str(e), 
@@ -151,7 +159,7 @@ async def cleanup_debug_passive_users() -> None:
             )
             failed_count += 1
     
-    print(f"🧹 [DEBUG CLEANUP] Complete: {removed_count} removed, {not_found_count} not found, {failed_count} failed")
+    logger.info(f"Debug cleanup complete: {removed_count} removed, {not_found_count} not found, {failed_count} failed")
 
 
 def is_debug_mode() -> bool:
@@ -186,10 +194,10 @@ async def run_debug_setup_if_enabled() -> None:
         None
     """
     if is_debug_mode():
-        print("🔧 [DEBUG SETUP] Debug mode detected, setting up passive users...")
+        logger.info("Debug mode detected, setting up passive users...")
         await setup_debug_passive_users()
     else:
-        print("🔧 [DEBUG SETUP] Debug mode not enabled, skipping passive user setup")
+        logger.debug("Debug mode not enabled, skipping passive user setup")
 
 
 if __name__ == "__main__":
