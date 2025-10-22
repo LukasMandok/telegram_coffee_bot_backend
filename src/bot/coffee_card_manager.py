@@ -142,10 +142,12 @@ class CoffeeCardManager:
             purchaser=purchaser
         )
 
-        self.logger.info(f"Coffee card created: {card}")
-
         await card.insert()
         log_coffee_card_created(card_name, total_coffees, purchaser_id, cost_per_coffee)
+        self.logger.info(
+            f"Coffee card created: name='{card_name}', total_coffees={total_coffees}, "
+            f"cost_per_coffee=€{cost_per_coffee:.2f}, purchaser={purchaser.display_name} (id={purchaser_id})"
+        )
 
         await self._add_coffee_card(card)
 
