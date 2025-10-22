@@ -271,20 +271,19 @@ class CommandManager:
         # Get the user (registered Telegram users manage PayPal links)
         user = await dep.get_repo().find_user_by_id(user_id)
         
-        # Start a conversation and use the PayPal setup subconversation
-        # The sub-conversation will manage its own state and handle timeouts
-        async with self.api.bot.conversation(user_id) as conv:
-            setup_success = await self.api.conversation_manager.setup_paypal_link_subconversation(
-                user_id, user=user, show_current=True, existing_conv=conv
+        # Call setup as a standalone conversation (not a sub-conversation)
+        # Don't pass existing_conv so the decorator properly cleans up state
+        setup_success = await self.api.conversation_manager.setup_paypal_link_subconversation(
+            user_id, user=user, show_current=True
+        )
+        
+        if not setup_success:
+            await self.api.message_manager.send_text(
+                user_id, 
+                "❌ PayPal setup was not completed.\n"
+                "You can try again anytime with `/paypal`", 
+                True, True
             )
-            
-            if not setup_success:
-                await self.api.message_manager.send_text(
-                    user_id, 
-                    "❌ PayPal setup was not completed.\n"
-                    "You can try again anytime with `/paypal`", 
-                    True, True
-                )
 
     async def handle_digits_command(self, event: events.NewMessage.Event) -> None:
         """
