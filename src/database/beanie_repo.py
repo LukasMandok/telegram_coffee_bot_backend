@@ -1,7 +1,8 @@
 # from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import AsyncMongoClient
+import logging
 from beanie import init_beanie
-from typing import Optional
+from typing import Optional, Dict, Any
 from datetime import datetime
 
 from .base_repo import BaseRepository
@@ -12,7 +13,7 @@ from ..common.log import (
     log_user_registration, log_performance_metric, log_app_shutdown, log_setup_database_defaults, Logger
 )
 
-from ..config import settings
+from ..config import app_config
 from ..common.helpers import hash_password
 
 
@@ -50,6 +51,7 @@ class BeanieRepository(BaseRepository):
                 models.PassiveUser,
                 models.Password,
                 models.Config,
+                models.AppSettings,
                 models.UserSettings,
                 # Coffee models
                 CoffeeCard,
@@ -61,9 +63,6 @@ class BeanieRepository(BaseRepository):
             # IDEA: maybe use asyncio.create_task to run them in the background
 
             await self.ping()
-
-            # load default values
-            await self.setup_defaults()
             
         except Exception as e:
             log_database_connection_failed(str(e))
@@ -82,22 +81,27 @@ class BeanieRepository(BaseRepository):
         self.logger.info("Setting up default configuration...")
         await models.Config.delete_all()
         await models.Password.delete_all()
+        await models.AppSettings.delete_all()
         
         password_doc = models.Password(
-            hash_value = settings.DEFAULT_PASSWORD
+            hash_value = app_config.DEFAULT_PASSWORD
         )
         
         # Create Config with Link to password
         new_config = models.Config(
             password = password_doc,  # Beanie should auto-create the Link
-            admins   = [int(settings.DEFAULT_ADMIN)]  # Convert to int
+            admins   = [int(app_config.DEFAULT_ADMIN)]  # Convert to int
         )
+        
+        # Create default Settings
+        app_settings = models.AppSettings()
         
         await password_doc.insert()
         await new_config.insert()
+        await app_settings.insert()
         
-        log_setup_database_defaults([int(settings.DEFAULT_ADMIN)])
-        self.logger.info("Default configuration created successfully")
+        log_setup_database_defaults([int(app_config.DEFAULT_ADMIN)])
+        self.logger.info("Default configuration and settings created successfully")
 
     # ---------------------------
     #     Helper Methods
@@ -513,6 +517,78 @@ class BeanieRepository(BaseRepository):
             return False
         except Exception as e:
             log_database_error("remove_admin", str(e), {"user_id": user_id})
+            return False
+
+    async def get_log_settings(self) -> Optional[Dict[str, Any]]:
+        """Get logging settings from AppSettings."""
+        try:
+            app_settings = await models.AppSettings.find_one()
+            if app_settings:
+                return {
+                    "log_level": app_settings.logging.level,
+                    "log_show_time": app_settings.logging.show_time,
+                    "log_show_caller": app_settings.logging.show_caller,
+                    "log_show_class": app_settings.logging.show_class
+                }
+            return None
+        except Exception as e:
+            log_database_error("get_log_settings", str(e))
+            return None
+
+    async def update_log_settings(self, **kwargs) -> bool:
+        """
+        Update logging settings in AppSettings.
+        
+        Args:
+            log_level: Optional log level (TRACE, DEBUG, INFO, WARNING, ERROR, CRITICAL)
+            log_show_time: Optional boolean for time display
+            log_show_caller: Optional boolean for caller context display
+            log_show_class: Optional boolean for class name display
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            from ..common.log import log_settings
+            
+            settings = await models.AppSettings.find_one()
+            if not settings:
+                # Create default settings if they don't exist
+                settings = models.AppSettings()
+                await settings.insert()
+            
+            # Update only provided fields
+            if "log_level" in kwargs:
+                settings.logging.level = kwargs["log_level"].upper()
+                log_settings.level = settings.logging.level
+                # Update the root logger level
+                level_map = {
+                    'TRACE': 5,
+                    'DEBUG': logging.DEBUG,
+                    'INFO': logging.INFO,
+                    'WARNING': logging.WARNING,
+                    'ERROR': logging.ERROR,
+                    'CRITICAL': logging.CRITICAL
+                }
+                logging.root.setLevel(level_map.get(settings.logging.level, logging.INFO))
+                
+            if "log_show_time" in kwargs:
+                settings.logging.show_time = kwargs["log_show_time"]
+                log_settings.show_time = settings.logging.show_time
+                
+            if "log_show_caller" in kwargs:
+                settings.logging.show_caller = kwargs["log_show_caller"]
+                log_settings.show_caller = settings.logging.show_caller
+            
+            if "log_show_class" in kwargs:
+                settings.logging.show_class = kwargs["log_show_class"]
+                log_settings.show_class = settings.logging.show_class
+            
+            await settings.save()
+            self.logger.info(f"Updated log settings: {kwargs}")
+            return True
+        except Exception as e:
+            log_database_error("update_log_settings", str(e), {"settings": kwargs})
             return False
 
     ### User Settings ###

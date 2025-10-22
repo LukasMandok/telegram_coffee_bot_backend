@@ -24,6 +24,28 @@ WARNING = logging.WARNING
 ERROR = logging.ERROR
 CRITICAL = logging.CRITICAL
 
+# Global log settings that can be updated at runtime
+class LogSettings:
+    """Singleton to hold runtime log settings."""
+    show_time: bool = True
+    show_caller: bool = True
+    show_class: bool = True
+    level: str = "INFO"
+    
+    @classmethod
+    def update(cls, show_time: Optional[bool] = None, show_caller: Optional[bool] = None, show_class: Optional[bool] = None, level: Optional[str] = None):
+        """Update log settings."""
+        if show_time is not None:
+            cls.show_time = show_time
+        if show_caller is not None:
+            cls.show_caller = show_caller
+        if show_class is not None:
+            cls.show_class = show_class
+        if level is not None:
+            cls.level = level.upper()
+
+log_settings = LogSettings()
+
 class BotFormatter(logging.Formatter):
     """Custom formatter that adds caller context and colors for different log levels."""
     
@@ -50,13 +72,27 @@ class BotFormatter(logging.Formatter):
         else:
             levelname_colored = record.levelname
         
-        # Extract caller info (filename:function)
-        filename = os.path.basename(record.pathname).replace('.py', '')
-        caller_info = f"{filename}:{record.funcName}"
+        # Build format parts based on settings
+        parts = []
         
-        # Format: time - LEVEL - [filename:function] - message
-        formatted_time = self.formatTime(record, self.datefmt)
-        return f"{formatted_time} - {levelname_colored} - [{caller_info}] - {record.getMessage()}"
+        # Add time if enabled
+        if log_settings.show_time:
+            formatted_time = self.formatTime(record, self.datefmt)
+            parts.append(formatted_time)
+        
+        # Add level (always shown)
+        parts.append(levelname_colored)
+        
+        # Add caller info if enabled
+        if log_settings.show_caller:
+            filename = os.path.basename(record.pathname).replace('.py', '')
+            caller_info = f"{filename}:{record.funcName}"
+            parts.append(f"[{caller_info}]")
+        
+        # Add message (always shown)
+        parts.append(record.getMessage())
+        
+        return " - ".join(parts)
 
 # Get log level from environment variable or default to INFO
 log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
@@ -449,7 +485,8 @@ class Logger:
     def _format_message(self, message: str, extra_tag: Optional[str] = None) -> str:
         """Format message with class name and optional extra tag."""
         parts = []
-        if self.class_name:
+        # Only add class name if enabled in settings
+        if log_settings.show_class and self.class_name:
             parts.append(f"[{self.class_name}]")
         if extra_tag:
             parts.append(f"[{extra_tag}]")

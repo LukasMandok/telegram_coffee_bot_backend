@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Annotated, Optional, List, TYPE_CHECKING
+from typing import Optional, List
 from datetime import datetime
 
 #---------------------------
@@ -65,4 +65,21 @@ class Config(ABC):
         pass
     
     # should be in config collection
+    
+#---------------------------
+# *      Application Settings
+#---------------------------
+
+class LoggingSettings(ABC):
+    """Logging configuration section for application settings."""
+    level: str          # TRACE, DEBUG, INFO, WARNING, ERROR, CRITICAL
+    show_time: bool     # Whether to show timestamp in logs
+    show_caller: bool   # Whether to show caller context [filename:function]
+    show_class: bool    # Whether to show class name tags [ClassName]
+
+
+class AppSettings(ABC):
+    """Global application settings organized into sections (singleton)."""
+    logging: LoggingSettings
+
         

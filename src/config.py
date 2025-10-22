@@ -1,7 +1,16 @@
 from pydantic import PrivateAttr
 from pydantic_settings import BaseSettings
 
-class Settings(BaseSettings):
+class AppConfig(BaseSettings):
+    """
+    Application configuration loaded from environment variables.
+    
+    This contains static configuration from .env file (API keys, database URLs, etc.)
+    NOT to be confused with:
+    - Config (beanie model): Security configuration in database (password, admins)
+    - AppSettings (beanie model): Application settings in database (logging, etc.)
+    - UserSettings (beanie model): Per-user settings in database
+    """
     API_ID: str
     API_HASH: str
     BOT_TOKEN: str
@@ -46,7 +55,8 @@ class Settings(BaseSettings):
         env_file = './.env'
 
 
-settings = Settings()
+# Singleton instance of application configuration
+app_config = AppConfig()
 
 # import os
 # from dotenv import load_dotenv

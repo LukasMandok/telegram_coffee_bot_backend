@@ -4,7 +4,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-from ..config import settings
+from ..config import app_config
 from ..common.log import (
     log_gsheet_sync_started, 
     log_gsheet_sync_completed, 
@@ -20,9 +20,9 @@ from ..common.log import (
 
 credentials_info = {
     "type": "service_account",
-    "project_id": settings.PROJECT_ID,
-    "private_key": settings.SERVICE_ACCOUNT_PRIVATE_KEY,
-    "client_email": settings.SERVICE_ACCOUNT_EMAIL,
+    "project_id": app_config.PROJECT_ID,
+    "private_key": app_config.SERVICE_ACCOUNT_PRIVATE_KEY,
+    "client_email": app_config.SERVICE_ACCOUNT_EMAIL,
     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
     "token_uri": "https://oauth2.googleapis.com/token",
     "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
@@ -34,7 +34,7 @@ class GsheetAPI:
         try:
             credentials = service_account.Credentials.from_service_account_info(credentials_info)
             self.client = gspread.authorize(credentials)
-            self.spreadsheet = self.client.open_by_key(settings.GSHEET_SSID)
+            self.spreadsheet = self.client.open_by_key(app_config.GSHEET_SSID)
             log_gsheet_api_initialized()
         except Exception as e:
             log_gsheet_api_initialization_failed(str(e))

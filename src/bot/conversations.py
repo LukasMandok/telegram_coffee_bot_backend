@@ -17,8 +17,8 @@ from pymongo.errors import DuplicateKeyError
 
 from ..handlers import handlers
 from ..handlers.paypal import create_paypal_link, validate_paypal_link
-from ..dependencies import dependencies as dep
-from .settings import SettingsManager
+from ..dependencies.dependencies import get_repo
+from .settings_manager import SettingsManager
 from .keyboards import KeyboardManager
 
 from ..common.log import (
@@ -156,6 +156,8 @@ class ConversationManager:
         self.settings_manager = SettingsManager(api)
         # Initialize logger with class name
         self.logger = Logger("ConversationManager")
+        # Cache repository instance for consistent access
+        self.repo = get_repo()
     
     # === Conversation Managment === 
     
@@ -1184,7 +1186,7 @@ class ConversationManager:
         """Conversation to create a new coffee card with PayPal link setup."""
         
     # Get the user (must be a registered TelegramUser to create coffee cards)
-        user = await dep.get_repo().find_user_by_id(user_id)
+        user = await self.repo.find_user_by_id(user_id)
         if not user or not hasattr(user, 'display_name'):
             await self.api.message_manager.send_text(
                 user_id, "❌ Only registered users with display names can create coffee cards.", True, True
@@ -1305,7 +1307,7 @@ class ConversationManager:
         from telethon import Button
         
         # Get the user
-        user = await dep.get_repo().find_user_by_id(user_id)
+        user = await self.repo.find_user_by_id(user_id)
         if not user:
             await self.api.message_manager.send_text(
                 user_id,
@@ -1498,7 +1500,7 @@ class ConversationManager:
             bool: True if conversation completed successfully, False otherwise
         """
         # Get the user
-        user = await dep.get_repo().find_user_by_id(user_id)
+        user = await self.repo.find_user_by_id(user_id)
         if not user:
             await self.api.message_manager.send_text(
                 user_id,
@@ -1848,13 +1850,11 @@ class ConversationManager:
         Returns:
             True if settings were accessed successfully, False otherwise
         """
-        from ..dependencies.dependencies import get_repo
         
         # Get current user settings
-        repo = get_repo()
-        settings = await repo.get_user_settings(user_id)
+        user_settings = await self.repo.get_user_settings(user_id)
         
-        if not settings:
+        if not user_settings:
             await self.api.message_manager.send_text(
                 user_id, 
                 "❌ Failed to load your settings. Please try again later.",
@@ -1890,34 +1890,39 @@ class ConversationManager:
             
             if data == "ordering":
                 # Ordering settings submenu
-                success = await self._settings_ordering_submenu(user_id, conv, settings, message)
+                success = await self._settings_ordering_submenu(user_id, conv, user_settings, message)
                 if not success:
                     return False
                 # Reload settings after update
-                settings = await repo.get_user_settings(user_id)
+                user_settings = await self.repo.get_user_settings(user_id)
                 
             elif data == "vanishing":
                 # Vanishing messages submenu
-                success = await self._settings_vanishing_submenu(user_id, conv, settings, message)
+                success = await self._settings_vanishing_submenu(user_id, conv, user_settings, message)
                 if not success:
                     return False
                 # Reload settings after update
-                settings = await repo.get_user_settings(user_id)
+                user_settings = await self.repo.get_user_settings(user_id)
                 
             elif data == "admin":
-                # Administration submenu (placeholder for now)
-                await self.send_or_edit_message(
-                    user_id,
-                    "🔧 **Administration**\n\n"
-                    "⚠️ This feature is currently under development.\n"
-                    "Administration features will be available for users with admin rights.",
-                    message,
-                    remove_buttons=True
-                )
-                # Short delay before returning to main menu
-                await asyncio.sleep(2)
+                # Check if user is admin
+                is_admin = await self.repo.is_user_admin(user_id)
+                if not is_admin:
+                    await self.send_or_edit_message(
+                        user_id,
+                        "🔧 **Administration**\n\n"
+                        "❌ You need admin rights to access these settings.",
+                        message,
+                        remove_buttons=True
+                    )
+                    await asyncio.sleep(2)
+                else:
+                    # Administration submenu
+                    success = await self._settings_admin_submenu(user_id, conv, message)
+                    if not success:
+                        return False
 
-    async def _settings_ordering_submenu(self, user_id: int, conv: Conversation, settings, message) -> bool:
+    async def _settings_ordering_submenu(self, user_id: int, conv: Conversation, user_settings, message) -> bool:
         """
         Handle the ordering settings submenu.
         
@@ -1930,11 +1935,11 @@ class ConversationManager:
         Returns:
             True if successful, False otherwise
         """
-        from ..dependencies.dependencies import get_repo
+        
         
         while True:
             # Use SettingsManager to generate submenu
-            ordering_text = self.settings_manager.get_ordering_submenu_text(settings)
+            ordering_text = self.settings_manager.get_ordering_submenu_text(user_settings)
             keyboard = self.settings_manager.get_ordering_submenu_keyboard()
             
             # Edit the existing message instead of sending a new one
@@ -1947,23 +1952,21 @@ class ConversationManager:
             
             if data == "page_size":
                 # Page size adjustment flow
-                success = await self._settings_page_size_flow(user_id, conv, settings, message)
+                success = await self._settings_page_size_flow(user_id, conv, user_settings, message)
                 if not success:
                     return False
                 # Reload settings after update
-                repo = get_repo()
-                settings = await repo.get_user_settings(user_id)
+                user_settings = await self.repo.get_user_settings(user_id)
                 
             elif data == "sorting":
                 # Sorting adjustment flow
-                success = await self._settings_sorting_flow(user_id, conv, settings, message)
+                success = await self._settings_sorting_flow(user_id, conv, user_settings, message)
                 if not success:
                     return False
                 # Reload settings after update
-                repo = get_repo()
-                settings = await repo.get_user_settings(user_id)
+                user_settings = await self.repo.get_user_settings(user_id)
 
-    async def _settings_vanishing_submenu(self, user_id: int, conv: Conversation, settings, message) -> bool:
+    async def _settings_vanishing_submenu(self, user_id: int, conv: Conversation, user_settings, message) -> bool:
         """
         Handle the vanishing messages settings submenu.
         
@@ -1976,11 +1979,11 @@ class ConversationManager:
         Returns:
             True if successful, False otherwise
         """
-        from ..dependencies.dependencies import get_repo
+        
         
         while True:
             # Use SettingsManager to generate submenu
-            vanishing_text = self.settings_manager.get_vanishing_submenu_text(settings)
+            vanishing_text = self.settings_manager.get_vanishing_submenu_text(user_settings)
             keyboard = self.settings_manager.get_vanishing_submenu_keyboard()
             
             # Edit the existing message and get button event for popup notifications
@@ -1996,16 +1999,15 @@ class ConversationManager:
             
             if data == "toggle":
                 # Toggle vanishing messages on/off
-                repo = get_repo()
-                new_value = not settings.vanishing_enabled
-                updated_settings = await repo.update_user_settings(user_id, vanishing_enabled=new_value)
+                new_value = not user_settings.vanishing_enabled
+                updated_settings = await self.repo.update_user_settings(user_id, vanishing_enabled=new_value)
                 
                 # Answer the callback event
                 if event:
                     await event.answer()
                 
                 if updated_settings:
-                    settings = updated_settings
+                    user_settings = updated_settings
                     status = "enabled" if new_value else "disabled"
                     # Show self-deleting success message
                     await self.api.message_manager.send_text(
@@ -2030,12 +2032,11 @@ class ConversationManager:
                 if event:
                     await event.answer()
                 # Adjust vanishing threshold
-                success = await self._settings_vanishing_threshold_flow(user_id, conv, settings, message)
+                success = await self._settings_vanishing_threshold_flow(user_id, conv, user_settings, message)
                 if not success:
                     return False
                 # Reload settings after update
-                repo = get_repo()
-                settings = await repo.get_user_settings(user_id)
+                user_settings = await self.repo.get_user_settings(user_id)
 
     async def _settings_page_size_flow(self, user_id: int, conv: Conversation, settings, message) -> bool:
         """
@@ -2050,7 +2051,7 @@ class ConversationManager:
         Returns:
             True if successful, False otherwise
         """
-        from ..dependencies.dependencies import get_repo
+        
         
         # Use SettingsManager's generic number input handler
         page_size = await self.settings_manager.get_number_input(
@@ -2069,8 +2070,7 @@ class ConversationManager:
             return True
         
         # Update settings (success message already shown by get_number_input)
-        repo = get_repo()
-        updated_settings = await repo.update_user_settings(user_id, group_page_size=page_size)
+        updated_settings = await self.repo.update_user_settings(user_id, group_page_size=page_size)
         
         if updated_settings:
             return True
@@ -2096,7 +2096,7 @@ class ConversationManager:
         Returns:
             True if successful, False otherwise
         """
-        from ..dependencies.dependencies import get_repo
+        
         
         # Use SettingsManager to generate sorting options
         sorting_text = self.settings_manager.get_sorting_options_text(settings)
@@ -2118,8 +2118,7 @@ class ConversationManager:
             await event.answer()
         
         # Update settings
-        repo = get_repo()
-        updated_settings = await repo.update_user_settings(user_id, group_sort_by=data)
+        updated_settings = await self.repo.update_user_settings(user_id, group_sort_by=data)
         
         if updated_settings:
             sort_name = "Alphabetical" if data == "alphabetical" else "Coffee Count"
@@ -2143,6 +2142,259 @@ class ConversationManager:
             )
             return False
 
+    async def _settings_admin_submenu(self, user_id: int, conv: Conversation, message) -> bool:
+        """
+        Handle the administration settings submenu (admins only).
+        
+        Args:
+            user_id: User ID
+            conv: Active conversation
+            message: Message to edit
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        while True:
+            # Use SettingsManager to generate admin submenu
+            admin_text = self.settings_manager.get_admin_submenu_text()
+            keyboard = self.settings_manager.get_admin_submenu_keyboard()
+            
+            # Edit the existing message and get button event
+            data, message, event = await self.edit_keyboard_and_wait_response(
+                conv, user_id, admin_text, keyboard, message, 120, return_event=True
+            )
+            
+            if data is None or data == "back":
+                # Answer the callback without notification for back button
+                if event:
+                    await event.answer()
+                return True
+            
+            if data == "logging":
+                # Answer the button
+                if event:
+                    await event.answer()
+                # Logging settings submenu
+                success = await self._settings_logging_submenu(user_id, conv, message)
+                if not success:
+                    return False
+
+    async def _settings_logging_submenu(self, user_id: int, conv: Conversation, message) -> bool:
+        """
+        Handle the logging settings submenu.
+        
+        Args:
+            user_id: User ID
+            conv: Active conversation
+            message: Message to edit
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        
+        while True:
+            # Get current log settings
+            log_settings = await self.repo.get_log_settings()
+            if not log_settings:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ Failed to load logging settings. Please try again later.",
+                    True, True
+                )
+                return False
+            
+            # Use SettingsManager to generate logging submenu
+            logging_text = self.settings_manager.get_logging_submenu_text(log_settings)
+            keyboard = self.settings_manager.get_logging_submenu_keyboard()
+            
+            # Edit the existing message and get button event
+            data, message, event = await self.edit_keyboard_and_wait_response(
+                conv, user_id, logging_text, keyboard, message, 120, return_event=True
+            )
+            
+            if data is None or data == "back":
+                # Answer the callback without notification for back button
+                if event:
+                    await event.answer()
+                return True
+            
+            if data == "log_level":
+                # Answer the button
+                if event:
+                    await event.answer()
+                # Log level selection flow
+                success = await self._settings_log_level_flow(user_id, conv, log_settings, message)
+                if not success:
+                    return False
+                    
+            elif data == "log_format":
+                # Answer the button
+                if event:
+                    await event.answer()
+                # Logging format configuration flow
+                success = await self._settings_logging_format_flow(user_id, conv, message)
+                if not success:
+                    return False
+
+    async def _settings_logging_format_flow(self, user_id: int, conv: Conversation, message) -> bool:
+        """
+        Handle the logging format configuration with inline toggles.
+        
+        Args:
+            user_id: User ID
+            conv: Active conversation
+            message: Message to edit
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        
+        
+        repo = get_repo()
+        
+        while True:
+            # Get current log settings
+            log_settings = await repo.get_log_settings()
+            if not log_settings:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ Failed to load logging settings. Please try again later.",
+                    True, True
+                )
+                return False
+            
+            # Use SettingsManager to generate format screen
+            format_text = self.settings_manager.get_logging_format_text(log_settings)
+            keyboard = self.settings_manager.get_logging_format_keyboard(log_settings)
+            
+            # Edit the existing message and get button event
+            data, message, event = await self.edit_keyboard_and_wait_response(
+                conv, user_id, format_text, keyboard, message, 120, return_event=True
+            )
+            
+            if data is None or data == "back":
+                # Answer the callback without notification for back button
+                if event:
+                    await event.answer()
+                return True
+            
+            if data == "toggle_time":
+                # Toggle time display
+                new_value = not log_settings.get("log_show_time", True)
+                success = await repo.update_log_settings(log_show_time=new_value)
+                
+                # Answer the callback event with a popup notification
+                if event:
+                    status = "enabled" if new_value else "disabled"
+                    await event.answer(f"✅ Time display {status}!", alert=False)
+                
+                if not success:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ **Failed to update settings**",
+                        vanish=False,
+                        conv=False,
+                        delete_after=3
+                    )
+                # Continue loop to refresh the display
+                    
+            elif data == "toggle_caller":
+                # Toggle caller display
+                new_value = not log_settings.get("log_show_caller", True)
+                success = await repo.update_log_settings(log_show_caller=new_value)
+                
+                # Answer the callback event with a popup notification
+                if event:
+                    status = "enabled" if new_value else "disabled"
+                    await event.answer(f"✅ Caller display {status}!", alert=False)
+                
+                if not success:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ **Failed to update settings**",
+                        vanish=False,
+                        conv=False,
+                        delete_after=3
+                    )
+                # Continue loop to refresh the display
+                    
+            elif data == "toggle_class":
+                # Toggle class name display
+                new_value = not log_settings.get("log_show_class", True)
+                success = await repo.update_log_settings(log_show_class=new_value)
+                
+                # Answer the callback event with a popup notification
+                if event:
+                    status = "enabled" if new_value else "disabled"
+                    await event.answer(f"✅ Class name display {status}!", alert=False)
+                
+                if not success:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ **Failed to update settings**",
+                        vanish=False,
+                        conv=False,
+                        delete_after=3
+                    )
+                # Continue loop to refresh the display
+
+    async def _settings_log_level_flow(self, user_id: int, conv: Conversation, log_settings: Dict, message) -> bool:
+        """
+        Handle the log level selection sub-flow.
+        
+        Args:
+            user_id: User ID
+            conv: Active conversation
+            log_settings: Current log settings
+            message: Message to edit
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        
+        
+        # Use SettingsManager to generate log level options
+        current_level = log_settings.get("log_level", "INFO")
+        log_level_text = self.settings_manager.get_log_level_options_text(current_level)
+        keyboard = self.settings_manager.get_log_level_options_keyboard()
+        
+        # Edit the existing message and get button event
+        data, message, event = await self.edit_keyboard_and_wait_response(
+            conv, user_id, log_level_text, keyboard, message, 60, return_event=True
+        )
+        
+        if data is None or data == "back":
+            # Answer the callback without notification for back button
+            if event:
+                await event.answer()
+            return True
+        
+        # Answer the callback event
+        if event:
+            await event.answer()
+        
+        # Update log level
+        success = await self.repo.update_log_settings(log_level=data)
+        
+        if success:
+            await self.api.message_manager.send_text(
+                user_id,
+                f"✅ **Log level set to {data}!**",
+                vanish=False,
+                conv=False,
+                delete_after=2
+            )
+            return True
+        else:
+            await self.api.message_manager.send_text(
+                user_id,
+                "❌ **Failed to update settings**",
+                vanish=False,
+                conv=False,
+                delete_after=3
+            )
+            return False
+
     async def _settings_vanishing_threshold_flow(self, user_id: int, conv: Conversation, settings, message) -> bool:
         """
         Handle the vanishing threshold adjustment sub-flow.
@@ -2156,7 +2408,7 @@ class ConversationManager:
         Returns:
             True if successful, False otherwise
         """
-        from ..dependencies.dependencies import get_repo
+        
         
         # Use SettingsManager's generic number input handler
         threshold = await self.settings_manager.get_number_input(
@@ -2175,8 +2427,7 @@ class ConversationManager:
             return True
         
         # Update settings (success message already shown by get_number_input)
-        repo = get_repo()
-        updated_settings = await repo.update_user_settings(user_id, vanishing_threshold=threshold)
+        updated_settings = await self.repo.update_user_settings(user_id, vanishing_threshold=threshold)
         
         if updated_settings:
             return True

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 
 class BaseRepository(ABC):
     @abstractmethod
@@ -74,5 +74,15 @@ class BaseRepository(ABC):
     
     @abstractmethod
     async def remove_admin(self, user_id: int) -> bool:
+        pass
+    
+    @abstractmethod
+    async def get_log_settings(self) -> Optional[Dict[str, Any]]:
+        """Get logging settings from config."""
+        pass
+    
+    @abstractmethod
+    async def update_log_settings(self, **kwargs) -> bool:
+        """Update logging settings in config."""
         pass
     

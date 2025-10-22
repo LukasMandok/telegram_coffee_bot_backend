@@ -6,19 +6,20 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 
-from src.config import settings
+from src.config import app_config
 from src.api.telethon_api import TelethonAPI
 from src.routers import users, admin, coffee
 from src.dependencies.dependencies import get_repo
 from src.common.log import log_app_startup, log_app_shutdown, log_database_connected, log_database_connection_failed, log_database_error
 from src.temp_debug_setup import run_debug_setup_if_enabled
+from src.bot.settings_manager import SettingsManager
 # from .middlewares.middleware import SecurityMiddleware
 
 ### connecting bot 
 telethon_api = TelethonAPI(
-    settings.API_ID,
-    settings.API_HASH,
-    settings.BOT_TOKEN
+    app_config.API_ID,
+    app_config.API_HASH,
+    app_config.BOT_TOKEN
 )
 
 mongodb = get_repo()
@@ -29,10 +30,13 @@ async def lifespan(app: FastAPI):
     log_app_startup()
     
     try:
-        await mongodb.connect(settings.DATABASE_URL)
-        log_database_connected(settings.DATABASE_URL)
+        await mongodb.connect(app_config.DATABASE_URL)
+        log_database_connected(app_config.DATABASE_URL)
         
-        # Run debug setup after database connection is established
+        # Initialize application settings from database
+        await SettingsManager.initialize_log_settings_from_db()
+        
+        # Run debug setup (dev-only operations like defaults and passive users)
         await run_debug_setup_if_enabled()
         
     except Exception as e:

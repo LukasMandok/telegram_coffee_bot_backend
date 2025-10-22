@@ -1,8 +1,9 @@
 """
 Settings Manager for handling user settings UI and workflows.
 
-This module provides a centralized way to manage user settings conversations,
-generate consistent menus, and handle common input patterns.
+This module provides a centralized way to:
+- manage user settings conversations and generate consistent menus
+- initialize application settings from the database on startup
 """
 
 import asyncio
@@ -10,6 +11,8 @@ import logging
 from typing import Optional, Tuple, Any, Dict, List
 from telethon import Button, events
 from telethon.tl.custom import Conversation
+from ..dependencies.dependencies import get_repo
+from ..common.log import log_settings
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +33,47 @@ class SettingsManager:
             api: Reference to TelethonAPI instance for message operations
         """
         self.api = api
+
+    # === Application settings initialization ===
+    @classmethod
+    async def initialize_log_settings_from_db(cls) -> None:
+        """
+        Load logging settings from the database and apply them to runtime.
+
+        This should be called on application startup, after the database
+        connection is established.
+        """
+        try:
+            repo = get_repo()
+            db_log_settings = await repo.get_log_settings()
+
+            if db_log_settings:
+                # Update runtime settings
+                log_settings.show_time = db_log_settings.get("log_show_time", True)
+                log_settings.show_caller = db_log_settings.get("log_show_caller", True)
+                log_settings.show_class = db_log_settings.get("log_show_class", True)
+                log_settings.level = db_log_settings.get("log_level", "INFO")
+
+                # Update root logger level
+                level_map = {
+                    'TRACE': 5,
+                    'DEBUG': logging.DEBUG,
+                    'INFO': logging.INFO,
+                    'WARNING': logging.WARNING,
+                    'ERROR': logging.ERROR,
+                    'CRITICAL': logging.CRITICAL
+                }
+                logging.root.setLevel(level_map.get(log_settings.level, logging.INFO))
+
+                logger.info(
+                    f"Initialized log settings: level={log_settings.level}, "
+                    f"time={log_settings.show_time}, caller={log_settings.show_caller}, "
+                    f"class={log_settings.show_class}"
+                )
+            else:
+                logger.warning("No log settings found in database, using defaults")
+        except Exception as e:
+            logger.error(f"Failed to initialize log settings: {str(e)}", exc_info=e)
     
     # === Button Icons ===
     ICON_BACK = "◁"
@@ -139,6 +183,162 @@ class SettingsManager:
         return [
             [Button.inline(f"{self.ICON_BACK} Back", b"back")]
         ]
+    
+    def get_admin_submenu_text(self) -> str:
+        """
+        Generate the admin settings submenu text.
+        
+        Returns:
+            Formatted text for the admin submenu
+        """
+        return (
+            "🔧 **Administration Settings**\n\n"
+            "Select a category to configure:"
+        )
+    
+    def get_admin_submenu_keyboard(self) -> List[List[Button]]:
+        """Generate the admin settings submenu keyboard."""
+        return [
+            [Button.inline("📊 Logging", b"logging")],
+            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+        ]
+    
+    def get_logging_submenu_text(self, log_settings: Dict) -> str:
+        """
+        Generate the logging settings submenu text.
+        
+        Args:
+            log_settings: Dictionary with log_level, log_show_time, log_show_caller
+            
+        Returns:
+            Formatted text for the logging submenu
+        """
+        time_status = "✅ On" if log_settings.get("log_show_time", True) else "❌ Off"
+        caller_status = "✅ On" if log_settings.get("log_show_caller", True) else "❌ Off"
+        class_status = "✅ On" if log_settings.get("log_show_class", True) else "❌ Off"
+        log_level = log_settings.get("log_level", "INFO")
+        
+        # Generate example log based on current settings
+        example_parts = []
+        if log_settings.get("log_show_time", True):
+            example_parts.append("11:51:25")
+        example_parts.append("INFO")
+        if log_settings.get("log_show_caller", True):
+            example_parts.append("[beanie_repo:create_user]")
+        if log_settings.get("log_show_class", True):
+            example_parts.append("[BeanieRepository]")
+        example_parts.append("Created user: Lukas")
+        example_log = " - ".join(example_parts)
+        
+        return (
+            "📊 **Logging Settings**\n\n"
+            f"**Log Level:** {log_level}\n"
+            f"**Time Display:** {time_status}\n"
+            f"**Caller Display:** {caller_status}\n"
+            f"**Class Name Display:** {class_status}\n\n"
+            "**Example Preview:**\n"
+            f"`{example_log}`\n\n"
+            "Select a setting to adjust:"
+        )
+    
+    def get_logging_submenu_keyboard(self) -> List[List[Button]]:
+        """Generate the logging settings submenu keyboard."""
+        return [
+            [Button.inline("📊 Logging Level", b"log_level")],
+            [Button.inline("🎨 Logging Format", b"log_format")],
+            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+        ]
+    
+    def get_logging_format_text(self, log_settings: Dict) -> str:
+        """
+        Generate the logging format configuration text.
+        
+        Args:
+            log_settings: Dictionary with log_show_time, log_show_caller, log_show_class
+            
+        Returns:
+            Formatted text for the logging format screen
+        """
+        time_icon = "✅" if log_settings.get("log_show_time", True) else "❌"
+        caller_icon = "✅" if log_settings.get("log_show_caller", True) else "❌"
+        class_icon = "✅" if log_settings.get("log_show_class", True) else "❌"
+        
+        # Generate example log based on current settings
+        example_parts = []
+        if log_settings.get("log_show_time", True):
+            example_parts.append("11:51:25")
+        example_parts.append("INFO")
+        if log_settings.get("log_show_caller", True):
+            example_parts.append("[beanie_repo:create_user]")
+        if log_settings.get("log_show_class", True):
+            example_parts.append("[BeanieRepository]")
+        example_parts.append("Created user: Lukas")
+        example_log = " - ".join(example_parts)
+        
+        return (
+            "🎨 **Logging Format**\n\n"
+            "Toggle format components:\n\n"
+            f"**Example Preview:**\n"
+            f"`{example_log}`\n\n"
+            "Click the buttons below to toggle each component:"
+        )
+    
+    def get_logging_format_keyboard(self, log_settings: Dict) -> List[List[Button]]:
+        """
+        Generate the logging format keyboard with toggle buttons.
+        
+        Args:
+            log_settings: Dictionary with log_show_time, log_show_caller, log_show_class
+            
+        Returns:
+            Keyboard with toggle buttons
+        """
+        time_icon = "✅" if log_settings.get("log_show_time", True) else "❌"
+        caller_icon = "✅" if log_settings.get("log_show_caller", True) else "❌"
+        class_icon = "✅" if log_settings.get("log_show_class", True) else "❌"
+        
+        return [
+            [
+                Button.inline(f"{time_icon} Time", b"toggle_time"),
+                Button.inline(f"{caller_icon} Caller", b"toggle_caller"),
+                Button.inline(f"{class_icon} Class", b"toggle_class")
+            ],
+            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+        ]
+    
+    def get_log_level_options_text(self, current_level: str) -> str:
+        """
+        Generate the log level options text.
+        
+        Args:
+            current_level: Current log level
+            
+        Returns:
+            Formatted text for log level options
+        """
+        return (
+            "📊 **Log Level**\n\n"
+            "Controls the minimum severity of log messages to display.\n\n"
+            f"**Current level:** {current_level}\n\n"
+            "**Options:**\n"
+            "• **TRACE** - Most verbose, shows all details\n"
+            "• **DEBUG** - Development information\n"
+            "• **INFO** - General information (recommended)\n"
+            "• **WARNING** - Warnings only\n"
+            "• **ERROR** - Errors only\n"
+            "• **CRITICAL** - Critical errors only\n\n"
+            "Choose your preferred log level:"
+        )
+    
+    def get_log_level_options_keyboard(self) -> List[List[Button]]:
+        """Generate the log level options keyboard."""
+        return [
+            [Button.inline("TRACE", b"TRACE"), Button.inline("DEBUG", b"DEBUG")],
+            [Button.inline("INFO", b"INFO"), Button.inline("WARNING", b"WARNING")],
+            [Button.inline("ERROR", b"ERROR"), Button.inline("CRITICAL", b"CRITICAL")],
+            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+        ]
+
     
     # === Input Handlers ===
     

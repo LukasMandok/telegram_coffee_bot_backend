@@ -3,7 +3,7 @@ import uuid
 
 from beanie import Document, Indexed, Link, before_event, Insert
 from pymongo import IndexModel, ASCENDING
-from pydantic import Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from datetime import datetime
 
@@ -145,11 +145,42 @@ class Password(base.Password, Document):
         return compare_password(plain_password, hash_bytes)
         
         
+#---------------------------
+# *      Settings Sections
+#---------------------------
+
+class LoggingSettings(BaseModel):
+    """Logging configuration section."""
+    level: str = Field(default="INFO", description="Log level: TRACE, DEBUG, INFO, WARNING, ERROR, CRITICAL")
+    show_time: bool = Field(default=True, description="Whether to show timestamp in logs")
+    show_caller: bool = Field(default=True, description="Whether to show caller context [filename:function] in logs")
+    show_class: bool = Field(default=True, description="Whether to show class name tags [ClassName] in logs")
+    
+    @field_validator('level')
+    @classmethod
+    def validate_log_level(cls, v: str) -> str:
+        valid_levels = ['TRACE', 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
+        v_upper = v.upper()
+        if v_upper not in valid_levels:
+            raise ValueError(f"level must be one of {valid_levels}")
+        return v_upper
+
+
+class AppSettings(Document):
+    """
+    Global application settings organized into sections.
+    This is a singleton document - there should only be one instance.
+    """
+    # Settings sections
+    logging: LoggingSettings = Field(default_factory=LoggingSettings, description="Logging configuration")
+    
+    class Settings:
+        name = "app_settings"
+
+
 class Config(base.Config, Document):
     password: Link[Password]
     admins: List[int]
-    
-    user_settings: Dict[int, Link["UserSettings"]] = Field(default_factory=dict, description="List of user settings links")
     
     async def get_password(self) -> Optional[Password]:
         # Instead of using Link, query Password collection directly

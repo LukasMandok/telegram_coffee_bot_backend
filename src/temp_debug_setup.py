@@ -173,14 +173,58 @@ def is_debug_mode() -> bool:
         bool: True if debug mode is enabled, False otherwise
     """
     import os
-    from .config import settings
+    from .config import app_config
     
-    # Check for debug mode in environment variables and settings
+    # Check for debug mode in environment variables and app_config
     return (
         os.getenv("DEBUG_MODE", "").lower() in ["true", "1", "yes"] or
         os.getenv("ENVIRONMENT", "").lower() in ["development", "dev", "debug"] or
-        getattr(settings, "DEBUG_MODE", False)
+        getattr(app_config, "DEBUG_MODE", False)
     )
+
+
+async def initialize_log_settings() -> None:
+    """
+    Initialize runtime log settings from database configuration.
+    
+    This function loads the logging settings from the AppSettings document
+    and updates the runtime log settings accordingly. Should be called
+    on application startup after database connection is established.
+    
+    Returns:
+        None
+    """
+    try:
+        from .common.log import log_settings
+        import logging
+        
+        repo = get_repo()
+        db_log_settings = await repo.get_log_settings()
+        
+        if db_log_settings:
+            # Update runtime settings
+            log_settings.show_time = db_log_settings.get("log_show_time", True)
+            log_settings.show_caller = db_log_settings.get("log_show_caller", True)
+            log_settings.show_class = db_log_settings.get("log_show_class", True)
+            log_settings.level = db_log_settings.get("log_level", "INFO")
+            
+            # Update root logger level
+            level_map = {
+                'TRACE': 5,
+                'DEBUG': logging.DEBUG,
+                'INFO': logging.INFO,
+                'WARNING': logging.WARNING,
+                'ERROR': logging.ERROR,
+                'CRITICAL': logging.CRITICAL
+            }
+            logging.root.setLevel(level_map.get(log_settings.level, logging.INFO))
+            
+            logger.info(f"Initialized log settings: level={log_settings.level}, time={log_settings.show_time}, caller={log_settings.show_caller}, class={log_settings.show_class}")
+        else:
+            logger.warning("No log settings found in database, using defaults")
+            
+    except Exception as e:
+        logger.error(f"Failed to initialize log settings: {str(e)}", exc_info=e)
 
 
 async def run_debug_setup_if_enabled() -> None:
@@ -193,11 +237,14 @@ async def run_debug_setup_if_enabled() -> None:
     Returns:
         None
     """
+    # Only setup defaults and passive users if in debug mode
     if is_debug_mode():
-        logger.info("Debug mode detected, setting up passive users...")
+        logger.info("Debug mode detected, setting up defaults and passive users...")
+        repo = get_repo()
+        await repo.setup_defaults()  # type: ignore - repo is BeanieRepository at runtime
         await setup_debug_passive_users()
     else:
-        logger.debug("Debug mode not enabled, skipping passive user setup")
+        logger.debug("Debug mode not enabled, skipping debug setup")
 
 
 if __name__ == "__main__":
