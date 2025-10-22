@@ -129,6 +129,13 @@ uvicorn_logger.setLevel(logging.WARNING)
 telethon_logger = logging.getLogger("telethon")
 telethon_logger.setLevel(logging.WARNING)
 
+# Suppress MongoDB/PyMongo heartbeat and connection debug messages
+pymongo_logger = logging.getLogger("pymongo")
+pymongo_logger.setLevel(logging.WARNING)
+
+motor_logger = logging.getLogger("motor")
+motor_logger.setLevel(logging.WARNING)
+
 
 
 request_id: ContextVar[Optional[str]] = ContextVar('request_id', default=None)
