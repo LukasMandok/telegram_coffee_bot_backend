@@ -127,14 +127,24 @@ uvicorn_logger = logging.getLogger("uvicorn.access")
 uvicorn_logger.setLevel(logging.WARNING)
 
 telethon_logger = logging.getLogger("telethon")
-telethon_logger.setLevel(logging.WARNING)
+telethon_logger.setLevel(logging.INFO)
 
 # Suppress MongoDB/PyMongo heartbeat and connection debug messages
 pymongo_logger = logging.getLogger("pymongo")
-pymongo_logger.setLevel(logging.WARNING)
+pymongo_logger.setLevel(logging.INFO)
 
 motor_logger = logging.getLogger("motor")
 motor_logger.setLevel(logging.WARNING)
+
+# Suppress noisy HTTP client logs (requests/urllib3)
+requests_logger = logging.getLogger("requests")
+requests_logger.setLevel(logging.WARNING)
+
+urllib3_logger = logging.getLogger("urllib3")
+urllib3_logger.setLevel(logging.WARNING)
+
+urllib3_pool_logger = logging.getLogger("urllib3.connectionpool")
+urllib3_pool_logger.setLevel(logging.WARNING)
 
 
 

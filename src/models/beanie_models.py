@@ -158,11 +158,12 @@ class Password(base.Password, Document):
 # *      Settings Sections
 #---------------------------
 
+# TODO: change default level for production
 class LoggingSettings(BaseModel):
     """Logging configuration section."""
-    level: str = Field(default="INFO", description="Log level: TRACE, DEBUG, INFO, WARNING, ERROR, CRITICAL")
-    show_time: bool = Field(default=True, description="Whether to show timestamp in logs")
-    show_caller: bool = Field(default=True, description="Whether to show caller context [filename:function] in logs")
+    level: str = Field(default="TRACE", description="Log level: TRACE, DEBUG, INFO, WARNING, ERROR, CRITICAL")
+    show_time: bool = Field(default=False, description="Whether to show timestamp in logs")
+    show_caller: bool = Field(default=False, description="Whether to show caller context [filename:function] in logs")
     show_class: bool = Field(default=True, description="Whether to show class name tags [ClassName] in logs")
     
     @field_validator('level')

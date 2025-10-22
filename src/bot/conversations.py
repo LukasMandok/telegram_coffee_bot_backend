@@ -1537,8 +1537,8 @@ class ConversationManager:
                 all_debtors = set()
                 
                 for debt in all_credits:
-                    card_name = debt.coffee_card.name if debt.coffee_card else "Unknown Card"
-                    debtor_name = debt.debtor.display_name if debt.debtor else "Unknown"
+                    card_name = debt.coffee_card.name if debt.coffee_card else "Unknown Card"  # type: ignore
+                    debtor_name = debt.debtor.display_name if debt.debtor else "Unknown"  # type: ignore
                     outstanding = debt.total_amount - debt.paid_amount
                     if card_name not in card_summaries:
                         card_summaries[card_name] = {"debtors": {}, "total": 0.0}

@@ -203,10 +203,10 @@ async def initialize_log_settings() -> None:
         
         if db_log_settings:
             # Update runtime settings
-            log_settings.show_time = db_log_settings.get("log_show_time", True)
-            log_settings.show_caller = db_log_settings.get("log_show_caller", True)
+            log_settings.show_time = db_log_settings.get("log_show_time", False)
+            log_settings.show_caller = db_log_settings.get("log_show_caller", False)
             log_settings.show_class = db_log_settings.get("log_show_class", True)
-            log_settings.level = db_log_settings.get("log_level", "INFO")
+            log_settings.level = db_log_settings.get("log_level", "TRACE")
             
             # Update root logger level
             level_map = {

@@ -179,10 +179,13 @@ async def settle_debts_for_payment(payment: Payment) -> None:
     await payment.fetch_link("payer")
     await payment.fetch_link("recipient")
     
+    payer = payment.payer  # type: ignore
+    recipient = payment.recipient  # type: ignore
+    
     # Find relevant debts
+    # Query using MongoDB $oid comparison for Link fields
     debts = await UserDebt.find(
-        UserDebt.debtor == payment.payer,
-        UserDebt.creditor == payment.recipient,
+        {"debtor.$id": payer.id, "creditor.$id": recipient.id},
         UserDebt.is_settled == False
     ).to_list()
     

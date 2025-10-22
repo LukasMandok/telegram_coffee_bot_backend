@@ -33,11 +33,11 @@ async def lifespan(app: FastAPI):
         await mongodb.connect(app_config.DATABASE_URL)
         log_database_connected(app_config.DATABASE_URL)
         
-        # Initialize application settings from database
-        await SettingsManager.initialize_log_settings_from_db()
-        
         # Run debug setup (dev-only operations like defaults and passive users)
         await run_debug_setup_if_enabled()
+        
+        # Initialize application settings from database
+        await SettingsManager.initialize_log_settings_from_db()
         
     except Exception as e:
         log_database_connection_failed(str(e))

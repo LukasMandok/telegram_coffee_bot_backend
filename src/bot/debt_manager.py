@@ -83,9 +83,9 @@ class DebtManager:
                 continue
             
             # Check if debt already exists for this debtor and card
+            # Query using MongoDB $oid comparison for Link fields
             existing_debt = await UserDebt.find_one(
-                UserDebt.debtor == consumer,
-                UserDebt.coffee_card == card
+                {"debtor.$id": consumer.id, "coffee_card.$id": card.id}
             )
             
             # Calculate debt amount using the helper method
@@ -137,12 +137,32 @@ class DebtManager:
             List of UserDebt documents with fetched links
         """
         # Fetch linked creditor and coffee_card in one go
-        query = UserDebt.find(UserDebt.debtor == user, fetch_links=True)  # type: ignore
+        query = None 
         
-        if not include_settled:
-            query = query.find(UserDebt.is_settled == False)
+        if include_settled:
+            query = UserDebt.find({UserDebt.debtor.id: user.id}, fetch_links=True)
+        else:
+            query = UserDebt.find({UserDebt.debtor.id: user.id, UserDebt.is_settled: False}, fetch_links=True)
         
-        return await query.to_list()
+        results = await query.to_list()
+
+        # Fetch all linked documents
+        # for debt in results:
+        #     await debt.fetch_link(UserDebt.debtor)
+        #     await debt.fetch_link(UserDebt.creditor)
+        #     await debt.fetch_link(UserDebt.coffee_card)
+        #     await debt.fetch_all_links()
+                
+        from beanie import Link as BeanieLink
+        for debt in results:
+            if isinstance(debt.debtor, BeanieLink):
+                debt.debtor = await PassiveUser.get(debt.debtor.ref.id) or await TelegramUser.get(debt.debtor.ref.id)
+            if isinstance(debt.creditor, BeanieLink):
+                debt.creditor = await TelegramUser.get(debt.creditor.ref.id)
+            if isinstance(debt.coffee_card, BeanieLink):
+                debt.coffee_card = await CoffeeCard.get(debt.coffee_card.ref.id)
+        
+        return results
     
     async def get_debt_summary_by_creditor(self, user: PassiveUser) -> Dict[str, Dict[str, Any]]:
         """
@@ -208,12 +228,32 @@ class DebtManager:
             List of UserDebt documents with fetched links
         """
         # Query directly by link and fetch linked debtor/coffee_card
-        query = UserDebt.find(UserDebt.creditor == user, fetch_links=True)
+        query = None
+
+        if include_settled:
+            query = UserDebt.find({UserDebt.creditor.id: user.id})
+        else:
+            query = UserDebt.find({UserDebt.creditor.id: user.id, UserDebt.is_settled: False})
+
+        results = await query.to_list()      
         
-        if not include_settled:
-            query = query.find(UserDebt.is_settled == False)
-        
-        return await query.to_list()
+        # Fetch all linked documents
+        # for debt in results:
+        #     await debt.fetch_link(UserDebt.debtor)
+        #     await debt.fetch_link(UserDebt.creditor)
+        #     await debt.fetch_link(UserDebt.coffee_card)
+        #     await debt.fetch_all_links()
+                
+        from beanie import Link as BeanieLink
+        for debt in results:
+            if isinstance(debt.debtor, BeanieLink):
+                debt.debtor = await PassiveUser.get(debt.debtor.ref.id) or await TelegramUser.get(debt.debtor.ref.id)
+            if isinstance(debt.creditor, BeanieLink):
+                debt.creditor = await TelegramUser.get(debt.creditor.ref.id)
+            if isinstance(debt.coffee_card, BeanieLink):
+                debt.coffee_card = await CoffeeCard.get(debt.coffee_card.ref.id)
+    
+        return results
     
     async def get_debts_for_card(self, card: CoffeeCard) -> List[UserDebt]:
         """
@@ -227,6 +267,8 @@ class DebtManager:
         """
         # Fetch linked debtor and creditor together
         return await UserDebt.find(UserDebt.coffee_card == card, fetch_links=True).to_list()  # type: ignore
+    
+        # return await UserDebt.find({"coffee_card.$id": card.id}, fetch_links=True).to_list()  # type: ignore
     
     async def record_payment(
         self,
@@ -277,11 +319,11 @@ class DebtManager:
             await self._apply_payment_to_debt(specific_debt, amount)
         else:
             # Apply to all unsettled debts from payer to recipient
-            debts = await UserDebt.find(
-                UserDebt.debtor == payer,  # type: ignore
-                UserDebt.creditor == recipient,  # type: ignore
-                UserDebt.is_settled == False
-            ).to_list()
+            debts = await UserDebt.find({
+                UserDebt.debtor.id: payer.id, 
+                UserDebt.creditor.id: recipient.id,
+                UserDebt.is_settled: False
+            }).to_list()
             
             # Sort by creation date (oldest first)
             debts.sort(key=lambda d: d.created_at)
