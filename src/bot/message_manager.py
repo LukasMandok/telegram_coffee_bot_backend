@@ -42,14 +42,23 @@ class MessageManager:
         message = await self.bot.send_message(*args, **kwargs)
         return message
 
-    async def edit_message(self, message: 'MessageModel', text: str, **kwargs: Any) -> None:
+    async def edit_message(self, message: 'MessageModel', text: str, **kwargs: Any) -> Optional['MessageModel']:
         """
         Edit an existing message.
         
         Note: Reply keyboards cannot be changed via edit.
+        Silently ignores MessageNotModifiedError (when content is identical).
         """
-        edited = await message.edit(text, **kwargs)
-        return edited
+        try:
+            edited = await message.edit(text, **kwargs)
+            return edited
+        except Exception as e:
+            # Check if it's MessageNotModifiedError
+            if "MessageNotModifiedError" in str(type(e).__name__):
+                # Content is identical, silently ignore
+                return message
+            # Re-raise other errors
+            raise
 
     async def send_text(
         self, 
