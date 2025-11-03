@@ -20,7 +20,7 @@ from ..handlers.paypal import create_paypal_link, validate_paypal_link
 from ..dependencies.dependencies import get_repo
 from .settings_manager import SettingsManager
 from .keyboards import KeyboardManager
-from .credit_flow_example import create_credit_flow
+from .credit_flow import create_credit_flow
 
 from ..common.log import (
     log_telegram_callback, log_conversation_started, log_conversation_step, log_unexpected_error,
@@ -1493,7 +1493,7 @@ class ConversationManager:
         Interactive credit overview conversation for creditors.
         Shows money owed to them and allows marking debts as paid.
         
-        TEMPORARY: Using MessageFlow example for testing.
+        Uses the refactored MessageFlow implementation with helpers for reduced boilerplate.
         
         Args:
             user_id: Telegram user ID

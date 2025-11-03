@@ -9,6 +9,8 @@ This module provides a declarative way to define message flows with:
 """
 
 from typing import Any, Optional, List, Dict, Callable, Awaitable, Union, TYPE_CHECKING
+import asyncio
+from telethon import Button, events
 from pydantic import BaseModel, Field
 from dataclasses import dataclass
 from enum import Enum
@@ -373,6 +375,64 @@ class MessageFlowState(BaseModel):
     
     class Config:
         arbitrary_types_allowed = True
+    
+    # Helper methods for cleaner flow_data access
+    def get(self, key: str, default: Any = None) -> Any:
+        """Get value from flow_data with optional default."""
+        return self.flow_data.get(key, default)
+    
+    def set(self, key: str, value: Any) -> None:
+        """Set value in flow_data."""
+        self.flow_data[key] = value
+    
+    def pop(self, key: str, default: Any = None) -> Any:
+        """Remove and return value from flow_data."""
+        return self.flow_data.pop(key, default)
+    
+    def clear(self, *keys: str) -> None:
+        """
+        Clear specific keys from flow_data, or all if no keys provided.
+        
+        Examples:
+            flow_state.clear()  # Clear everything
+            flow_state.clear('key1', 'key2')  # Clear specific keys
+        """
+        if keys:
+            for key in keys:
+                self.flow_data.pop(key, None)
+        else:
+            self.flow_data.clear()
+    
+    def has(self, key: str) -> bool:
+        """Check if key exists in flow_data."""
+        return key in self.flow_data
+    
+    def update(self, **kwargs) -> None:
+        """Update multiple values at once."""
+        self.flow_data.update(kwargs)
+    
+    async def get_or_fetch(self, key: str, fetch_func: Callable[[], Awaitable[Any]]) -> Any:
+        """
+        Get value from flow_data, or fetch and cache it if not present.
+        
+        Args:
+            key: The key to look up in flow_data
+            fetch_func: Async function to call if key doesn't exist
+            
+        Returns:
+            The cached or freshly fetched value
+            
+        Example:
+            items = await flow_state.get_or_fetch(
+                'credits_data',
+                lambda: api.get_credits(user_id)
+            )
+        """
+        if not self.has(key):
+            value = await fetch_func()
+            self.set(key, value)
+            return value
+        return self.get(key)
 
 
 class MessageFlow:
@@ -553,7 +613,6 @@ class MessageFlow:
     
     async def _delete_message_after_delay(self, message: Any, delay: int):
         """Delete a message after a delay (in seconds)."""
-        import asyncio
         await asyncio.sleep(delay)
         try:
             await message.delete()
@@ -591,14 +650,12 @@ class MessageFlow:
         if current_def.keyboard_builder:
             # Dynamic keyboard (for MIXED states)
             button_callbacks = await current_def.keyboard_builder(flow_state, api, user_id)
-            from telethon import Button
             cancel_keyboard = [
                 [Button.inline(btn.text, btn.callback_data) for btn in row]
                 for row in button_callbacks
             ]
         elif current_def.buttons:
             # Static keyboard
-            from telethon import Button
             cancel_keyboard = [
                 [Button.inline(btn.text, btn.callback_data) for btn in row]
                 for row in current_def.buttons
@@ -631,15 +688,11 @@ class MessageFlow:
         
         # Wait for input (either text or button press if cancel buttons exist)
         max_attempts = 3
-        print(f"[DEBUG MessageFlow] Starting input wait loop for state: {current_def.state_id}, state_type: {current_def.state_type}")
         for attempt in range(max_attempts):
             try:
                 # Wait for either text message or button callback
                 if current_def.state_type == StateType.MIXED or cancel_keyboard:
-                    print(f"[DEBUG MessageFlow] MIXED state or has cancel_keyboard, waiting for text OR button")
                     # Allow both text and buttons
-                    from telethon import events
-                    import asyncio
                     
                     # Create tasks
                     text_task = asyncio.create_task(conv.wait_event(events.NewMessage(incoming=True), timeout=current_def.input_timeout))
@@ -702,10 +755,8 @@ class MessageFlow:
                     )
                 
                 input_text = message_event.message.message.strip()
-                print(f"[DEBUG MessageFlow] Received text input: '{input_text}'")
                 
                 # Delete the user's input message after 2 seconds (clean up conversation)
-                import asyncio
                 asyncio.create_task(self._delete_message_after_delay(message_event.message, 2))
                 
                 # Check for cancel keywords
@@ -731,19 +782,13 @@ class MessageFlow:
                 # Store input
                 storage_key = current_def.input_storage_key or current_def.state_id
                 flow_state.flow_data[storage_key] = input_text
-                print(f"[DEBUG MessageFlow] Stored input in flow_data['{storage_key}']")
                 
                 # Call on_input_received handler
                 if current_def.on_input_received:
-                    print(f"[DEBUG MessageFlow] Calling on_input_received handler")
                     next_state = await current_def.on_input_received(input_text, flow_state, api, user_id)
-                    print(f"[DEBUG MessageFlow] Handler returned: {next_state}")
                     if next_state is not None:
                         # Handler returned explicit state (could be current state to re-render)
-                        print(f"[DEBUG MessageFlow] Returning state: {next_state}")
                         return next_state
-                else:
-                    print(f"[DEBUG MessageFlow] No on_input_received handler defined")
                 
                 # Use default next state (could be None, which means exit)
                 return current_def.default_next_state
@@ -844,7 +889,6 @@ class MessageFlow:
                 button_callbacks = current_def.buttons or []
             
             # Convert ButtonCallback objects to Telethon buttons
-            from telethon import Button
             keyboard = [
                 [Button.inline(btn.text, btn.callback_data) for btn in row]
                 for row in button_callbacks
