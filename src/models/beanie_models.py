@@ -176,6 +176,12 @@ class LoggingSettings(BaseModel):
         return v_upper
 
 
+class NotificationSettings(BaseModel):
+    """Notification configuration section."""
+    enabled: bool = Field(default=True, description="Whether notifications to other users are enabled globally")
+    silent: bool = Field(default=False, description="Whether notifications should be sent silently by default (overrides user preference if True)")
+
+
 class AppSettings(Document):
     """
     Global application settings organized into sections.
@@ -183,6 +189,7 @@ class AppSettings(Document):
     """
     # Settings sections
     logging: LoggingSettings = Field(default_factory=LoggingSettings, description="Logging configuration")
+    notifications: NotificationSettings = Field(default_factory=NotificationSettings, description="Notification configuration")
     
     class Settings:
         name = "app_settings"
@@ -220,6 +227,9 @@ class UserSettings(Document):
     # Vanishing messages settings
     vanishing_enabled: bool = Field(default=True, description="Whether vanishing messages are enabled")
     vanishing_threshold: int = Field(default=2, ge=1, le=10, description="Number of messages/conversations before message vanishes (1-10)")
+    
+    # Notification settings (user preference)
+    notifications_silent: bool = Field(default=False, description="Whether notifications should be sent silently (user preference, can be overridden by app settings)")
     
     @field_validator('group_sort_by')
     @classmethod

@@ -598,6 +598,9 @@ class CommandManager:
             "• `/settings` - Adjust your personal preferences\n"
             "  📋 **Ordering:** Page size, group sorting\n"
             "  💬 **Vanishing Messages:** Auto-cleanup, threshold\n"
+            "  🔧 **Administration (Admins Only):**\n"
+            "     📊 Logging settings\n"
+            "     🔔 Notification preferences\n"
             "  🔧 **Administration:** Admin features (coming soon)\n\n"
             
             "**Other:**\n"

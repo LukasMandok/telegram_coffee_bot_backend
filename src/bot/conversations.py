@@ -1637,6 +1637,14 @@ class ConversationManager:
                     return False
                 # Reload settings after update
                 user_settings = await self.repo.get_user_settings(user_id)
+            
+            elif data == "user_notifications":
+                # User notification preferences submenu
+                success = await self._settings_user_notifications_submenu(user_id, conv, user_settings, message)
+                if not success:
+                    return False
+                # Reload settings after update
+                user_settings = await self.repo.get_user_settings(user_id)
                 
             elif data == "admin":
                 # Check if user is admin
@@ -1655,6 +1663,71 @@ class ConversationManager:
                     success = await self._settings_admin_submenu(user_id, conv, message)
                     if not success:
                         return False
+
+    async def _settings_user_notifications_submenu(self, user_id: int, conv: Conversation, user_settings, message) -> bool:
+        """
+        Handle the user notification preferences submenu.
+        
+        Args:
+            user_id: User ID
+            conv: Active conversation
+            user_settings: Current user settings
+            message: Message to edit
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        
+        while True:
+            # Get app notification settings to show context
+            notification_settings = await self.repo.get_notification_settings()
+            if not notification_settings:
+                notification_settings = {"notifications_enabled": True, "notifications_silent": False}
+            
+            # Use SettingsManager to generate user notifications submenu
+            notifications_text = self.settings_manager.get_user_notifications_submenu_text(user_settings, notification_settings)
+            keyboard = self.settings_manager.get_user_notifications_submenu_keyboard()
+            
+            # Edit the existing message and get button event
+            data, message, event = await self.edit_keyboard_and_wait_response(
+                conv, user_id, notifications_text, keyboard, message, 120, return_event=True
+            )
+            
+            if data is None or data == "back":
+                # Answer the callback without notification for back button
+                if event:
+                    await event.answer()
+                return True
+            
+            if data == "toggle_user_silent":
+                # Toggle user's silent mode preference
+                new_value = not user_settings.notifications_silent
+                updated_settings = await self.repo.update_user_settings(user_id, notifications_silent=new_value)
+                
+                # Answer the callback event
+                if event:
+                    await event.answer()
+                
+                if updated_settings:
+                    user_settings = updated_settings
+                    status = "enabled" if new_value else "disabled"
+                    # Show self-deleting success message
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        f"✅ **Silent mode {status}!**",
+                        vanish=False,
+                        conv=False,
+                        delete_after=2
+                    )
+                else:
+                    # Show self-deleting error message
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ **Failed to update settings**",
+                        vanish=False,
+                        conv=False,
+                        delete_after=3
+                    )
 
     async def _settings_ordering_submenu(self, user_id: int, conv: Conversation, user_settings, message) -> bool:
         """
@@ -1912,6 +1985,15 @@ class ConversationManager:
                 success = await self._settings_logging_submenu(user_id, conv, message)
                 if not success:
                     return False
+            
+            elif data == "notifications":
+                # Answer the button
+                if event:
+                    await event.answer()
+                # Notifications settings submenu
+                success = await self._settings_notifications_submenu(user_id, conv, message)
+                if not success:
+                    return False
 
     async def _settings_logging_submenu(self, user_id: int, conv: Conversation, message) -> bool:
         """
@@ -2128,6 +2210,113 @@ class ConversationManager:
                 delete_after=3
             )
             return False
+
+    async def _settings_notifications_submenu(self, user_id: int, conv: Conversation, message) -> bool:
+        """
+        Handle the notifications settings submenu (admin only - app-wide settings).
+        
+        Args:
+            user_id: User ID
+            conv: Active conversation
+            message: Message to edit
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        
+        while True:
+            # Get app notification settings
+            notification_settings = await self.repo.get_notification_settings()
+            if not notification_settings:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ Failed to load notification settings. Please try again later.",
+                    True, True
+                )
+                return False
+            
+            # Get user settings to show their preference
+            user_settings = await self.repo.get_user_settings(user_id)
+            
+            # Use SettingsManager to generate notifications submenu
+            notifications_text = self.settings_manager.get_notifications_submenu_text(notification_settings, user_settings)
+            keyboard = self.settings_manager.get_notifications_submenu_keyboard(notification_settings)
+            
+            # Edit the existing message and get button event
+            data, message, event = await self.edit_keyboard_and_wait_response(
+                conv, user_id, notifications_text, keyboard, message, 120, return_event=True
+            )
+            
+            if data is None or data == "back":
+                # Answer the callback without notification for back button
+                if event:
+                    await event.answer()
+                return True
+            
+            if data == "toggle_notifications":
+                # Toggle app-wide notifications on/off
+                new_value = not notification_settings["notifications_enabled"]
+                success = await self.repo.update_notification_settings(notifications_enabled=new_value)
+                
+                # Answer the callback event
+                if event:
+                    await event.answer()
+                
+                if success:
+                    notification_settings["notifications_enabled"] = new_value
+                    status = "enabled" if new_value else "disabled"
+                    # Show self-deleting success message
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        f"✅ **Notifications {status} globally!**",
+                        vanish=False,
+                        conv=False,
+                        delete_after=2
+                    )
+                else:
+                    # Show self-deleting error message
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ **Failed to update settings**",
+                        vanish=False,
+                        conv=False,
+                        delete_after=3
+                    )
+                    
+            elif data == "toggle_silent":
+                # Toggle app-wide silent mode on/off (only available if notifications are enabled)
+                if not notification_settings["notifications_enabled"]:
+                    if event:
+                        await event.answer("❌ Enable notifications first!", alert=True)
+                    continue
+                
+                new_value = not notification_settings["notifications_silent"]
+                success = await self.repo.update_notification_settings(notifications_silent=new_value)
+                
+                # Answer the callback event
+                if event:
+                    await event.answer()
+                
+                if success:
+                    notification_settings["notifications_silent"] = new_value
+                    status = "enabled" if new_value else "disabled"
+                    # Show self-deleting success message
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        f"✅ **Global silent mode {status}!**",
+                        vanish=False,
+                        conv=False,
+                        delete_after=2
+                    )
+                else:
+                    # Show self-deleting error message
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ **Failed to update settings**",
+                        vanish=False,
+                        conv=False,
+                        delete_after=3
+                    )
 
     async def _settings_vanishing_threshold_flow(self, user_id: int, conv: Conversation, settings, message) -> bool:
         """

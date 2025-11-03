@@ -93,6 +93,7 @@ class SettingsManager:
         return [
             [Button.inline("📋 Ordering Settings", b"ordering")],
             [Button.inline("💬 Vanishing Messages", b"vanishing")],
+            [Button.inline("🔔 Notifications", b"user_notifications")],
             [Button.inline("🔧 Administration", b"admin")],
             [Button.inline("✅ Done", b"done")]
         ]
@@ -150,6 +151,57 @@ class SettingsManager:
             [Button.inline(f"{self.ICON_BACK} Back", b"back")]
         ]
     
+    def get_user_notifications_submenu_text(self, user_settings, notification_settings: Dict) -> str:
+        """
+        Generate the user notification preference submenu text.
+        
+        Args:
+            user_settings: UserSettings object
+            notification_settings: Dictionary with app-wide notification settings
+            
+        Returns:
+            Formatted text for the user notifications submenu
+        """
+        app_enabled = notification_settings.get("notifications_enabled", True)
+        app_silent = notification_settings.get("notifications_silent", False)
+        user_silent = user_settings.notifications_silent
+        
+        user_silent_status = "✅ On" if user_silent else "❌ Off"
+        
+        text = (
+            "🔔 **My Notification Preferences**\n\n"
+            f"**Silent Mode:** {user_silent_status}\n\n"
+        )
+        
+        if not app_enabled:
+            text += (
+                "⚠️ **Notifications are currently disabled globally by an admin.**\n"
+                "You won't receive any notifications regardless of your preference.\n\n"
+            )
+        elif app_silent:
+            text += (
+                "ℹ️ **Global silent mode is ON (set by admin).**\n"
+                "All notifications are sent silently regardless of your preference.\n"
+                "Your setting will take effect if the admin changes this.\n\n"
+            )
+        else:
+            text += (
+                "✅ **Your preference is active!**\n"
+                "• **Silent Mode OFF:** You'll receive notifications with sound\n"
+                "• **Silent Mode ON:** You'll receive notifications silently\n\n"
+            )
+        
+        text += "Toggle your preference below:"
+        
+        return text
+    
+    def get_user_notifications_submenu_keyboard(self) -> List[List[Button]]:
+        """Generate the user notification preference submenu keyboard."""
+        return [
+            [Button.inline("🔇 Toggle Silent Mode", b"toggle_user_silent")],
+            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+        ]
+    
     def get_sorting_options_text(self, settings) -> str:
         """
         Generate the sorting options text.
@@ -200,6 +252,7 @@ class SettingsManager:
         """Generate the admin settings submenu keyboard."""
         return [
             [Button.inline("📊 Logging", b"logging")],
+            [Button.inline("🔔 Notifications", b"notifications")],
             [Button.inline(f"{self.ICON_BACK} Back", b"back")]
         ]
     
@@ -248,6 +301,75 @@ class SettingsManager:
             [Button.inline("🎨 Logging Format", b"log_format")],
             [Button.inline(f"{self.ICON_BACK} Back", b"back")]
         ]
+    
+    def get_notifications_submenu_text(self, notification_settings: Dict, user_settings=None) -> str:
+        """
+        Generate the notifications settings submenu text.
+        
+        Args:
+            notification_settings: Dictionary with notifications_enabled, notifications_silent from app settings
+            user_settings: Optional UserSettings object for user preference display
+            
+        Returns:
+            Formatted text for the notifications submenu
+        """
+        app_enabled = notification_settings.get("notifications_enabled", True)
+        app_silent = notification_settings.get("notifications_silent", False)
+        
+        app_enabled_status = "✅ On" if app_enabled else "❌ Off"
+        app_silent_status = "✅ On" if app_silent else "❌ Off"
+        
+        text = (
+            "🔔 **Notification Settings (App-Wide)**\n\n"
+            f"**Notifications Enabled:** {app_enabled_status}\n"
+        )
+        
+        if app_enabled:
+            text += (
+                f"**Silent Mode (Global):** {app_silent_status}\n\n"
+                "**⚙️ How it works:**\n"
+                "• If enabled, all notifications are sent to users\n"
+                "• If silent mode is ON, all users receive silent notifications (overrides user preference)\n"
+                "• If silent mode is OFF, users can choose their own preference\n\n"
+            )
+        else:
+            text += "\n⚠️ **Notifications are disabled globally. No users will receive notifications.**\n\n"
+        
+        # Show user preference section if provided
+        if user_settings:
+            user_silent = user_settings.notifications_silent
+            user_silent_status = "✅ On" if user_silent else "❌ Off"
+            
+            text += (
+                f"**─────────────────**\n"
+                f"**Your Personal Preference:** {user_silent_status}\n"
+            )
+            
+            if app_silent:
+                text += "ℹ️ *Currently has no effect because global silent mode is ON*\n\n"
+            elif not app_enabled:
+                text += "ℹ️ *Currently has no effect because notifications are disabled*\n\n"
+            else:
+                text += "✅ *Your preference is active*\n\n"
+        
+        text += "Select a setting to adjust:"
+        
+        return text
+    
+    def get_notifications_submenu_keyboard(self, notification_settings: Dict) -> List[List[Button]]:
+        """Generate the notifications settings submenu keyboard."""
+        app_enabled = notification_settings.get("notifications_enabled", True)
+        
+        buttons = [
+            [Button.inline("🔄 Toggle Notifications", b"toggle_notifications")]
+        ]
+        
+        # Only show silent mode toggle if notifications are enabled
+        if app_enabled:
+            buttons.append([Button.inline("🔇 Toggle Silent Mode (Global)", b"toggle_silent")])
+        
+        buttons.append([Button.inline(f"{self.ICON_BACK} Back", b"back")])
+        return buttons
     
     def get_logging_format_text(self, log_settings: Dict) -> str:
         """

@@ -299,9 +299,14 @@ class MessageManager:
         - Coffee card closures
         - System announcements
         
+        Respects app-wide notification settings and individual user preferences:
+        - If app notifications are disabled globally, no messages are sent
+        - Silent mode is determined by: app_silent OR user_silent (either triggers silent)
+        - Users cannot disable notifications, only control their silent preference
+        
         Args:
             text: The notification message text
-            silent: If True, send message silently without notification sound
+            silent: If True, force silent mode for all users (overrides all settings)
             link_preview: If True, enable link preview (default: False)
             exclude_user_ids: Optional list of user IDs to exclude from notification
             exclude_archived: If True, exclude archived users (default: True)
@@ -313,6 +318,17 @@ class MessageManager:
         from ..dependencies.dependencies import get_repo
         
         repo = get_repo()
+        
+        # Check app-wide notification settings
+        notification_settings = await repo.get_notification_settings()
+        
+        # If notifications are disabled globally, don't send to anyone
+        if not notification_settings or not notification_settings.get("notifications_enabled", True):
+            return 0
+        
+        # Get app-wide silent preference
+        app_silent = notification_settings.get("notifications_silent", False)
+        
         # Use find_all_telegram_users to only get users with user_id
         telegram_users = await repo.find_all_telegram_users(
             exclude_archived=exclude_archived,
@@ -327,13 +343,21 @@ class MessageManager:
             if user.user_id in exclude_set:
                 continue
             
+            # Get user's silent preference
+            user_settings = await repo.get_user_settings(user.user_id)
+            user_silent = user_settings.notifications_silent if user_settings else False
+            
+            # Determine if message should be silent
+            # Message is silent if: forced silent OR app silent OR user silent
+            send_silent = silent or app_silent or user_silent
+            
             try:
                 await self.send_text(
                     user_id=user.user_id,
                     text=text,
                     vanish=False,  # Don't add to cleanup queue for broadcasts
                     conv=False,
-                    silent=silent,
+                    silent=send_silent,
                     link_preview=link_preview
                 )
                 sent_count += 1

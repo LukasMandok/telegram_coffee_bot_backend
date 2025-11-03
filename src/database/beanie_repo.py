@@ -591,6 +591,52 @@ class BeanieRepository(BaseRepository):
             log_database_error("update_log_settings", str(e), {"settings": kwargs})
             return False
 
+    async def get_notification_settings(self) -> Optional[Dict[str, Any]]:
+        """Get notification settings from AppSettings."""
+        try:
+            app_settings = await models.AppSettings.find_one()
+            if app_settings:
+                return {
+                    "notifications_enabled": app_settings.notifications.enabled,
+                    "notifications_silent": app_settings.notifications.silent
+                }
+            return None
+        except Exception as e:
+            log_database_error("get_notification_settings", str(e))
+            return None
+
+    async def update_notification_settings(self, **kwargs) -> bool:
+        """
+        Update notification settings in AppSettings.
+        
+        Args:
+            notifications_enabled: Optional boolean for global notification enable/disable
+            notifications_silent: Optional boolean for global silent mode
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            settings = await models.AppSettings.find_one()
+            if not settings:
+                # Create default settings if they don't exist
+                settings = models.AppSettings()
+                await settings.insert()
+            
+            # Update only provided fields
+            if "notifications_enabled" in kwargs:
+                settings.notifications.enabled = kwargs["notifications_enabled"]
+                
+            if "notifications_silent" in kwargs:
+                settings.notifications.silent = kwargs["notifications_silent"]
+            
+            await settings.save()
+            self.logger.info(f"Updated notification settings: {kwargs}")
+            return True
+        except Exception as e:
+            log_database_error("update_notification_settings", str(e), {"settings": kwargs})
+            return False
+
     ### User Settings ###
 
     async def get_user_settings(self, user_id: int) -> Optional[models.UserSettings]:
