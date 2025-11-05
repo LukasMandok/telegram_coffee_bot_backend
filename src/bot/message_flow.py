@@ -640,11 +640,6 @@ class MessageFlow:
         if current_def.input_prompt:
             full_text += f"\n\n{current_def.input_prompt}"
         
-        # Add cancel instruction (only if not MIXED state with keyboard_builder)
-        if not (current_def.state_type == StateType.MIXED and current_def.keyboard_builder):
-            cancel_keywords_str = ", ".join(f"`{kw}`" for kw in current_def.input_cancel_keywords)
-            full_text += f"\n\n_Type {cancel_keywords_str} to cancel._"
-        
         # Build keyboard - use keyboard_builder for dynamic keyboards, or buttons for static
         cancel_keyboard = None
         if current_def.keyboard_builder:
