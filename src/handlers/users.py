@@ -3,7 +3,6 @@ from fastapi import Depends, HTTPException
 
 from ..common.log import log_user_login_attempt, log_user_login_success, log_admin_verification, Logger
 from ..dependencies.dependencies import get_repo, repo
-from .paypal import create_paypal_link, validate_paypal_link
 from ..common.log import log_database_error
 
 if TYPE_CHECKING:

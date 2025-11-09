@@ -4,7 +4,7 @@ from typing_extensions import Annotated
 
 from fastapi import Header
 
-from ..handlers import handlers, exceptions
+from ..handlers import exceptions, users
 from ..database.beanie_repo import BeanieRepository
 from ..database.base_repo import BaseRepository
 
@@ -32,13 +32,13 @@ def repo(func: Callable) -> Callable:
 
 
 async def _verify_user(id: Union[Annotated[int, Header()], int]):
-    verified = await handlers.check_user(id)
+    verified = await users.check_user(id)
     
     if not verified:
         raise exceptions.VerificationException("❌ You are not a registered user. Please register using /start and try again.")
     
 async def _verify_admin(id: Union[Annotated[int, Header()], int]):
-    verified = await handlers.is_admin(id)
+    verified = await users.is_admin(id)
     
     if not verified:
         raise exceptions.VerificationException("❌ You do not have the necessary admin rights to use this option.")

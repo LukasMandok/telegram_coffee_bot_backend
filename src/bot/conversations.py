@@ -15,7 +15,7 @@ from telethon import events, Button
 from telethon.tl.custom.conversation import Conversation
 from pymongo.errors import DuplicateKeyError
 
-from ..handlers import handlers
+from ..handlers import users
 from ..handlers.paypal import create_paypal_link, validate_paypal_link
 from ..dependencies.dependencies import get_repo
 from .settings_manager import SettingsManager
@@ -29,6 +29,8 @@ from ..common.log import (
 
 if TYPE_CHECKING:
     from ..api.telethon_api import TelethonAPI
+    from ..models.base_models import TelegramUser
+
 
 
 
@@ -617,7 +619,7 @@ class ConversationManager:
         # TODO: maybe a search only for the last name 
         log_conversation_step(user_id, "registration", "checking_for_existing_passive_user")
         self.logger.debug(f"Checking for passive user with name: '{first_name}' '{last_name}'")
-        existing_passive_user = await handlers.find_passive_user_by_name(
+        existing_passive_user = await users.find_passive_user_by_name(
             first_name=first_name,
             last_name=last_name
         )
@@ -648,7 +650,7 @@ class ConversationManager:
                 
                 try:
                     # Convert passive user to full user
-                    new_user = await handlers.convert_passive_to_telegram_user(
+                    new_user = await users.convert_passive_to_telegram_user(
                         passive_user=existing_passive_user,
                         user_id=user_id,
                         username=username,
@@ -687,7 +689,7 @@ class ConversationManager:
         # Create the user in the database (normal registration or after declining takeover)
         try:
             log_conversation_step(user_id, "registration", "creating_user_in_database")
-            new_user = await handlers.register_user(
+            new_user = await users.register_user(
                 user_id=user_id,
                 username=username,
                 first_name=first_name,
@@ -781,7 +783,7 @@ class ConversationManager:
                 password = password_event.message.message.strip()
                 await password_event.message.delete()  # Delete password for security
                 
-                authenticated = await handlers.check_password(password)
+                authenticated = await users.check_password(password)
                 if authenticated:
                     await self.api.message_manager.send_text(
                         chat_id, 
@@ -1016,7 +1018,7 @@ class ConversationManager:
             return False
         
         # Create user
-        new_user = await handlers.create_passive_user(
+        new_user = await users.create_passive_user(
             first_name=first_name,
             last_name=last_name
         )
@@ -1039,7 +1041,7 @@ class ConversationManager:
             user_id: User ID
             conv: Active conversation (provided by decorator)
             state: Conversation state (provided by decorator)
-            user: TelegramUser object
+            user: "TelegramUser" object
             show_current: Whether to show current link and offer change/keep options
             
         Returns:

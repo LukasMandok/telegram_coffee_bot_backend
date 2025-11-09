@@ -27,7 +27,7 @@ from typing import Callable, Optional, Dict, Union, Any, TYPE_CHECKING
 # Runtime imports - actually used at runtime
 from telethon import TelegramClient, events, errors
 
-from ..handlers import handlers, exceptions
+from ..handlers import exceptions, users
 from ..dependencies import dependencies as dep
 from ..bot.telethon_models import ( MessageModel, BotConfiguration )
 from ..bot.keyboards import KeyboardButton, KeyboardManager
