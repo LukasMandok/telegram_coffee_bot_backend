@@ -268,14 +268,8 @@ class CommandManager:
         if await self._check_and_notify_active_conversation(user_id):
             return
         
-        # Get the user (registered Telegram users manage PayPal links)
-        user = await dep.get_repo().find_user_by_id(user_id)
-        
-        # Call setup as a standalone conversation (not a sub-conversation)
-        # Don't pass existing_conv so the decorator properly cleans up state
-        setup_success = await self.api.conversation_manager.setup_paypal_link_subconversation(
-            user_id, user=user, show_current=True
-        )
+        # Start the new PayPal setup conversation using MessageFlow
+        setup_success = await self.api.conversation_manager.paypal_setup_conversation(user_id)
         
         if not setup_success:
             await self.api.message_manager.send_text(

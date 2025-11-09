@@ -1033,7 +1033,7 @@ class ConversationManager:
         return True
 
     @managed_conversation("setup_paypal_link", 120, use_existing_conv=True)
-    async def setup_paypal_link_subconversation(self, user_id: int, conv: Conversation, state: ConversationState, user, show_current: bool = True) -> bool:
+    async def setup_paypal_link_subconversation_old(self, user_id: int, conv: Conversation, state: ConversationState, user: "TelegramUser", show_current: bool = True) -> bool:
         """
         Reusable subconversation to set up or change PayPal link for a user.
         
@@ -1125,12 +1125,12 @@ class ConversationManager:
             try:
                 # Validate & format the PayPal input BEFORE assigning to the model or saving
                 self.logger.info(f"User input: {paypal_input}", extra_tag="PayPal Setup")
-                formatted = create_paypal_link(paypal_input)
+                formatted, username = create_paypal_link(paypal_input)
                 self.logger.info(f"Normalized link: {formatted}", extra_tag="PayPal Setup")
                 is_valid = False
                 validation_error = None
                 try:
-                    is_valid = validate_paypal_link(formatted)
+                    is_valid = await validate_paypal_link(formatted, username)
                 except Exception as ve:
                     validation_error = ve
                     self.logger.error(f"Exception during validation", extra_tag="PayPal Setup", exc=ve)
@@ -1199,7 +1199,7 @@ class ConversationManager:
         
         # Check if user has PayPal link, if not, set it up
         if not user.paypal_link:
-            paypal_setup_success = await self.setup_paypal_link_subconversation(
+            paypal_setup_success = await self.setup_paypal_link_subconversation_old(
                 user_id, user=user, show_current=False, existing_conv=conv
             )
             if not paypal_setup_success:
@@ -1506,6 +1506,27 @@ class ConversationManager:
             bool: True if conversation completed successfully, False otherwise
         """
         flow = create_credit_flow()
+        return await flow.run(conv, user_id, self.api, start_state="main")
+    
+    @managed_conversation("paypal_setup", 180)
+    async def paypal_setup_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
+        """
+        Interactive PayPal link setup conversation.
+        Allows users to add, change, or remove their PayPal.me link.
+        
+        Uses the refactored MessageFlow implementation for simplified flow management.
+        
+        Args:
+            user_id: Telegram user ID
+            conv: Active Telethon conversation object (provided by decorator)
+            state: Conversation state object (provided by decorator)
+            
+        Returns:
+            bool: True if conversation completed successfully, False otherwise
+        """
+        from .settings_flow import create_paypal_flow
+        
+        flow = create_paypal_flow()
         return await flow.run(conv, user_id, self.api, start_state="main")
     
     @managed_conversation("close_card", 60)

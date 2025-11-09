@@ -597,6 +597,108 @@ class DynamicListFlow:
 
 
 # ----------------------------------------------------------------------------
+# Universal Exit States - for clean flow termination with message editing
+# ----------------------------------------------------------------------------
+
+class ExitStateBuilder:
+    """
+    Factory for creating exit states that properly edit the message before closing.
+    
+    This solves the problem of flows that need to show a final message and then
+    close cleanly without leaving old messages or buttons visible.
+    
+    Usage:
+        # In your flow definition:
+        flow.add_state(ExitStateBuilder.create(
+            state_id="exit_cancelled",
+            text="❌ Setup Cancelled\n\nNo changes were made."
+        ))
+        
+        # In your button handler:
+        if data == "cancel":
+            return "exit_cancelled"  # Navigate to exit state
+    
+    How it works:
+    1. User clicks button that navigates to exit state
+    2. Exit state EDITS current message with final text
+    3. Exit state REMOVES all buttons
+    4. Exit state times out after 1 second → flow auto-closes
+    
+    Benefits:
+    - Message is properly edited (not a new message)
+    - Buttons are cleanly removed
+    - Flow automatically closes
+    - Reusable pattern across all flows
+    """
+    
+    @staticmethod
+    def create(
+        state_id: str,
+        text: Optional[str] = None,
+        text_builder: Optional[Callable[..., Awaitable[str]]] = None,
+        timeout: int = 1,
+    ):
+        """
+        Create an exit state that edits the message and closes the flow.
+        
+        Args:
+            state_id: Unique state identifier (e.g., "exit_cancelled")
+            text: Static text to display (provide text OR text_builder)
+            text_builder: Dynamic text builder function (provide text OR text_builder)
+            timeout: Seconds before auto-closing (default: 1)
+            
+        Returns:
+            MessageDefinition for the exit state
+        """
+        from .message_flow import MessageDefinition, MessageAction
+        
+        if (text is None) == (text_builder is None):
+            raise ValueError("ExitStateBuilder.create requires exactly one of 'text' or 'text_builder'")
+        
+        return MessageDefinition(
+            state_id=state_id,
+            text=text,
+            text_builder=text_builder,
+            buttons=None,  # Remove buttons completely (None, not [])
+            action=MessageAction.EDIT,  # Edit the current message
+            timeout=timeout,  # Auto-close after timeout
+            remove_buttons_on_exit=True,  # Clean up buttons
+        )
+    
+    @staticmethod
+    def create_cancelled(
+        state_id: str = "exit_cancelled",
+        message: str = "❌ **Cancelled**\n\nNo changes were made.",
+        timeout: int = 1,
+    ):
+        """
+        Create a standard cancellation exit state.
+        
+        Args:
+            state_id: State identifier (default: "exit_cancelled")
+            message: Cancellation message
+            timeout: Seconds before auto-closing
+        """
+        return ExitStateBuilder.create(state_id=state_id, text=message, timeout=timeout)
+    
+    @staticmethod
+    def create_success(
+        state_id: str = "exit_success",
+        message: str = "✅ **Success**\n\nOperation completed successfully.",
+        timeout: int = 1,
+    ):
+        """
+        Create a standard success exit state.
+        
+        Args:
+            state_id: State identifier (default: "exit_success")
+            message: Success message
+            timeout: Seconds before auto-closing
+        """
+        return ExitStateBuilder.create(state_id=state_id, text=message, timeout=timeout)
+
+
+# ----------------------------------------------------------------------------
 # State factory to reduce boilerplate when defining MessageFlow states
 # ----------------------------------------------------------------------------
 
@@ -664,7 +766,8 @@ def make_state(
     use_action = action or _MessageAction.AUTO
     use_timeout = timeout or 120
     use_next_map = next_state_map or {}
-    use_exit = exit_buttons or ["close", "cancel", "done"]
+    # None means use default exit buttons, empty list [] means no exit buttons
+    use_exit = exit_buttons if exit_buttons is not None else ["close", "cancel", "done"]
 
     return _MessageDefinition(
         state_id=state_id,

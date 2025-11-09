@@ -14,6 +14,7 @@ from telethon import Button, events
 from pydantic import BaseModel, Field
 from dataclasses import dataclass
 from enum import Enum
+from ..common.log import Logger
 
 if TYPE_CHECKING:
     from telethon.tl.custom.conversation import Conversation
@@ -245,9 +246,9 @@ class MessageDefinition(BaseModel):
         default=None,
         description="Default next state if button not in map"
     )
-    exit_buttons: List[str] = Field(
-        default_factory=lambda: ["close", "cancel", "done"],
-        description="Button callback_data values that exit the flow"
+    exit_buttons: Optional[List[str]] = Field(
+        default=None,
+        description="Button callback_data values that exit the flow. None means use default ['close', 'cancel', 'done'], empty list [] means no exit buttons."
     )
     back_button: Optional[str] = Field(
         default=None,
@@ -475,6 +476,7 @@ class MessageFlow:
     
     def __init__(self):
         self.states: Dict[str, MessageDefinition] = {}
+        self.logger = Logger("MessageFlow")
     
     def add_state(self, message_def: MessageDefinition) -> None:
         """Add a message state to the flow."""
@@ -716,7 +718,9 @@ class MessageFlow:
                             button_data = result.data.decode('utf-8')
                             
                             # Check if it's in exit_buttons first
-                            if button_data in current_def.exit_buttons:
+                            # None means use default buttons, empty list means no exit buttons
+                            exit_buttons_to_check = current_def.exit_buttons if current_def.exit_buttons is not None else ["close", "cancel", "done"]
+                            if button_data in exit_buttons_to_check:
                                 return "__exit__"
                             
                             # Check if it's the back button
@@ -881,18 +885,47 @@ class MessageFlow:
             elif current_def.keyboard_builder:
                 button_callbacks = await current_def.keyboard_builder(flow_state, api, user_id)
             else:
-                button_callbacks = current_def.buttons or []
+                # Keep None as None (for exit states), otherwise use empty list
+                button_callbacks = current_def.buttons
+            
+            self.logger.trace(f"State: {current_def.state_id}, buttons_value={current_def.buttons}, button_callbacks={button_callbacks}")
+            self.logger.trace(f"State: {current_def.state_id}, exit_buttons={current_def.exit_buttons}")
             
             # Convert ButtonCallback objects to Telethon buttons
-            keyboard = [
-                [Button.inline(btn.text, btn.callback_data) for btn in row]
-                for row in button_callbacks
-            ]
+            # If button_callbacks is None, keep keyboard as None to remove buttons
+            if button_callbacks is None:
+                keyboard = None
+            else:
+                keyboard = [
+                    [Button.inline(btn.text, btn.callback_data) for btn in row]
+                    for row in button_callbacks
+                ]
+            
+            self.logger.trace(f"State: {current_def.state_id}, keyboard={'None' if keyboard is None else f'{len(keyboard)} rows'}, timeout={current_def.timeout}")
             
             # Determine action: send or edit
             action = current_def.action
             if action == MessageAction.AUTO:
                 action = MessageAction.EDIT if flow_state.current_message else MessageAction.SEND
+            
+            # Special handling for exit states (no buttons, short timeout)
+            # These should just edit the message and exit without waiting for response
+            if keyboard is None and current_def.timeout <= 2:
+                # This is an exit state - edit message with buttons removed and exit
+                self.logger.trace(f"EXIT STATE DETECTED: state_id={current_def.state_id}, timeout={current_def.timeout}, has_message={flow_state.current_message is not None}")
+                if flow_state.current_message:
+                    self.logger.trace(f"Editing message with remove_buttons=True")
+                    await api.conversation_manager.send_or_edit_message(
+                        user_id, text, flow_state.current_message, remove_buttons=True
+                    )
+                    self.logger.trace(f"Message edited successfully")
+                else:
+                    self.logger.trace(f"No current message to edit!")
+                # Wait for the timeout duration to let user see the message
+                self.logger.trace(f"Sleeping for {current_def.timeout} seconds")
+                await asyncio.sleep(current_def.timeout)
+                self.logger.trace(f"Exiting flow with success")
+                return True
             
             # Send or edit message and wait for response
             if action == MessageAction.SEND or flow_state.current_message is None:
@@ -906,20 +939,30 @@ class MessageFlow:
                 )
                 flow_state.current_message = message
             
+            self.logger.trace(f"Received button callback: data={data}")
+            
             # Handle timeout or no response
             if data is None:
+                self.logger.trace(f"No response received (timeout), exiting flow")
                 if flow_state.current_message:
                     await flow_state.current_message.delete()
                 return False
             
             # Handle pagination buttons
             if current_def.pagination_config:
+                self.logger.trace(f"Checking pagination buttons")
                 if await self._handle_pagination_button(data, flow_state, flow_state.current_state_id):
                     # Pagination button clicked, stay in same state and re-render
+                    self.logger.trace(f"Pagination button handled, re-rendering same state")
                     continue
+                self.logger.trace(f"Not a pagination button, continuing")
             
             # Check for exit buttons
-            if data in current_def.exit_buttons:
+            # None means use default buttons, empty list means no exit buttons
+            exit_buttons_to_check = current_def.exit_buttons if current_def.exit_buttons is not None else ["close", "cancel", "done"]
+            self.logger.trace(f"Checking exit buttons: data={data}, exit_buttons_config={current_def.exit_buttons}, exit_buttons_to_check={exit_buttons_to_check}, data_in_exit={data in exit_buttons_to_check}")
+            if data in exit_buttons_to_check:
+                self.logger.trace(f"EXIT BUTTON TRIGGERED: {data}")
                 # Call on_exit hook
                 if current_def.on_exit:
                     await current_def.on_exit(flow_state, api, user_id)
@@ -940,7 +983,9 @@ class MessageFlow:
                 return True
             
             # Check for back button
+            self.logger.trace(f"Checking back button: back_button={current_def.back_button}, data={data}, match={current_def.back_button and data == current_def.back_button}")
             if current_def.back_button and data == current_def.back_button:
+                self.logger.trace(f"BACK BUTTON triggered")
                 if flow_state.previous_state_id:
                     next_state_id = flow_state.previous_state_id
                     # Remove last state from history
@@ -948,43 +993,60 @@ class MessageFlow:
                         flow_state.state_history.pop()
                 else:
                     # No previous state, treat as exit
+                    self.logger.trace(f"No previous state, exiting")
                     return True
             else:
                 # Call on_button_press hook (can override next state)
                 next_state_id = None
+                self.logger.trace(f"Calling on_button_press handler: has_handler={current_def.on_button_press is not None}")
                 if current_def.on_button_press:
                     next_state_id = await current_def.on_button_press(data, flow_state, api, user_id)
+                    self.logger.trace(f"on_button_press returned: {next_state_id}")
                 
                 # If hook returned None, check button callbacks and next_state_map
                 if next_state_id is None:
+                    self.logger.trace(f"on_button_press returned None, checking button callbacks")
                     # Check button-specific callbacks
                     for row in button_callbacks:
                         for btn in row:
                             if btn.callback_data == data and btn.callback_handler:
+                                self.logger.trace(f"Found button-specific callback for {data}")
                                 next_state_id = await btn.callback_handler(flow_state, api, user_id)
+                                self.logger.trace(f"Button callback returned: {next_state_id}")
                                 break
                         if next_state_id:
                             break
                     
                     # Fall back to next_state_map
                     if next_state_id is None:
+                        self.logger.trace(f"Checking next_state_map: {current_def.next_state_map}")
                         next_state_id = current_def.next_state_map.get(data)
+                        self.logger.trace(f"next_state_map returned: {next_state_id}")
                     
                     # If still None, check if we should stay in same state or use default
                     if next_state_id is None:
                         # If button was handled but no state returned, stay in current state
-                        if data in [btn.callback_data for row in button_callbacks for btn in row]:
+                        all_button_callbacks = [btn.callback_data for row in button_callbacks for btn in row] if button_callbacks else []
+                        self.logger.trace(f"next_state_id still None, checking if button exists: all_callbacks={all_button_callbacks}")
+                        if data in all_button_callbacks:
                             # Re-render same state
+                            self.logger.trace(f"Button exists but no next state, re-rendering current state")
                             continue
                         # Otherwise use default_next_state
                         next_state_id = current_def.default_next_state
+                        self.logger.trace(f"Using default_next_state: {next_state_id}")
             
             # Validate next state exists
+            self.logger.trace(f"Final next_state_id: {next_state_id}, exists_in_states={next_state_id in self.states if next_state_id else False}")
             if next_state_id is None or next_state_id not in self.states:
                 # Invalid state, treat as exit
+                self.logger.trace(f"next_state_id={next_state_id} not found in states, exiting")
                 return False
             
+            self.logger.trace(f"Navigating from {flow_state.current_state_id} to {next_state_id}")
+            
             # Call on_exit hook
+            self.logger.trace(f"Calling on_exit hook: has_hook={current_def.on_exit is not None}")
             if current_def.on_exit:
                 await current_def.on_exit(flow_state, api, user_id)
             
@@ -992,6 +1054,8 @@ class MessageFlow:
             flow_state.previous_state_id = flow_state.current_state_id
             flow_state.state_history.append(flow_state.current_state_id)
             flow_state.current_state_id = next_state_id
+            
+            self.logger.trace(f"Successfully navigated to {next_state_id}")
     
     async def _show_notification(
         self,

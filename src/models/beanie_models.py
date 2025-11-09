@@ -103,25 +103,25 @@ class TelegramUser(base.TelegramUser, PassiveUser):
             return None
         
         # Only format/normalize here (no HTTP calls during model parsing/loading)
-        formatted_link = create_paypal_link(v)
+        formatted_link,_ = create_paypal_link(v)
         return formatted_link or None
 
     # Enforce PayPal link validation only when persisting changes
     @before_event(Insert)
-    def _validate_paypal_on_insert(self):
+    async def _validate_paypal_on_insert(self):
         if self.paypal_link:
-            formatted = create_paypal_link(self.paypal_link)
-            if not validate_paypal_link(formatted):
+            formatted, username = create_paypal_link(self.paypal_link)
+            if not await validate_paypal_link(formatted, username):
                 raise ValueError(f"PayPal link is not valid or doesn't exist: {formatted}")
             # ensure normalized form is stored
             self.paypal_link = formatted
 
     @before_event(Replace)
     @before_event(Save)
-    def _validate_paypal_on_save(self):
+    async def _validate_paypal_on_save(self):
         if self.paypal_link:
-            formatted = create_paypal_link(self.paypal_link)
-            if not validate_paypal_link(formatted):
+            formatted, username = create_paypal_link(self.paypal_link)
+            if not await validate_paypal_link(formatted, username):
                 raise ValueError(f"PayPal link is not valid or doesn't exist: {formatted}")
             self.paypal_link = formatted
     

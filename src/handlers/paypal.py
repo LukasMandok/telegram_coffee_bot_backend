@@ -5,8 +5,14 @@ This module contains PayPal-related utilities that can be used across the applic
 without causing circular imports.
 """
 
+import re
+import httpx
+from urllib.parse import urlparse
+from ..common.log import Logger
 
-def create_paypal_link(paypal_input: str) -> str:
+logger = Logger("PayPalValidator")
+
+def create_paypal_link(paypal_input: str) -> tuple[str, str]:
     """
     Create a normalized PayPal.me link from username or existing PayPal link.
 
@@ -14,7 +20,6 @@ def create_paypal_link(paypal_input: str) -> str:
     - Normalizes to: https://paypal.me/<username>
     - Strips extra path segments and trailing slashes
     """
-    from urllib.parse import urlparse
 
     raw = (paypal_input or "").strip()
     if not raw:
@@ -44,39 +49,48 @@ def create_paypal_link(paypal_input: str) -> str:
                 break
         username = raw.strip("/")
 
-    return f"https://paypal.me/{username}" if username else ""
+    return f"https://paypal.me/{username}" if username else "", username
 
 
-def validate_paypal_link(paypal_link: str) -> bool:
+
+URL_PATTERN = re.compile(r'^https://(www\.)?paypal\.me/[A-Za-z0-9._-]+$', re.I)
+OG_URL_PATTERN = re.compile(r'<meta property="og:url" content="([^"]+)"', re.I)
+
+async def validate_paypal_link(url: str, username: str | None = None) -> bool:
     """
-    Validate a PayPal.me link by checking if it exists.
-    
-    Args:
-        paypal_link: Full PayPal.me URL to validate
-        
+    Validate a PayPal.Me link.
+
     Returns:
-        True if the link is valid (returns 2xx/3xx), False otherwise
+        True if the link exists (og:url found) and username matches (if provided), False otherwise
     """
-    import requests
-    link = (paypal_link or "").strip()
-    if not link:
+    if not URL_PATTERN.match(url):
+        logger.debug(f"Invalid URL format: {url}")
         return False
 
-    try:
-        username = link.split("paypal.me/")[-1].split("/")[0]
-        if not username:
+    async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+        resp = await client.get(url)
+        if resp.status_code != 200:
+            logger.debug(f"{url} → HTTP {resp.status_code}")
             return False
-        url = f"https://www.paypal.com/paypalme/{username}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        }
-        r = requests.get(url, headers=headers, timeout=8.0, allow_redirects=True)
-        if r.status_code in (404, 410):
-            return False
-        if 200 <= r.status_code < 400:
-            return True
-        return False
-    except Exception:
-        return False
 
+        text = resp.text
+
+        # Extract og:url - if it exists, the PayPal account exists
+        og_url_match = OG_URL_PATTERN.search(text)
+        if not og_url_match:
+            logger.debug(f"No og:url found for {url} - account does not exist")
+            return False
+
+        og_url = og_url_match.group(1).lower()
+        logger.debug(f"Found og:url: {og_url}")
+        
+        # If username was provided, check if it's contained in the og:url
+        if username:
+            normalized_username = username.lower()
+            if normalized_username not in og_url:
+                logger.debug(f"Username '{username}' not found in og:url: {og_url}")
+                return False
+            logger.debug(f"Username '{username}' verified in og:url")
+        
+        logger.debug(f"PayPal.Me link valid: {url}")
+        return True
