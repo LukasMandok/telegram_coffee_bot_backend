@@ -9,9 +9,6 @@ WORKDIR /app
 COPY src/ /app/src
 COPY tests/ /app/tests
 
-# Copy .env file to the container
-COPY .env /app/.env
-
 # Install system dependencies
 RUN apt update && \
     apt install -y build-essential libffi-dev libssl-dev
@@ -22,10 +19,6 @@ RUN pip3 install --no-cache-dir -r /app/src/requirements.txt
 # Install Node.js and npm
 RUN apt install -y nodejs npm
 
-# Set the environment variables for the bot
-# TODO: Custom environment variables
-ENV BOT_TOKEN ${BOT_TOKEN}
-ENV BOT_HOST ${BOT_HOST}
 
 # Set user group as environment variables
 ENV PUID=1000

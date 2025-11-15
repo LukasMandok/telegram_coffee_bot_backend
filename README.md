@@ -1,7 +1,28 @@
-### Telegram Coffee Tally Bot
-python docker bot for managing a coffee list spreadsheet on google spreadsheet
+# Telegram Coffee Tally Bot
 
-#### Copyright Disclaimer:
+Python Docker bot for managing a coffee list with MongoDB and optional Google Sheets integration.
+
+## 🚀 Quick Start
+
+One-liner setup (Linux/Mac/Git Bash):
+```bash
+curl -L https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/scripts/setup.sh | bash
+```
+
+Or Windows (PowerShell):
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/scripts/setup.ps1" -OutFile "setup.ps1"; .\setup.ps1
+```
+
+## 📚 Documentation
+
+- **[scripts/README.md](scripts/README.md)** - Setup scripts and quick start guide
+- **[DOCKER.md](DOCKER.md)** - Docker deployment guide and advanced options
+- **[DEVELOPMENT.md](DEVELOPMENT.md)** - Development setup and guidelines
+
+---
+
+## Copyright Disclaimer
 This code for the docker deployment is mostly copied & adapted from **xstar97** using the **reddit-auto-reply** bot as a baseline:
 [Link to github repo](https://github.com/xstar97/reddit-auto-reply)
 
