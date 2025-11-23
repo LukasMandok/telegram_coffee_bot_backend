@@ -93,9 +93,20 @@ if ($setupMongo -match "^[Yy]$") {
     Write-Host "↪ Running MongoDB setup script now. This script is interactive and will prompt for credentials and options." -ForegroundColor Yellow
     & powershell.exe -ExecutionPolicy Bypass -File ".\setup_mongodb_temp.ps1"
 
-    # Extract connection string from the handshake file if it exists
+    # Extract connection string and variables from the handshake file if it exists
     $connectionLine = $null
-    if (Test-Path $handshake) { $connectionLine = Get-Content $handshake | Where-Object { $_ -match "MONGODB_CONNECTION=" } }
+    $mongoUser = $null; $mongoPass = $null; $mongoDB = $null; $mongoPort = $null
+    
+    if (Test-Path $handshake) { 
+        $content = Get-Content $handshake
+        $connectionLine = $content | Where-Object { $_ -match "MONGODB_CONNECTION=" }
+        
+        $mongoUser = ($content | Where-Object { $_ -match "MONGO_USERNAME=" } | Select-Object -First 1) -replace "MONGO_USERNAME=", ""
+        $mongoPass = ($content | Where-Object { $_ -match "MONGO_PASSWORD=" } | Select-Object -First 1) -replace "MONGO_PASSWORD=", ""
+        $mongoDB = ($content | Where-Object { $_ -match "MONGO_DATABASE=" } | Select-Object -First 1) -replace "MONGO_DATABASE=", ""
+        $mongoPort = ($content | Where-Object { $_ -match "MONGO_PORT=" } | Select-Object -First 1) -replace "MONGO_PORT=", ""
+    }
+    
     if ($connectionLine) {
         $dbUrl = ($connectionLine -split "=", 2)[1]
         Write-Host "Detected MongoDB connection: $dbUrl" -ForegroundColor Cyan
@@ -126,10 +137,14 @@ if (-not (Test-Path ".env")) {
     Write-Host "📝 Creating .env file from template..." -ForegroundColor Yellow
     Copy-Item ".env.example" ".env"
     
-    # Set the DATABASE_URL in .env
+    # Set the MongoDB variables in .env
     $envContent = Get-Content ".env"
-    # Update DATABASE_URL safely without regex replacement quirks
-    $envContent = $envContent | ForEach-Object { if ($_ -match '^DATABASE_URL=.*') { "DATABASE_URL=$dbUrl" } else { $_ } }
+    if ($mongoUser) { $envContent = $envContent -replace "MONGO_INITDB_ROOT_USERNAME=.*", "MONGO_INITDB_ROOT_USERNAME=$mongoUser" }
+    if ($mongoPass) { $envContent = $envContent -replace "MONGO_INITDB_ROOT_PASSWORD=.*", "MONGO_INITDB_ROOT_PASSWORD=$mongoPass" }
+    if ($mongoDB) { $envContent = $envContent -replace "MONGO_INITDB_DATABASE=.*", "MONGO_INITDB_DATABASE=$mongoDB" }
+    if ($mongoPort) { $envContent = $envContent -replace "MONGO_PORT=.*", "MONGO_PORT=$mongoPort" }
+    # Comment out DATABASE_URL
+    $envContent = $envContent -replace "^DATABASE_URL=", "# DATABASE_URL="
     $envContent | Set-Content ".env"
     
     Write-Host ""
@@ -142,7 +157,7 @@ if (-not (Test-Path ".env")) {
     Write-Host "  - BOT_HOST: Your bot host URL" -ForegroundColor Gray
     Write-Host "  - DEFAULT_ADMIN: Your Telegram user ID" -ForegroundColor Gray
     Write-Host ""
-    Write-Host "The DATABASE_URL has been set to: $dbUrl" -ForegroundColor Gray
+    Write-Host "The MongoDB configuration has been updated." -ForegroundColor Gray
     Write-Host ""
     
     # Open .env in default editor; prefer VS Code (code) if installed
@@ -160,16 +175,20 @@ if (-not (Test-Path ".env")) {
     Read-Host "Press Enter after you've edited and saved the .env file"
 } else {
     Write-Host "✅ .env file already exists" -ForegroundColor Green
-    # If a MongoDB setup was performed, offer to update the DATABASE_URL in the existing .env
+    # If a MongoDB setup was performed, offer to update the variables in the existing .env
     if ($setupMongo -match "^[Yy]$") {
-        $updateDbUrl = Read-Host "Do you want to update DATABASE_URL in the existing .env to the generated MongoDB connection? [Y/n]"
+        $updateDbUrl = Read-Host "Do you want to update MongoDB variables in the existing .env? [Y/n]"
         if ([string]::IsNullOrWhiteSpace($updateDbUrl)) { $updateDbUrl = "Y" }
         if ($updateDbUrl -match "^[Yy]$") {
             try {
                 $envContent = Get-Content ".env"
-                $envContent = $envContent -replace "DATABASE_URL=.*", "DATABASE_URL=$dbUrl"
+                if ($mongoUser) { $envContent = $envContent -replace "MONGO_INITDB_ROOT_USERNAME=.*", "MONGO_INITDB_ROOT_USERNAME=$mongoUser" }
+                if ($mongoPass) { $envContent = $envContent -replace "MONGO_INITDB_ROOT_PASSWORD=.*", "MONGO_INITDB_ROOT_PASSWORD=$mongoPass" }
+                if ($mongoDB) { $envContent = $envContent -replace "MONGO_INITDB_DATABASE=.*", "MONGO_INITDB_DATABASE=$mongoDB" }
+                if ($mongoPort) { $envContent = $envContent -replace "MONGO_PORT=.*", "MONGO_PORT=$mongoPort" }
+                $envContent = $envContent -replace "^DATABASE_URL=", "# DATABASE_URL="
                 $envContent | Set-Content ".env"
-                Write-Host "✅ DATABASE_URL updated in .env" -ForegroundColor Green
+                Write-Host "✅ MongoDB variables updated in .env" -ForegroundColor Green
             } catch {
                 Write-Host "⚠️ Could not update .env automatically, please edit it manually." -ForegroundColor Yellow
             }
@@ -194,12 +213,21 @@ if (-not (Test-Path ".env")) {
 
 Write-Host ""
 Write-Host "🐳 Pulling latest Docker image from GitHub Container Registry..." -ForegroundColor Yellow
-docker pull ghcr.io/lukasmandok/telegram_coffee_bot_backend:main
+# docker pull ghcr.io/lukasmandok/telegram_coffee_bot_backend:main
+
+# Download docker-compose.deploy.yml
+Write-Host "📥 Downloading docker-compose.deploy.yml..." -ForegroundColor Yellow
+try {
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/docker-compose.deploy.yml" -OutFile "docker-compose.deploy.yml" -ErrorAction Stop
+} catch {
+    Write-Host "❌ Failed to download docker-compose.deploy.yml. Check your internet / URL and try again." -ForegroundColor Red
+    exit 1
+}
 
 Write-Host ""
 Write-Host "🚀 Starting the bot..." -ForegroundColor Yellow
 
-# Stop and remove existing container if it exists
+# Stop and remove existing container if it exists (cleanup old manual runs)
 try {
     docker stop telegram-coffee-bot 2>$null
     docker rm telegram-coffee-bot 2>$null
@@ -207,13 +235,18 @@ try {
     # Container doesn't exist, continue
 }
 
-docker run -d `
-  --name telegram-coffee-bot `
-  --env-file .env `
-  --restart unless-stopped `
-  -p 8000:8000 `
-  -v "${PWD}/src:/app/src" `
-  ghcr.io/lukasmandok/telegram_coffee_bot_backend:main
+# Check for docker compose command
+$dockerComposeCmd = "docker-compose"
+try {
+    $null = docker compose version 2>$null
+    if ($LASTEXITCODE -eq 0) { $dockerComposeCmd = "docker compose" }
+} catch {
+    # Fallback to docker-compose
+}
+
+Write-Host "Using $dockerComposeCmd..." -ForegroundColor Cyan
+Invoke-Expression "$dockerComposeCmd -f docker-compose.deploy.yml pull"
+Invoke-Expression "$dockerComposeCmd -f docker-compose.deploy.yml up -d"
 
 # Validate and sanitize .env (trim whitespace and detect invalid keys)
 if (Test-Path ".env") {
@@ -233,22 +266,19 @@ if (Test-Path ".env") {
 
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green
-Write-Host "✅ Bot is now running!" -ForegroundColor Green
+Write-Host "✅ Bot is now running with Watchtower (Auto-Updates)!" -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "Container name: telegram-coffee-bot" -ForegroundColor White
+Write-Host "Container name: telegram_bot-coffee-bot-1 (or similar)" -ForegroundColor White
 if ($setupMongo -match "^[Yy]$") {
     Write-Host "MongoDB container: telegram-coffee-mongodb" -ForegroundColor White
 }
 Write-Host "API endpoint: http://localhost:8000" -ForegroundColor White
 Write-Host ""
 Write-Host "Useful commands:" -ForegroundColor Cyan
-Write-Host "  View bot logs:       docker logs telegram-coffee-bot" -ForegroundColor Gray
-Write-Host "  Follow bot logs:     docker logs -f telegram-coffee-bot" -ForegroundColor Gray
-Write-Host "  Stop bot:            docker stop telegram-coffee-bot" -ForegroundColor Gray
-Write-Host "  Start bot:           docker start telegram-coffee-bot" -ForegroundColor Gray
-Write-Host "  Restart bot:         docker restart telegram-coffee-bot" -ForegroundColor Gray
-Write-Host "  Remove bot:          docker rm -f telegram-coffee-bot" -ForegroundColor Gray
+Write-Host "  View bot logs:       $dockerComposeCmd -f docker-compose.deploy.yml logs -f coffee-bot" -ForegroundColor Gray
+Write-Host "  Stop bot:            $dockerComposeCmd -f docker-compose.deploy.yml down" -ForegroundColor Gray
+Write-Host "  Restart bot:         $dockerComposeCmd -f docker-compose.deploy.yml restart coffee-bot" -ForegroundColor Gray
 if ($setupMongo -match "^[Yy]$") {
     Write-Host ""
     Write-Host "MongoDB commands:" -ForegroundColor Cyan

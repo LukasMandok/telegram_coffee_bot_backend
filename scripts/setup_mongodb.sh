@@ -288,4 +288,8 @@ printf '%s\n' "Connection: mongodb://$MONGO_USERNAME:$MONGO_PASSWORD@localhost:$
 printf '%s\n' "$CONN_STR_FINAL"
 if [ -n "${MONGO_HANDSHAKE_FILE:-}" ]; then
     echo "$CONN_STR_FINAL" > "$MONGO_HANDSHAKE_FILE" || true
+    echo "MONGO_USERNAME=$MONGO_USERNAME" >> "$MONGO_HANDSHAKE_FILE" || true
+    echo "MONGO_PASSWORD=$MONGO_PASSWORD" >> "$MONGO_HANDSHAKE_FILE" || true
+    echo "MONGO_DATABASE=$MONGO_DATABASE" >> "$MONGO_HANDSHAKE_FILE" || true
+    echo "MONGO_PORT=$MONGO_PORT" >> "$MONGO_HANDSHAKE_FILE" || true
 fi

@@ -1,4 +1,5 @@
-from pydantic import PrivateAttr
+from typing import Optional
+from pydantic import PrivateAttr, model_validator
 from pydantic_settings import BaseSettings
 
 class AppConfig(BaseSettings):
@@ -18,10 +19,22 @@ class AppConfig(BaseSettings):
 
     # MONGODB
 
-    DATABASE_URL: str
+    MONGO_HOST: str = "localhost"
+    MONGO_PORT: int = 27017
     MONGO_INITDB_DATABASE: str
     MONGO_INITDB_ROOT_USERNAME: str
     MONGO_INITDB_ROOT_PASSWORD: str
+    
+    DATABASE_URL: Optional[str] = None
+
+    @model_validator(mode='after')
+    def assemble_db_connection(self) -> 'AppConfig':
+        if not self.DATABASE_URL:
+            self.DATABASE_URL = (
+                f"mongodb://{self.MONGO_INITDB_ROOT_USERNAME}:{self.MONGO_INITDB_ROOT_PASSWORD}"
+                f"@{self.MONGO_HOST}:{self.MONGO_PORT}/{self.MONGO_INITDB_DATABASE}?authSource=admin"
+            )
+        return self
     
     # CONFIGURATION
     

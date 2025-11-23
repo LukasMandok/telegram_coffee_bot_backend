@@ -97,6 +97,12 @@ fi
         if [ -f "$TMP_HANDSHAKE" ]; then
             CLEAN_OUTPUT=$(tr -d '\r' <"$TMP_HANDSHAKE" | sed -r 's/\x1B\[[0-9;]*[JKmsu]//g' || true)
             DB_URL=$(echo "$CLEAN_OUTPUT" | grep -a "MONGODB_CONNECTION=" | cut -d'=' -f2- || true)
+            
+            MONGO_USER=$(echo "$CLEAN_OUTPUT" | grep -a "MONGO_USERNAME=" | cut -d'=' -f2- || true)
+            MONGO_PASS=$(echo "$CLEAN_OUTPUT" | grep -a "MONGO_PASSWORD=" | cut -d'=' -f2- || true)
+            MONGO_DB=$(echo "$CLEAN_OUTPUT" | grep -a "MONGO_DATABASE=" | cut -d'=' -f2- || true)
+            MONGO_PORT=$(echo "$CLEAN_OUTPUT" | grep -a "MONGO_PORT=" | cut -d'=' -f2- || true)
+
             rm -f "$TMP_HANDSHAKE"
         fi
         # Escape DB_URL for safe insertion into .env (escape / and &)
@@ -132,13 +138,23 @@ if [ ! -f ".env" ]; then
     echo "📝 Creating .env file from template..."
     cp .env.example .env
     
-    # Set the DATABASE_URL in .env
+    # Set the MongoDB variables in .env
     if [[ "$OSTYPE" == "darwin"* ]]; then
         # macOS
-            sed -i '' "s|DATABASE_URL=.*|DATABASE_URL=$DB_URL_ESCAPED|g" .env
+        if [ -n "$MONGO_USER" ]; then sed -i '' "s|MONGO_INITDB_ROOT_USERNAME=.*|MONGO_INITDB_ROOT_USERNAME=$MONGO_USER|g" .env; fi
+        if [ -n "$MONGO_PASS" ]; then sed -i '' "s|MONGO_INITDB_ROOT_PASSWORD=.*|MONGO_INITDB_ROOT_PASSWORD=$MONGO_PASS|g" .env; fi
+        if [ -n "$MONGO_DB" ]; then sed -i '' "s|MONGO_INITDB_DATABASE=.*|MONGO_INITDB_DATABASE=$MONGO_DB|g" .env; fi
+        if [ -n "$MONGO_PORT" ]; then sed -i '' "s|MONGO_PORT=.*|MONGO_PORT=$MONGO_PORT|g" .env; fi
+        # Comment out DATABASE_URL if it exists
+        sed -i '' "s|^DATABASE_URL=|# DATABASE_URL=|g" .env
     else
         # Linux
-            sed -i "s|DATABASE_URL=.*|DATABASE_URL=$DB_URL_ESCAPED|g" .env
+        if [ -n "$MONGO_USER" ]; then sed -i "s|MONGO_INITDB_ROOT_USERNAME=.*|MONGO_INITDB_ROOT_USERNAME=$MONGO_USER|g" .env; fi
+        if [ -n "$MONGO_PASS" ]; then sed -i "s|MONGO_INITDB_ROOT_PASSWORD=.*|MONGO_INITDB_ROOT_PASSWORD=$MONGO_PASS|g" .env; fi
+        if [ -n "$MONGO_DB" ]; then sed -i "s|MONGO_INITDB_DATABASE=.*|MONGO_INITDB_DATABASE=$MONGO_DB|g" .env; fi
+        if [ -n "$MONGO_PORT" ]; then sed -i "s|MONGO_PORT=.*|MONGO_PORT=$MONGO_PORT|g" .env; fi
+        # Comment out DATABASE_URL if it exists
+        sed -i "s|^DATABASE_URL=|# DATABASE_URL=|g" .env
     fi
     
     echo ""
@@ -151,7 +167,7 @@ if [ ! -f ".env" ]; then
     echo "  - BOT_HOST: Your bot host URL"
     echo "  - DEFAULT_ADMIN: Your Telegram user ID"
     echo ""
-    echo "The DATABASE_URL has been set to: $DB_URL"
+    echo "The MongoDB configuration has been updated."
     echo ""
     
     # Try to open .env in a default editor: use 'code' (VS Code) if available, then 'nano', then 'vim'
@@ -169,17 +185,25 @@ if [ ! -f ".env" ]; then
     fi
 else
     echo "✅ .env file already exists"
-    # If a MongoDB setup was performed, ask to update DATABASE_URL in existing .env
+    # If a MongoDB setup was performed, ask to update variables in existing .env
     if [[ "$setup_mongo" =~ ^[Yy]$ ]]; then
-        read -p "Do you want to update DATABASE_URL in the existing .env to the generated MongoDB connection? [Y/n]: " update_dburl
-        update_dburl=${update_dburl:-Y}
-        if [[ "$update_dburl" =~ ^[Yy]$ ]]; then
+        read -p "Do you want to update MongoDB variables in the existing .env? [Y/n]: " update_db
+        update_db=${update_db:-Y}
+        if [[ "$update_db" =~ ^[Yy]$ ]]; then
             if [[ "$OSTYPE" == "darwin"* ]]; then
-                sed -i '' "s|DATABASE_URL=.*|DATABASE_URL=$DB_URL_ESCAPED|g" .env
+                if [ -n "$MONGO_USER" ]; then sed -i '' "s|MONGO_INITDB_ROOT_USERNAME=.*|MONGO_INITDB_ROOT_USERNAME=$MONGO_USER|g" .env; fi
+                if [ -n "$MONGO_PASS" ]; then sed -i '' "s|MONGO_INITDB_ROOT_PASSWORD=.*|MONGO_INITDB_ROOT_PASSWORD=$MONGO_PASS|g" .env; fi
+                if [ -n "$MONGO_DB" ]; then sed -i '' "s|MONGO_INITDB_DATABASE=.*|MONGO_INITDB_DATABASE=$MONGO_DB|g" .env; fi
+                if [ -n "$MONGO_PORT" ]; then sed -i '' "s|MONGO_PORT=.*|MONGO_PORT=$MONGO_PORT|g" .env; fi
+                sed -i '' "s|^DATABASE_URL=|# DATABASE_URL=|g" .env
             else
-                sed -i "s|DATABASE_URL=.*|DATABASE_URL=$DB_URL_ESCAPED|g" .env
+                if [ -n "$MONGO_USER" ]; then sed -i "s|MONGO_INITDB_ROOT_USERNAME=.*|MONGO_INITDB_ROOT_USERNAME=$MONGO_USER|g" .env; fi
+                if [ -n "$MONGO_PASS" ]; then sed -i "s|MONGO_INITDB_ROOT_PASSWORD=.*|MONGO_INITDB_ROOT_PASSWORD=$MONGO_PASS|g" .env; fi
+                if [ -n "$MONGO_DB" ]; then sed -i "s|MONGO_INITDB_DATABASE=.*|MONGO_INITDB_DATABASE=$MONGO_DB|g" .env; fi
+                if [ -n "$MONGO_PORT" ]; then sed -i "s|MONGO_PORT=.*|MONGO_PORT=$MONGO_PORT|g" .env; fi
+                sed -i "s|^DATABASE_URL=|# DATABASE_URL=|g" .env
             fi
-            echo "✅ DATABASE_URL updated in .env"
+            echo "✅ MongoDB variables updated in .env"
         fi
     fi
     # Prompt user to edit existing .env
@@ -202,7 +226,11 @@ fi
 
 echo ""
 echo "🐳 Pulling latest Docker image from GitHub Container Registry..."
-docker pull ghcr.io/lukasmandok/telegram_coffee_bot_backend:main
+# docker pull ghcr.io/lukasmandok/telegram_coffee_bot_backend:main
+
+# Download docker-compose.deploy.yml
+echo "📥 Downloading docker-compose.deploy.yml..."
+curl -fsSL -o docker-compose.deploy.yml https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/docker-compose.deploy.yml
 
 echo ""
 echo "🚀 Starting the bot..."
@@ -228,36 +256,40 @@ if [ -f ".env" ]; then
     else rm -f $TMP_ENV; echo "✅ .env validated"; fi
 fi
 
-# Stop and remove existing container if it exists
+# Stop and remove existing container if it exists (cleanup old manual runs)
 docker stop telegram-coffee-bot 2>/dev/null || true
 docker rm telegram-coffee-bot 2>/dev/null || true
 
-docker run -d \
-  --name telegram-coffee-bot \
-  --env-file .env \
-  --restart unless-stopped \
-  --network host \
-  -v "$(pwd)/src:/app/src" \
-  ghcr.io/lukasmandok/telegram_coffee_bot_backend:main
+# Check for docker compose command
+if docker compose version &>/dev/null; then
+    DOCKER_COMPOSE_CMD="docker compose"
+elif command -v docker-compose &>/dev/null; then
+    DOCKER_COMPOSE_CMD="docker-compose"
+else
+    echo "❌ Error: docker-compose is not installed."
+    echo "Please install docker-compose or update Docker Desktop."
+    exit 1
+fi
+
+echo "Using $DOCKER_COMPOSE_CMD..."
+$DOCKER_COMPOSE_CMD -f docker-compose.deploy.yml pull
+$DOCKER_COMPOSE_CMD -f docker-compose.deploy.yml up -d
 
 echo ""
 echo "=========================================="
-echo "✅ Bot is now running!"
+echo "✅ Bot is now running with Watchtower (Auto-Updates)!"
 echo "=========================================="
 echo ""
-echo "Container name: telegram-coffee-bot"
+echo "Container name: telegram_bot-coffee-bot-1 (or similar)"
 if [[ "$setup_mongo" =~ ^[Yy]$ ]]; then
     echo "MongoDB container: telegram-coffee-mongodb"
 fi
 echo "API endpoint: http://localhost:8000"
 echo ""
 echo "Useful commands:"
-echo "  View bot logs:       docker logs telegram-coffee-bot"
-echo "  Follow bot logs:     docker logs -f telegram-coffee-bot"
-echo "  Stop bot:            docker stop telegram-coffee-bot"
-echo "  Start bot:           docker start telegram-coffee-bot"
-echo "  Restart bot:         docker restart telegram-coffee-bot"
-echo "  Remove bot:          docker rm -f telegram-coffee-bot"
+echo "  View bot logs:       $DOCKER_COMPOSE_CMD -f docker-compose.deploy.yml logs -f coffee-bot"
+echo "  Stop bot:            $DOCKER_COMPOSE_CMD -f docker-compose.deploy.yml down"
+echo "  Restart bot:         $DOCKER_COMPOSE_CMD -f docker-compose.deploy.yml restart coffee-bot"
 if [[ "$setup_mongo" =~ ^[Yy]$ ]]; then
     echo ""
     echo "MongoDB commands:"

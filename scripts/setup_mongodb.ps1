@@ -261,4 +261,13 @@ Write-Host "  Restore: $RESTORE_SCRIPT -BackupFile 'path\to\backup.archive'" -Fo
 Write-Host ""
 
 # Return connection string for use by calling script
-Write-Output "MONGODB_CONNECTION=mongodb://$MONGO_USERNAME`:$MONGO_PASSWORD@localhost:$MONGO_PORT/$MONGO_DATABASE?authSource=admin"
+$connStr = "MONGODB_CONNECTION=mongodb://$MONGO_USERNAME`:$MONGO_PASSWORD@localhost:$MONGO_PORT/$MONGO_DATABASE?authSource=admin"
+Write-Output $connStr
+
+if ($env:MONGO_HANDSHAKE_FILE) {
+    $connStr | Out-File -FilePath $env:MONGO_HANDSHAKE_FILE -Encoding utf8
+    "MONGO_USERNAME=$MONGO_USERNAME" | Out-File -FilePath $env:MONGO_HANDSHAKE_FILE -Append -Encoding utf8
+    "MONGO_PASSWORD=$MONGO_PASSWORD" | Out-File -FilePath $env:MONGO_HANDSHAKE_FILE -Append -Encoding utf8
+    "MONGO_DATABASE=$MONGO_DATABASE" | Out-File -FilePath $env:MONGO_HANDSHAKE_FILE -Append -Encoding utf8
+    "MONGO_PORT=$MONGO_PORT" | Out-File -FilePath $env:MONGO_HANDSHAKE_FILE -Append -Encoding utf8
+}

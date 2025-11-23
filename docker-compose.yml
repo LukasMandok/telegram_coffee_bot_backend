@@ -24,7 +24,11 @@ services:
       - BOT_HOST=${BOT_HOST}
       - API_ID=${API_ID}
       - API_HASH=${API_HASH}
-      - DATABASE_URL=mongodb://admin:password123@host.docker.internal:27017/fastapi
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_INITDB_ROOT_USERNAME}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_INITDB_ROOT_PASSWORD}
+      - MONGO_INITDB_DATABASE=${MONGO_INITDB_DATABASE}
+      - MONGO_HOST=host.docker.internal
+      - MONGO_PORT=${MONGO_PORT:-27017}
     volumes:
       - ./src:/app/src
     develop:
