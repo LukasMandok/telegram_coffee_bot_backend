@@ -2,7 +2,9 @@
 # MongoDB Setup Script with Backup Configuration
 # This script sets up MongoDB in Docker with automated backups
 
+# Make script fail fast, yet disable interactive history expansion within this script
 set -e
+set +H
 
 echo "=========================================="
 echo "MongoDB Setup"
@@ -16,10 +18,93 @@ DEFAULT_RETENTION_DAYS=30
 DEFAULT_BACKUP_TIME="03:00"
 DEFAULT_USERNAME="admin"
 DEFAULT_PASSWORD="password123"
-DEFAULT_DATABASE="fastapi"
+DEFAULT_DATABASE="telegram_bot"
 DEFAULT_PORT=27017
 
-# Ask for MongoDB credentials
+## Detect existing MongoDB instance
+EXISTING_CONTAINER=""
+PORT_OPEN=false
+
+# 1) Exact container name (telegram-coffee-mongodb)
+if docker ps -a --format '{{.Names}}' | grep -q '^telegram-coffee-mongodb$'; then
+    EXISTING_CONTAINER="telegram-coffee-mongodb"
+fi
+
+# 2) Any container with "mongo" in the name (e.g., my-mongo, mongodb-service)
+if [ -z "$EXISTING_CONTAINER" ]; then
+    if docker ps -a --format '{{.Names}}' | grep -i -q 'mongo'; then
+        EXISTING_CONTAINER=$(docker ps -a --format '{{.Names}}' | grep -i 'mongo' | head -n1)
+    fi
+fi
+
+# 3) Any container whose image suggests MongoDB (images like 'mongo', 'bitnami/mongodb', etc.)
+if [ -z "$EXISTING_CONTAINER" ]; then
+    if docker ps -a --format '{{.Names}} {{.Image}}' | grep -Ei 'mongo($|:|\/|bitnami)' &>/dev/null; then
+        EXISTING_CONTAINER=$(docker ps -a --format '{{.Names}} {{.Image}}' | grep -Ei 'mongo($|:|\/|bitnami)' | head -n1 | awk '{print $1}')
+    fi
+fi
+
+# 4) Containers that have a host port mapping to 27017
+if [ -z "$EXISTING_CONTAINER" ]; then
+    CONTAINER_WITH_PORT=$(docker ps --format '{{.Names}} {{.Ports}}' | grep -E ':27017' | head -n1 | awk '{print $1}' || true)
+    if [ -n "$CONTAINER_WITH_PORT" ]; then
+        EXISTING_CONTAINER="$CONTAINER_WITH_PORT"
+    fi
+fi
+
+# 5) Host port 27017 open detection: ss, netstat, or /dev/tcp fallback
+if command -v ss &>/dev/null; then
+    if ss -ltn | grep -q ':27017'; then PORT_OPEN=true; fi
+elif command -v netstat &>/dev/null; then
+    if netstat -ltn | grep -q ':27017'; then PORT_OPEN=true; fi
+else
+    # fallback: try to connect with bash /dev/tcp if the shell supports it
+    if timeout 1 bash -c "</dev/tcp/127.0.0.1/27017" &>/dev/null; then PORT_OPEN=true; fi
+fi
+
+if [ -n "$EXISTING_CONTAINER" ] || [ "$PORT_OPEN" = true ]; then
+    echo "⚠️ Detected existing MongoDB instance:"
+    [[ -n "$EXISTING_CONTAINER" ]] && echo "  - Docker container: $EXISTING_CONTAINER (image: $(docker inspect --format '{{.Config.Image}}' $EXISTING_CONTAINER 2>/dev/null || true), ports: $(docker ps --format '{{.Names}} {{.Ports}}' | grep "^$EXISTING_CONTAINER" || true))"
+    [[ "$PORT_OPEN" == true ]] && echo "  - TCP port 27017 is open on this host"
+    read -p "Options: [S]kip use existing (default), [R]ecreate (delete container), [C]ontinue setup script (may overwrite): [S/r/c]: " mongo_action
+    mongo_action=${mongo_action:-S}
+    if [[ "$mongo_action" =~ ^[Ss]$ ]]; then
+        # Try to extract connection string from existing container
+        if [[ -n "$EXISTING_CONTAINER" ]]; then
+            MONGO_USERNAME=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$EXISTING_CONTAINER" | grep '^MONGO_INITDB_ROOT_USERNAME=' | cut -d'=' -f2- || true)
+            MONGO_PASSWORD=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$EXISTING_CONTAINER" | grep '^MONGO_INITDB_ROOT_PASSWORD=' | cut -d'=' -f2- || true)
+            MONGO_DATABASE=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$EXISTING_CONTAINER" | grep '^MONGO_INITDB_DATABASE=' | cut -d'=' -f2- || true)
+            MONGO_PORT=$(docker inspect --format '{{ if index .NetworkSettings.Ports "27017/tcp" }}{{ (index (index .NetworkSettings.Ports "27017/tcp") 0).HostPort }}{{ end }}' "$EXISTING_CONTAINER" || true)
+        fi
+        if [[ -z "$MONGO_PORT" ]]; then MONGO_PORT=27017; fi
+        if [[ -n "$MONGO_USERNAME" && -n "$MONGO_PASSWORD" ]]; then
+            echo "Using credentials from container"
+            CONN_STR="MONGODB_CONNECTION=mongodb://$MONGO_USERNAME:$MONGO_PASSWORD@localhost:$MONGO_PORT/$MONGO_DATABASE?authSource=admin"
+            echo "$CONN_STR"
+            if [ -n "${MONGO_HANDSHAKE_FILE:-}" ]; then
+                echo "$CONN_STR" > "$MONGO_HANDSHAKE_FILE" || true
+            fi
+            exit 0
+        else
+            echo "Could not extract credentials automatically. Please provide them to use the existing MongoDB instance." 
+            # fall through to prompt for credentials below
+        fi
+    elif [[ "$mongo_action" =~ ^[Rr]$ ]]; then
+        # Recreate: remove container and optionally remove volume
+        target="$EXISTING_CONTAINER"
+        read -p "Recreate container $target? This will remove it. Keep data volume? [Y/n]: " keep_vol
+        keep_vol=${keep_vol:-Y}
+        docker rm -f "$target" 2>/dev/null || true
+        if [[ ! "$keep_vol" =~ ^[Yy]$ ]]; then
+            docker volume rm telegram-coffee-mongodb-data 2>/dev/null || true
+        fi
+        echo "Continuing setup: recreating MongoDB container..."
+    else
+        echo "Continuing with MongoDB setup (interactive script)"
+    fi
+fi
+
+## Ask for MongoDB credentials
 read -p "MongoDB username [$DEFAULT_USERNAME]: " input_username
 MONGO_USERNAME=${input_username:-$DEFAULT_USERNAME}
 
@@ -83,7 +168,7 @@ mkdir -p "$SCRIPTS_DIR"
 
 # Download backup script from GitHub
 BACKUP_SCRIPT="$SCRIPTS_DIR/mongo_backup.sh"
-curl -L -o "$BACKUP_SCRIPT" https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/scripts/mongo_backup.sh
+curl -fsSL -o "$BACKUP_SCRIPT" https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/scripts/mongo_backup.sh
 
 # Replace placeholders in backup script
 if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -116,17 +201,22 @@ fi
 CRON_JOB="$BACKUP_HOUR $BACKUP_MINUTE * * * $BACKUP_SCRIPT >> $SCRIPTS_DIR/mongo_backup.log 2>&1"
 CRON_COMMENT="# Telegram Coffee Bot MongoDB Backup"
 
-# Remove existing cron job if it exists
-crontab -l 2>/dev/null | grep -v "mongo_backup.sh" | grep -v "Telegram Coffee Bot MongoDB Backup" | crontab - 2>/dev/null || true
-
-# Add new cron job
-(crontab -l 2>/dev/null; echo "$CRON_COMMENT"; echo "$CRON_JOB") | crontab -
-
-echo "✅ Automated backup scheduled at $BACKUP_TIME daily"
+# Set up cron job if available; otherwise show instructions
+if command -v crontab &>/dev/null; then
+    # Remove existing cron job if it exists
+    crontab -l 2>/dev/null | grep -a -v "mongo_backup.sh" | grep -a -v "Telegram Coffee Bot MongoDB Backup" | crontab - 2>/dev/null || true
+    # Add new cron job
+    (crontab -l 2>/dev/null; echo "$CRON_COMMENT"; echo "$CRON_JOB") | crontab -
+    echo "✅ Automated backup scheduled at $BACKUP_TIME daily"
+else
+    echo "⚠️  crontab not found on this host. Skipping automated cron setup."
+    echo "  Add the following line to your crontab to enable backups:" 
+    echo "    $CRON_JOB"
+fi
 
 # Download restore script from GitHub
 RESTORE_SCRIPT="$SCRIPTS_DIR/mongo_restore.sh"
-curl -L -o "$RESTORE_SCRIPT" https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/scripts/mongo_restore.sh
+curl -fsSL -o "$RESTORE_SCRIPT" https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/scripts/mongo_restore.sh
 
 # Replace placeholders in restore script
 if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -146,7 +236,7 @@ chmod +x "$RESTORE_SCRIPT"
 
 # Download README from GitHub
 README_FILE="$SCRIPTS_DIR/MONGODB_README.md"
-curl -L -o "$README_FILE" https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/scripts/MONGODB_README.md
+curl -fsSL -o "$README_FILE" https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/scripts/MONGODB_README.md
 
 # Replace placeholders in README
 if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -177,114 +267,12 @@ else
     sed -i "s|{{CREATED_DATE}}|$(date)|g" "$README_FILE"
 fi
 
-# Remove old heredoc content (will be skipped)
-cat > /dev/null << EOF
-# MongoDB Management Scripts
-
-## Overview
-
-This directory contains scripts for managing the Telegram Coffee Bot MongoDB instance.
-
-## Configuration
-
-- **Container Name:** telegram-coffee-mongodb
-- **Port:** $MONGO_PORT
-- **Database:** $MONGO_DATABASE
-- **Backup Directory:** $BACKUP_DIR
-- **Retention Period:** $RETENTION_DAYS days
-- **Backup Time:** Daily at $BACKUP_TIME
-
-## Scripts
-
-### mongo_backup.sh
-Performs a full MongoDB backup and saves it to the backup directory.
-
-**Usage:**
-\`\`\`bash
-$BACKUP_SCRIPT
-\`\`\`
-
-**Automated:** Runs daily at $BACKUP_TIME via cron
-
-### mongo_restore.sh
-Restores MongoDB from a backup file.
-
-**Usage:**
-\`\`\`bash
-$RESTORE_SCRIPT /path/to/backup.archive
-\`\`\`
-
-**List available backups:**
-\`\`\`bash
-ls -lh $BACKUP_DIR/
-\`\`\`
-
-## Useful Commands
-
-### View MongoDB logs
-\`\`\`bash
-docker logs telegram-coffee-mongodb
-docker logs -f telegram-coffee-mongodb  # follow logs
-\`\`\`
-
-### Connect to MongoDB shell
-\`\`\`bash
-docker exec -it telegram-coffee-mongodb mongosh -u $MONGO_USERNAME -p $MONGO_PASSWORD --authenticationDatabase admin
-\`\`\`
-
-### Stop/Start MongoDB
-\`\`\`bash
-docker stop telegram-coffee-mongodb
-docker start telegram-coffee-mongodb
-docker restart telegram-coffee-mongodb
-\`\`\`
-
-### View backup logs
-\`\`\`bash
-cat $SCRIPTS_DIR/mongo_backup.log
-tail -f $SCRIPTS_DIR/mongo_backup.log  # follow logs
-\`\`\`
-
-### Manual backup
-\`\`\`bash
-$BACKUP_SCRIPT
-\`\`\`
-
-### List cron jobs
-\`\`\`bash
-crontab -l
-\`\`\`
-
-### Edit cron jobs
-\`\`\`bash
-crontab -e
-\`\`\`
-
-## MongoDB Connection String
-
-\`\`\`
-mongodb://$MONGO_USERNAME:$MONGO_PASSWORD@localhost:$MONGO_PORT/$MONGO_DATABASE
-\`\`\`
-
-## Notes
-
-- Backups are stored in \`$BACKUP_DIR\`
-- Old backups are automatically deleted after $RETENTION_DAYS days
-- The MongoDB data is stored in a Docker volume: \`telegram-coffee-mongodb-data\`
-- To completely remove MongoDB and all data: \`docker rm -f telegram-coffee-mongodb && docker volume rm telegram-coffee-mongodb-data\`
-
----
-
-**Created:** $(date)
-**Author:** Telegram Coffee Bot Setup Script
-EOF
-
 echo ""
 echo "=========================================="
 echo "✅ MongoDB Setup Complete!"
 echo "=========================================="
 echo ""
-echo "Connection: mongodb://$MONGO_USERNAME:$MONGO_PASSWORD@localhost:$MONGO_PORT/$MONGO_DATABASE"
+CONN_STR_FINAL="MONGODB_CONNECTION=mongodb://$MONGO_USERNAME:$MONGO_PASSWORD@localhost:$MONGO_PORT/$MONGO_DATABASE?authSource=admin"
 echo "Backups: $BACKUP_DIR (retention: $RETENTION_DAYS days, scheduled: $BACKUP_TIME daily)"
 echo "Scripts: $SCRIPTS_DIR"
 echo ""
@@ -295,4 +283,9 @@ echo "  Restore: $RESTORE_SCRIPT /path/to/backup.archive"
 echo ""
 
 # Return connection string for use by calling script
-echo "MONGODB_CONNECTION=mongodb://$MONGO_USERNAME:$MONGO_PASSWORD@localhost:$MONGO_PORT/$MONGO_DATABASE"
+printf '%s\n' "Connection: mongodb://$MONGO_USERNAME:$MONGO_PASSWORD@localhost:$MONGO_PORT/$MONGO_DATABASE?authSource=admin"
+# Output the raw MONGO connection in a reliable way and write to handshake file if requested
+printf '%s\n' "$CONN_STR_FINAL"
+if [ -n "${MONGO_HANDSHAKE_FILE:-}" ]; then
+    echo "$CONN_STR_FINAL" > "$MONGO_HANDSHAKE_FILE" || true
+fi

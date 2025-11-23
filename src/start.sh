@@ -4,12 +4,15 @@
 
 cd /app
 
-# Check if DEBUG_MODE is set to true
-if [ "$DEBUG_MODE" = "true" ]; then
+# Check if DEBUG_MODE is set to true (case insensitive)
+# Use tr for POSIX compatibility since this runs with /bin/sh
+DEBUG_LOWER=$(echo "$DEBUG_MODE" | tr '[:upper:]' '[:lower:]')
+
+if [ "$DEBUG_LOWER" = "true" ]; then
     echo "--- Starting in DEBUG mode ---"
     export PYTHONPATH=/app
     # Start with debugpy, listening on port 5678
-    python -Xfrozen_modules=off -m debugpy --listen 0.0.0.0:5678 --wait-for-client -m src.main
+    python -Xfrozen_modules=off -m debugpy --listen 0.0.0.0:5678 -m src.main
 else
     echo "--- Starting in PRODUCTION mode ---"
     # Start web process in the foreground using gunicorn
