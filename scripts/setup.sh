@@ -211,18 +211,20 @@ if [ ! -f ".env" ]; then
         if [ "$INPUT_SOURCE" = "/dev/tty" ]; then
             echo -n "Press Enter to edit .env with nano, or Ctrl+C to edit manually..."
             read -r _ < /dev/tty
+            nano .env < /dev/tty
         else
             read -p "Press Enter to edit .env with nano, or Ctrl+C to edit manually..."
+            nano .env
         fi
-        nano .env
     elif command -v vim &> /dev/null; then
         if [ "$INPUT_SOURCE" = "/dev/tty" ]; then
             echo -n "Press Enter to edit .env with vim, or Ctrl+C to edit manually..."
             read -r _ < /dev/tty
+            vim .env < /dev/tty
         else
             read -p "Press Enter to edit .env with vim, or Ctrl+C to edit manually..."
+            vim .env
         fi
-        vim .env
     else
         if [ "$INPUT_SOURCE" = "/dev/tty" ]; then
             echo -n "Press Enter after you've edited the .env file..."
@@ -272,9 +274,9 @@ else
         if command -v code &> /dev/null; then
             code --wait .env
         elif command -v nano &> /dev/null; then
-            nano .env
+            if [ "$INPUT_SOURCE" = "/dev/tty" ]; then nano .env < /dev/tty; else nano .env; fi
         elif command -v vim &> /dev/null; then
-            vim .env
+            if [ "$INPUT_SOURCE" = "/dev/tty" ]; then vim .env < /dev/tty; else vim .env; fi
         else
             echo "No editor found (code/nano/vim). Please edit .env manually: ${PWD}/.env"
             if [ "$INPUT_SOURCE" = "/dev/tty" ]; then

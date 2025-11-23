@@ -177,13 +177,26 @@ if (-not (Test-Path ".env")) {
     
     # Open .env in default editor; prefer VS Code (code) if installed
     Write-Host "Opening .env file in default editor..." -ForegroundColor Yellow
-    try {
-        if (Get-Command code -ErrorAction SilentlyContinue) {
-            Start-Process code -ArgumentList '--wait', '.env'
+    $editorOpened = $false
+    if (Get-Command code -ErrorAction SilentlyContinue) {
+        try { Start-Process code -ArgumentList '--wait', '.env'; $editorOpened = $true } catch {}
+    }
+    
+    if (-not $editorOpened) {
+        if ($IsLinux) {
+            if (Get-Command nano -ErrorAction SilentlyContinue) {
+                if ([Console]::IsInputRedirected) { bash -c "nano .env < /dev/tty" } else { nano .env }
+                $editorOpened = $true
+            } elseif (Get-Command vim -ErrorAction SilentlyContinue) {
+                if ([Console]::IsInputRedirected) { bash -c "vim .env < /dev/tty" } else { vim .env }
+                $editorOpened = $true
+            }
         } else {
-            Start-Process notepad.exe ".env"
+            try { Start-Process notepad.exe ".env"; $editorOpened = $true } catch {}
         }
-    } catch {
+    }
+    
+    if (-not $editorOpened) {
         Write-Host "Could not open an editor automatically. Please edit .env manually: $(Join-Path (Get-Location) '.env')" -ForegroundColor Yellow
     }
     
@@ -221,14 +234,27 @@ if (-not (Test-Path ".env")) {
     if ([string]::IsNullOrWhiteSpace($editEnv)) { $editEnv = "n" }
     if ($editEnv -match "^[Yy]$") {
         Write-Host "Opening .env in default editor..." -ForegroundColor Yellow
-        try {
-            if (Get-Command code -ErrorAction SilentlyContinue) {
-                Start-Process code -ArgumentList '--wait', '.env'
+        $editorOpened = $false
+        if (Get-Command code -ErrorAction SilentlyContinue) {
+            try { Start-Process code -ArgumentList '--wait', '.env'; $editorOpened = $true } catch {}
+        }
+        
+        if (-not $editorOpened) {
+            if ($IsLinux) {
+                if (Get-Command nano -ErrorAction SilentlyContinue) {
+                    if ([Console]::IsInputRedirected) { bash -c "nano .env < /dev/tty" } else { nano .env }
+                    $editorOpened = $true
+                } elseif (Get-Command vim -ErrorAction SilentlyContinue) {
+                    if ([Console]::IsInputRedirected) { bash -c "vim .env < /dev/tty" } else { vim .env }
+                    $editorOpened = $true
+                }
             } else {
-                Start-Process notepad.exe ".env"
+                try { Start-Process notepad.exe ".env"; $editorOpened = $true } catch {}
             }
-        } catch {
-            Write-Host "Could not open Notepad automatically. Please edit .env manually: $(Join-Path (Get-Location) '.env')" -ForegroundColor Yellow
+        }
+        
+        if (-not $editorOpened) {
+            Write-Host "Could not open an editor automatically. Please edit .env manually: $(Join-Path (Get-Location) '.env')" -ForegroundColor Yellow
         }
         Read-Host "Press Enter after you've edited and saved the .env file"
     }
