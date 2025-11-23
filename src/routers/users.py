@@ -4,7 +4,7 @@ from fastapi_utils.cbv import cbv
 
 from ..schemas.user import TelegramUser
 from ..dependencies.dependencies import verify_token, get_repo
-from ..handlers.handlers import check_user, check_password, get_all_users
+from ..handlers.users import check_user, check_password, get_all_users
 from ..database.base_repo import BaseRepository
 from ..common.log import log_api_request, log_user_login_attempt, log_validation_error
 

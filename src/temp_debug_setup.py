@@ -19,7 +19,7 @@ Environment Variables:
 
 import asyncio
 from typing import List, Tuple
-from .handlers import handlers
+from .handlers import users as handlers
 from .dependencies.dependencies import get_repo
 from .common.log import log_database_error, Logger
 

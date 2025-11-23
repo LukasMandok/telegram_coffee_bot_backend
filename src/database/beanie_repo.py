@@ -43,7 +43,7 @@ class BeanieRepository(BaseRepository):
             # await DataBase.connect(uri = self.uri, db = "fastapi")
             # self.client = AsyncIOMotorClient(self.uri)
             self.client = AsyncMongoClient(self.uri)
-            self.db = self.client["fastapi"]
+            self.db = self.client[app_config.MONGO_INITDB_DATABASE]
 
             await init_beanie(self.db, document_models=[
                 models.BaseUser,
