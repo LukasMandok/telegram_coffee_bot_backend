@@ -58,14 +58,38 @@ fi
     elif [ -n "${setup_mongo:-}" ]; then
         setup_mongo="${setup_mongo}"
     fi
+
+    # Detect interactivity
     if [ -t 0 ]; then
+        IS_INTERACTIVE=true
+        INPUT_SOURCE="/dev/stdin"
+    elif [ -c /dev/tty ]; then
+        IS_INTERACTIVE=true
+        INPUT_SOURCE="/dev/tty"
+    else
+        IS_INTERACTIVE=false
+    fi
+
+    if [ "$IS_INTERACTIVE" = true ]; then
         echo "Do you want to set up MongoDB in a Docker container with automated backups? (y/n)"
         echo "Note: If you already have MongoDB running, select 'n'"
-        read -r -p "Setup MongoDB? [y/N]: " setup_mongo
+        
+        if [ "$INPUT_SOURCE" = "/dev/tty" ]; then
+            echo -n "Setup MongoDB? [y/N]: "
+            read -r setup_mongo < /dev/tty
+        else
+            read -r -p "Setup MongoDB? [y/N]: " setup_mongo
+        fi
         setup_mongo=${setup_mongo:-n}
     else
         setup_mongo=${setup_mongo:-n}
-        echo "Non-interactive: MongoDB setup will be skipped by default (set setup_mongo=y to override)"
+        echo "Non-interactive mode detected (running via pipe?)."
+        echo "   MongoDB setup is skipped by default because it requires user input."
+        echo "   To set up MongoDB, please download the script and run it directly:"
+        echo "     curl -L -o setup.sh https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/scripts/setup.sh"
+        echo "     chmod +x setup.sh"
+        echo "     ./setup.sh"
+        echo ""
     fi
 
     if [[ "$setup_mongo" =~ ^[Yy]$ ]]; then
@@ -91,7 +115,11 @@ fi
         TMP_HANDSHAKE=$(mktemp)
         export MONGO_HANDSHAKE_FILE="$TMP_HANDSHAKE"
     echo "↪ Running MongoDB setup script now. This script is interactive and will prompt for credentials and options."
-    bash ./setup_mongodb_temp.sh
+    if [ "$INPUT_SOURCE" = "/dev/tty" ]; then
+        bash ./setup_mongodb_temp.sh < /dev/tty
+    else
+        bash ./setup_mongodb_temp.sh
+    fi
 
         # If the child wrote the handshake file, read it and extract the DB URL
         if [ -f "$TMP_HANDSHAKE" ]; then
@@ -172,22 +200,47 @@ if [ ! -f ".env" ]; then
     
     # Try to open .env in a default editor: use 'code' (VS Code) if available, then 'nano', then 'vim'
     if command -v code &> /dev/null; then
-        read -p "Press Enter to edit .env with Visual Studio Code (code), or Ctrl+C to edit manually..."
+        if [ "$INPUT_SOURCE" = "/dev/tty" ]; then
+            echo -n "Press Enter to edit .env with Visual Studio Code (code), or Ctrl+C to edit manually..."
+            read -r _ < /dev/tty
+        else
+            read -p "Press Enter to edit .env with Visual Studio Code (code), or Ctrl+C to edit manually..."
+        fi
         code --wait .env
     elif command -v nano &> /dev/null; then
-        read -p "Press Enter to edit .env with nano, or Ctrl+C to edit manually..."
+        if [ "$INPUT_SOURCE" = "/dev/tty" ]; then
+            echo -n "Press Enter to edit .env with nano, or Ctrl+C to edit manually..."
+            read -r _ < /dev/tty
+        else
+            read -p "Press Enter to edit .env with nano, or Ctrl+C to edit manually..."
+        fi
         nano .env
     elif command -v vim &> /dev/null; then
-        read -p "Press Enter to edit .env with vim, or Ctrl+C to edit manually..."
+        if [ "$INPUT_SOURCE" = "/dev/tty" ]; then
+            echo -n "Press Enter to edit .env with vim, or Ctrl+C to edit manually..."
+            read -r _ < /dev/tty
+        else
+            read -p "Press Enter to edit .env with vim, or Ctrl+C to edit manually..."
+        fi
         vim .env
     else
-        read -p "Press Enter after you've edited the .env file..."
+        if [ "$INPUT_SOURCE" = "/dev/tty" ]; then
+            echo -n "Press Enter after you've edited the .env file..."
+            read -r _ < /dev/tty
+        else
+            read -p "Press Enter after you've edited the .env file..."
+        fi
     fi
 else
     echo "✅ .env file already exists"
     # If a MongoDB setup was performed, ask to update variables in existing .env
     if [[ "$setup_mongo" =~ ^[Yy]$ ]]; then
-        read -p "Do you want to update MongoDB variables in the existing .env? [Y/n]: " update_db
+        if [ "$INPUT_SOURCE" = "/dev/tty" ]; then
+            echo -n "Do you want to update MongoDB variables in the existing .env? [Y/n]: "
+            read -r update_db < /dev/tty
+        else
+            read -p "Do you want to update MongoDB variables in the existing .env? [Y/n]: " update_db
+        fi
         update_db=${update_db:-Y}
         if [[ "$update_db" =~ ^[Yy]$ ]]; then
             if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -207,7 +260,12 @@ else
         fi
     fi
     # Prompt user to edit existing .env
-    read -p "Do you want to edit .env now? [y/N]: " edit_env
+    if [ "$INPUT_SOURCE" = "/dev/tty" ]; then
+        echo -n "Do you want to edit .env now? [y/N]: "
+        read -r edit_env < /dev/tty
+    else
+        read -p "Do you want to edit .env now? [y/N]: " edit_env
+    fi
     edit_env=${edit_env:-n}
     if [[ "$edit_env" =~ ^[Yy]$ ]]; then
         # Try to open with an available editor; prefer code, then nano, then vim
@@ -219,7 +277,12 @@ else
             vim .env
         else
             echo "No editor found (code/nano/vim). Please edit .env manually: ${PWD}/.env"
-            read -p "Press Enter after you've edited the .env file..."
+            if [ "$INPUT_SOURCE" = "/dev/tty" ]; then
+                echo -n "Press Enter after you've edited the .env file..."
+                read -r _ < /dev/tty
+            else
+                read -p "Press Enter after you've edited the .env file..."
+            fi
         fi
     fi
 fi
@@ -251,7 +314,13 @@ if [ -f ".env" ]; then
         rm -f $TMP_ENV; exit 1
     fi
     if [ $CHANGED -eq 1 ]; then
-        read -p "Trim whitespace in .env keys/values (save backup)? [Y/n]: " apply_fix; apply_fix=${apply_fix:-Y}
+        if [ "$INPUT_SOURCE" = "/dev/tty" ]; then
+            echo -n "Trim whitespace in .env keys/values (save backup)? [Y/n]: "
+            read -r apply_fix < /dev/tty
+        else
+            read -p "Trim whitespace in .env keys/values (save backup)? [Y/n]: " apply_fix
+        fi
+        apply_fix=${apply_fix:-Y}
         if [[ "$apply_fix" =~ ^[Yy]$ ]]; then cp .env .env.bak && mv $TMP_ENV .env && echo "✅ .env sanitized (backup .env.bak)"; else rm -f $TMP_ENV; fi
     else rm -f $TMP_ENV; echo "✅ .env validated"; fi
 fi

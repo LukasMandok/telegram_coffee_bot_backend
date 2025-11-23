@@ -126,12 +126,19 @@ if ($setupMongo -match "^[Yy]$") {
 
 # Download .env.example if .env doesn't exist
 if (-not (Test-Path ".env")) {
-    Write-Host "📥 Downloading .env.example template..." -ForegroundColor Yellow
-    try {
-        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/.env.example" -OutFile ".env.example" -ErrorAction Stop
-    } catch {
-        Write-Host "❌ Failed to download .env.example. Check your internet / URL and try again." -ForegroundColor Red
-        exit 1
+    if (Test-Path ".env.example") {
+        Write-Host "   Using local .env.example" -ForegroundColor Cyan
+    } elseif (Test-Path "../.env.example") {
+        Write-Host "   Using local ../.env.example" -ForegroundColor Cyan
+        Copy-Item "../.env.example" ".env.example"
+    } else {
+        Write-Host "📥 Downloading .env.example template..." -ForegroundColor Yellow
+        try {
+            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/.env.example" -OutFile ".env.example" -ErrorAction Stop
+        } catch {
+            Write-Host "❌ Failed to download .env.example. Check your internet / URL and try again." -ForegroundColor Red
+            exit 1
+        }
     }
     
     Write-Host "📝 Creating .env file from template..." -ForegroundColor Yellow
@@ -142,7 +149,15 @@ if (-not (Test-Path ".env")) {
     if ($mongoUser) { $envContent = $envContent -replace "MONGO_INITDB_ROOT_USERNAME=.*", "MONGO_INITDB_ROOT_USERNAME=$mongoUser" }
     if ($mongoPass) { $envContent = $envContent -replace "MONGO_INITDB_ROOT_PASSWORD=.*", "MONGO_INITDB_ROOT_PASSWORD=$mongoPass" }
     if ($mongoDB) { $envContent = $envContent -replace "MONGO_INITDB_DATABASE=.*", "MONGO_INITDB_DATABASE=$mongoDB" }
-    if ($mongoPort) { $envContent = $envContent -replace "MONGO_PORT=.*", "MONGO_PORT=$mongoPort" }
+    
+    if ($mongoPort) {
+        if ($envContent -match "MONGO_PORT=") {
+            $envContent = $envContent -replace "MONGO_PORT=.*", "MONGO_PORT=$mongoPort"
+        } else {
+            $envContent += "MONGO_PORT=$mongoPort"
+        }
+    }
+
     # Comment out DATABASE_URL
     $envContent = $envContent -replace "^DATABASE_URL=", "# DATABASE_URL="
     $envContent | Set-Content ".env"
@@ -185,7 +200,15 @@ if (-not (Test-Path ".env")) {
                 if ($mongoUser) { $envContent = $envContent -replace "MONGO_INITDB_ROOT_USERNAME=.*", "MONGO_INITDB_ROOT_USERNAME=$mongoUser" }
                 if ($mongoPass) { $envContent = $envContent -replace "MONGO_INITDB_ROOT_PASSWORD=.*", "MONGO_INITDB_ROOT_PASSWORD=$mongoPass" }
                 if ($mongoDB) { $envContent = $envContent -replace "MONGO_INITDB_DATABASE=.*", "MONGO_INITDB_DATABASE=$mongoDB" }
-                if ($mongoPort) { $envContent = $envContent -replace "MONGO_PORT=.*", "MONGO_PORT=$mongoPort" }
+                
+                if ($mongoPort) {
+                    if ($envContent -match "MONGO_PORT=") {
+                        $envContent = $envContent -replace "MONGO_PORT=.*", "MONGO_PORT=$mongoPort"
+                    } else {
+                        $envContent += "MONGO_PORT=$mongoPort"
+                    }
+                }
+
                 $envContent = $envContent -replace "^DATABASE_URL=", "# DATABASE_URL="
                 $envContent | Set-Content ".env"
                 Write-Host "✅ MongoDB variables updated in .env" -ForegroundColor Green
@@ -216,12 +239,19 @@ Write-Host "🐳 Pulling latest Docker image from GitHub Container Registry..." 
 # docker pull ghcr.io/lukasmandok/telegram_coffee_bot_backend:main
 
 # Download docker-compose.deploy.yml
-Write-Host "📥 Downloading docker-compose.deploy.yml..." -ForegroundColor Yellow
-try {
-    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/docker-compose.deploy.yml" -OutFile "docker-compose.deploy.yml" -ErrorAction Stop
-} catch {
-    Write-Host "❌ Failed to download docker-compose.deploy.yml. Check your internet / URL and try again." -ForegroundColor Red
-    exit 1
+if (Test-Path "docker-compose.deploy.yml") {
+    Write-Host "   Using local docker-compose.deploy.yml" -ForegroundColor Cyan
+} elseif (Test-Path "../docker-compose.deploy.yml") {
+    Write-Host "   Using local ../docker-compose.deploy.yml" -ForegroundColor Cyan
+    Copy-Item "../docker-compose.deploy.yml" "docker-compose.deploy.yml"
+} else {
+    Write-Host "📥 Downloading docker-compose.deploy.yml..." -ForegroundColor Yellow
+    try {
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/docker-compose.deploy.yml" -OutFile "docker-compose.deploy.yml" -ErrorAction Stop
+    } catch {
+        Write-Host "❌ Failed to download docker-compose.deploy.yml. Check your internet / URL and try again." -ForegroundColor Red
+        exit 1
+    }
 }
 
 Write-Host ""
