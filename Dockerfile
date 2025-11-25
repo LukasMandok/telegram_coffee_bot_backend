@@ -10,14 +10,21 @@ COPY src/ /app/src
 COPY tests/ /app/tests
 
 # Install system dependencies
-RUN apt update && \
-    apt install -y build-essential libffi-dev libssl-dev
+# Combine updates and installs to keep the image clean and avoid "debconf" errors
+# Use --no-install-recommends to avoid installing huge unnecessary dependencies (like X11)
+RUN apt-get update && \
+    export DEBIAN_FRONTEND=noninteractive && \
+    apt-get install -y --no-install-recommends \
+    build-essential \
+    libffi-dev \
+    libssl-dev \
+    nodejs \
+    npm && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
 RUN pip3 install --no-cache-dir -r /app/src/requirements.txt
-
-# Install Node.js and npm
-RUN apt install -y nodejs npm
 
 
 # Set user group as environment variables
