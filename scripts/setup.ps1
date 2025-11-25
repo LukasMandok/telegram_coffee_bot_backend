@@ -8,6 +8,19 @@ Write-Host "Telegram Coffee Bot - Quick Setup" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
 
+# Create and enter installation directory (unless in dev/git environment)
+$installDir = "telegram_bot"
+if ((Test-Path ".git") -or (Test-Path "docker-compose.yml") -or (Test-Path "../docker-compose.yml")) {
+    Write-Host "ℹ️  Dev/Repo detected: Installing in current directory." -ForegroundColor Gray
+} else {
+    if (-not (Test-Path $installDir)) {
+        Write-Host "📁 Creating installation directory: $installDir" -ForegroundColor Cyan
+        New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+    }
+    Write-Host "📂 Entering directory: $installDir" -ForegroundColor Cyan
+    Set-Location $installDir
+}
+
 # Check required/optional dependencies
 $reqProgs = @('docker')
 $missing = @()

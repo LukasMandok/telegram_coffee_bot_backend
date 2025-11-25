@@ -11,6 +11,19 @@ echo "Telegram Coffee Bot - Quick Setup"
 echo "=========================================="
 echo ""
 
+# Create and enter installation directory (unless in dev/git environment)
+INSTALL_DIR="telegram_bot"
+if [ -d ".git" ] || [ -f "docker-compose.yml" ] || [ -f "../docker-compose.yml" ]; then
+    echo "ℹ️  Dev/Repo detected: Installing in current directory."
+else
+    if [ ! -d "$INSTALL_DIR" ]; then
+        echo "📁 Creating installation directory: $INSTALL_DIR"
+        mkdir -p "$INSTALL_DIR"
+    fi
+    echo "📂 Entering directory: $INSTALL_DIR"
+    cd "$INSTALL_DIR"
+fi
+
 # Check if Docker is installed
 if ! command -v docker &> /dev/null; then
     echo "❌ Error: Docker is not installed."
