@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import PrivateAttr, model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 class AppConfig(BaseSettings):
@@ -50,19 +50,14 @@ class AppConfig(BaseSettings):
     # Google API
     SERVICE_ACCOUNT_EMAIL: str
     SERVICE_ACCOUNT_PRIVATE_KEY: str
-    _SERVICE_ACCOUNT_PRIVATE_KEY: str = PrivateAttr()
     PROJECT_ID: str
     
     DEBUG_MODE: bool = False  # Enable debug mode for development/testing
     
-    @property
-    def SERVICE_ACCOUNT_PRIVATE_KEY(self):
-        return self._SERVICE_ACCOUNT_PRIVATE_KEY.replace('\\n', '\n')
-
-    @SERVICE_ACCOUNT_PRIVATE_KEY.setter
-    def SERVICE_ACCOUNT_PRIVATE_KEY(self, value):
-        self._SERVICE_ACCOUNT_PRIVATE_KEY = value
-        
+    @field_validator('SERVICE_ACCOUNT_PRIVATE_KEY')
+    @classmethod
+    def parse_private_key(cls, v: str) -> str:
+        return v.replace('\\n', '\n')
         
     class Config:
         env_file = './.env'

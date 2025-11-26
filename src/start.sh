@@ -4,6 +4,15 @@
 
 cd /app
 
+# Handle MongoDB Host for Docker
+# If MONGO_HOST is set to localhost or 127.0.0.1, it means the user intends to connect
+# to the MongoDB on the host machine (since this is running inside a container).
+# In Docker, we must use host.docker.internal to reach the host.
+if [ "$MONGO_HOST" = "localhost" ] || [ "$MONGO_HOST" = "127.0.0.1" ]; then
+    echo "--- Adjusting MONGO_HOST from '$MONGO_HOST' to 'host.docker.internal' for Docker environment ---"
+    export MONGO_HOST="host.docker.internal"
+fi
+
 # Check if DEBUG_MODE is set to true (case insensitive)
 # Use tr for POSIX compatibility since this runs with /bin/sh
 DEBUG_LOWER=$(echo "$DEBUG_MODE" | tr '[:upper:]' '[:lower:]')

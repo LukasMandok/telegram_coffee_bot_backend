@@ -163,6 +163,13 @@ if (-not (Test-Path ".env")) {
     if ($mongoPass) { $envContent = $envContent -replace "MONGO_INITDB_ROOT_PASSWORD=.*", "MONGO_INITDB_ROOT_PASSWORD=$mongoPass" }
     if ($mongoDB) { $envContent = $envContent -replace "MONGO_INITDB_DATABASE=.*", "MONGO_INITDB_DATABASE=$mongoDB" }
     
+    # Ensure MONGO_HOST is set to localhost for local setup
+    if ($envContent -match "MONGO_HOST=") {
+        $envContent = $envContent -replace "MONGO_HOST=.*", "MONGO_HOST=localhost"
+    } else {
+        $envContent += "MONGO_HOST=localhost"
+    }
+
     if ($mongoPort) {
         if ($envContent -match "MONGO_PORT=") {
             $envContent = $envContent -replace "MONGO_PORT=.*", "MONGO_PORT=$mongoPort"
@@ -227,6 +234,13 @@ if (-not (Test-Path ".env")) {
                 if ($mongoPass) { $envContent = $envContent -replace "MONGO_INITDB_ROOT_PASSWORD=.*", "MONGO_INITDB_ROOT_PASSWORD=$mongoPass" }
                 if ($mongoDB) { $envContent = $envContent -replace "MONGO_INITDB_DATABASE=.*", "MONGO_INITDB_DATABASE=$mongoDB" }
                 
+                # Ensure MONGO_HOST is set to localhost for local setup
+                if ($envContent -match "MONGO_HOST=") {
+                    $envContent = $envContent -replace "MONGO_HOST=.*", "MONGO_HOST=localhost"
+                } else {
+                    $envContent += "MONGO_HOST=localhost"
+                }
+
                 if ($mongoPort) {
                     if ($envContent -match "MONGO_PORT=") {
                         $envContent = $envContent -replace "MONGO_PORT=.*", "MONGO_PORT=$mongoPort"
