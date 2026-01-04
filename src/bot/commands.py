@@ -599,8 +599,6 @@ class CommandManager:
             
             "**Other:**\n"
             "• `/help` - Show this help message\n\n"
-            
-            "💡 **Tip:** Most commands use interactive inline keyboards for easy navigation!"
         )
         
         await self.api.message_manager.send_text(
