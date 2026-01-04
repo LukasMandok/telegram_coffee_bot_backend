@@ -8,10 +8,15 @@ This directory contains all setup and management scripts for the Telegram Coffee
 Main installation script that downloads and runs the pre-built Docker image.
 
 **Features:**
-- Downloads the latest Docker image from GitHub Container Registry
+- Downloads `docker-compose.deploy.yml` from GitHub
+- Pulls the latest Docker image from GitHub Container Registry (GHCR)
 - Optional MongoDB setup with automated backups
 - Creates and configures `.env` file
 - Starts the bot container
+
+**How updates work:**
+- **At install time:** the script runs `docker compose -f docker-compose.deploy.yml pull`.
+- **Afterwards (auto-update):** `docker-compose.deploy.yml` includes `watchtower`, which periodically checks for newer images and redeploys.
 
 **Usage:**
 ```bash
@@ -22,6 +27,24 @@ bash setup.sh
 # Windows PowerShell
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/scripts/setup.ps1" -OutFile "setup.ps1"
 .\setup.ps1
+```
+
+### One-liner vs interactive mode
+
+When you run `curl ... | bash`, stdin is often not interactive.
+The setup script still:
+- downloads `docker-compose.deploy.yml`
+- runs `docker compose pull` + `up -d`
+
+For prompts (MongoDB setup, editing `.env`), the script attempts to read from `/dev/tty` so it can still be interactive even when piped.
+If your environment provides no TTY (some CI/remote shells), prompts may be skipped.
+
+If you want the interactive MongoDB setup, download the script and run it locally (not piped):
+
+```bash
+curl -L -o setup.sh https://raw.githubusercontent.com/LukasMandok/telegram_coffee_bot_backend/main/scripts/setup.sh
+chmod +x setup.sh
+./setup.sh
 ```
 
 ### setup_mongodb.sh / setup_mongodb.ps1
@@ -72,6 +95,11 @@ Comprehensive documentation for MongoDB management.
 
 **Configuration:** Downloaded and configured by `setup_mongodb` script with your settings.
 
+### Google Sheets (optional)
+
+If you want Google Sheets backup, see:
+- `docs/google_sheets_setup.md`
+
 ## Quick Start
 
 **Option 1: One-line setup (Linux/Mac/Git Bash)**
@@ -117,3 +145,17 @@ All scripts use a template-based approach with placeholders:
 - MongoDB scripts are automatically configured during setup
 - Backup scripts respect your configured retention period
 - All scripts include error handling and user-friendly messages
+
+## Useful commands (after setup)
+
+```bash
+# Bot logs
+docker compose -f docker-compose.deploy.yml logs -f coffee-bot
+
+# Watchtower logs (auto-update)
+docker compose -f docker-compose.deploy.yml logs -f watchtower
+
+# Manual update
+docker compose -f docker-compose.deploy.yml pull
+docker compose -f docker-compose.deploy.yml up -d
+```

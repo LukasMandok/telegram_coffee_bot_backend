@@ -23,40 +23,44 @@ source venv/bin/activate
 
 ### 2. Install Dependencies
 ```bash
-pip install -r requirements.txt
+pip install -r src/requirements.txt
 ```
 
 ### 3. Environment Variables
 Create `.env` file with:
 ```
-# Database
-MONGODB_URL=mongodb://localhost:27017
-DATABASE_NAME=coffee_bot
+# Telegram
+API_ID=your_api_id
+API_HASH=your_api_hash
+BOT_TOKEN=your_bot_token
+BOT_HOST=http://localhost:8000
 
-# Telegram Bot
-TELEGRAM_API_ID=your_api_id
-TELEGRAM_API_HASH=your_api_hash
-TELEGRAM_BOT_TOKEN=your_bot_token
+# MongoDB
+MONGO_HOST=localhost
+MONGO_PORT=27017
+MONGO_INITDB_ROOT_USERNAME=admin
+MONGO_INITDB_ROOT_PASSWORD=change_me
+MONGO_INITDB_DATABASE=telegram_bot
+
+# App
+DEFAULT_ADMIN=your_telegram_user_id
+DEFAULT_PASSWORD=change_me
+DEBUG_MODE=False
+LOG_LEVEL=INFO
 
 # Google Sheets (optional)
-GOOGLE_SHEETS_CREDENTIALS_FILE=path_to_credentials.json
-GOOGLE_SHEETS_SPREADSHEET_ID=your_spreadsheet_id
-
-# Security
-SECRET_KEY=your_secret_key
-ALGORITHM=HS256
+GSHEET_SSID=your_spreadsheet_id
+SERVICE_ACCOUNT_EMAIL=your_service_account_email
+SERVICE_ACCOUNT_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n
+PROJECT_ID=your_gcp_project_id
 ```
+
+Tip: Use `.env.example` as the source of truth for variables.
 
 ## Running the Application
 
 ### Development Server
 ```bash
-# Make sure you're in the project root
-cd "c:\Users\Lukas\git\coffee bot\telegram_coffee_bot_backend"
-
-# Activate virtual environment
-venv\Scripts\activate
-
 # Start the FastAPI server
 python -m src.main
 
@@ -65,7 +69,7 @@ uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### Database Setup
-MongoDB should be running locally on port 27017, or update MONGODB_URL in .env
+MongoDB should be running locally on port 27017, or update `MONGO_HOST` / `MONGO_PORT` in `.env`.
 
 ## Key Components
 
@@ -78,10 +82,11 @@ MongoDB should be running locally on port 27017, or update MONGODB_URL in .env
 
 ### API Routes (src/routers/)
 - `coffee.py` - Coffee management endpoints
-- `auth.py` - Authentication endpoints
+- `users.py` - User endpoints
+- `admin.py` - Admin endpoints
 
 ### Telegram Bot (src/telegram/)
-- Telethon-based bot implementation
+Telethon-based bot implementation lives under `src/api/telethon_api.py` and `src/bot/`.
 
 ## API Endpoints
 - `GET /coffee/cards/` - Get active coffee cards
@@ -117,8 +122,8 @@ python -m pytest tests/test_coffee_handlers.py
 
 ### Common Issues
 1. **Import Errors**: Make sure virtual environment is activated
-2. **Database Connection**: Check MongoDB is running and MONGODB_URL is correct
-3. **Telegram API**: Verify API credentials in .env
+2. **Database Connection**: Check MongoDB is running and `MONGO_HOST` / `MONGO_PORT` are correct
+3. **Telegram API**: Verify `API_ID`, `API_HASH`, and `BOT_TOKEN` in `.env`
 4. **Link Attribute Errors**: Use `await document.fetch_link("field_name")` before accessing
 
 ### Debugging
