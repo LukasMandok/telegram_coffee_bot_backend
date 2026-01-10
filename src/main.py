@@ -13,7 +13,7 @@ from src.dependencies.dependencies import get_repo
 from src.common.log import log_app_startup, log_app_shutdown, log_database_connected, log_database_connection_failed, log_database_error
 from src.temp_debug_setup import run_debug_setup_if_enabled
 from src.bot.settings_manager import SettingsManager
-from src.services.gsheet_sync import run_periodic_gsheet_sync
+from src.services.gsheet_sync import run_periodic_gsheet_sync, warmup_gsheet_api
 # from .middlewares.middleware import SecurityMiddleware
 
 ### connecting bot 
@@ -34,8 +34,12 @@ async def lifespan(app: FastAPI):
     gsheet_task: asyncio.Task[None] | None = None
     
     try:
-        await mongodb.connect(app_config.DATABASE_URL)
-        log_database_connected(app_config.DATABASE_URL)
+        database_url = app_config.DATABASE_URL
+        if not database_url:
+            raise RuntimeError("DATABASE_URL is not set")
+
+        await mongodb.connect(database_url)
+        log_database_connected(database_url)
         
         # Run debug setup (dev-only operations like defaults and passive users)
         await run_debug_setup_if_enabled()
@@ -44,6 +48,7 @@ async def lifespan(app: FastAPI):
         await SettingsManager.initialize_log_settings_from_db()
 
         # Periodic one-way export to Google Sheets (optional)
+        await warmup_gsheet_api()
         gsheet_task = asyncio.create_task(run_periodic_gsheet_sync(stop_event=gsheet_stop_event))
         
     except Exception as e:

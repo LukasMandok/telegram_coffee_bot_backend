@@ -4,6 +4,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from gspread.utils import ValueInputOption
+import threading
 
 from ..config import app_config
 from ..common.log import (
@@ -37,7 +38,22 @@ GSHEET_SCOPES = [
 
 
 class GsheetAPI:
+    _instance: Optional["GsheetAPI"] = None
+    _instance_lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        # Singleton pattern similar to BeanieRepository: one instance per process.
+        if cls._instance is None:
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False  # type: ignore[attr-defined]
+        return cls._instance
+
     def __init__(self):
+        # Avoid re-initialization when GsheetAPI() is called multiple times.
+        if getattr(self, "_initialized", False):
+            return
         try:
             credentials = service_account.Credentials.from_service_account_info(
                 credentials_info,
@@ -46,6 +62,7 @@ class GsheetAPI:
             self.client = gspread.authorize(credentials)
             self.spreadsheet = self.client.open_by_key(app_config.GSHEET_SSID)
             log_gsheet_api_initialized()
+            self._initialized = True
         except Exception as e:
             log_gsheet_api_initialization_failed(f"{type(e).__name__}: {e!r}")
             raise

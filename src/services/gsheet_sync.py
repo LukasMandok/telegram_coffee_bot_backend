@@ -3,7 +3,11 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+import hashlib
+import json
+import time
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Optional, Set
 
 from beanie import Link as BeanieLink
 from gspread.utils import ValueInputOption
@@ -17,6 +21,35 @@ from src.models.beanie_models import AppSettings
 
 
 logger = Logger("GsheetSync")
+
+
+# In-process cache of the last exported snapshot, keyed by worksheet title.
+# This is intentionally not persisted: it speeds up periodic sync runs and
+# reduces unnecessary Google Sheets API calls.
+_LAST_EXPORTED_SIGNATURE_BY_WORKSHEET: Dict[str, str] = {}
+_LAST_EXPORTED_WORKSHEET_ORDER: List[str] = []
+
+
+# Keep all Google Sheets operations on a single worker thread.
+# This allows caching the GsheetAPI client (and avoids re-initializing it)
+# while keeping the async event loop responsive.
+_GSHEET_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gsheet")
+
+# Prevent overlapping syncs in-process (e.g. periodic sync + manual /sync)
+# from writing older snapshots after newer ones.
+_SYNC_LOCK = asyncio.Lock()
+
+
+async def warmup_gsheet_api() -> None:
+    """Initialize the Google Sheets client early (startup warmup)."""
+    loop = asyncio.get_running_loop()
+
+    def _warm() -> None:
+        api = GsheetAPI()
+        # One metadata call to validate access and warm up HTTP/session.
+        _ = api.spreadsheet.fetch_sheet_metadata()
+
+    await loop.run_in_executor(_GSHEET_EXECUTOR, _warm)
 
 
 @dataclass(frozen=True)
@@ -67,84 +100,18 @@ def _format_percent(numerator: int, denominator: int) -> str:
     return f"{(numerator / denominator) * 100:.2f}%"
 
 
-def _calculate_missing_coffee_corrections(
-    *,
+async def _build_payload_for_card(
     card: CoffeeCard,
-    correction_method: str,
-    correction_threshold: int,
-) -> Dict[str, float]:
-    """Return mapping stable_id -> correction amount for this card."""
-    remaining_coffees = max(0, int(card.remaining_coffees))
-    if remaining_coffees <= 0:
-        return {}
-
-    remaining_cost = float(remaining_coffees) * float(card.cost_per_coffee)
-
-    correction_method = (correction_method or "absolute").strip().lower()
-
-    eligible_coffees: Dict[str, int] = {}
-    for stable_id, stats in card.consumer_stats.items():
-        if int(stats.total_coffees or 0) <= 0:
-            continue
-        if int(stats.total_coffees or 0) >= int(correction_threshold):
-            eligible_coffees[stable_id] = int(stats.total_coffees or 0)
-
-    if not eligible_coffees:
-        return {}
-
-    if correction_method == "absolute":
-        per_user = remaining_cost / len(eligible_coffees)
-        return {stable_id: per_user for stable_id in eligible_coffees.keys()}
-
-    if correction_method == "proportional":
-        total_eligible_coffees = sum(eligible_coffees.values())
-        if total_eligible_coffees <= 0:
-            return {}
-        return {
-            stable_id: remaining_cost * (coffees / total_eligible_coffees)
-            for stable_id, coffees in eligible_coffees.items()
-        }
-
-    return {}
-
-
-async def _build_payload_for_card(card: CoffeeCard) -> CardSheetPayload:
-    await card.fetch_link("purchaser")
-    purchaser = card.purchaser  # type: ignore
-
-    purchaser_stable_id = getattr(purchaser, "stable_id", "")
-    purchaser_name = getattr(purchaser, "display_name", "")
-    paypal_link = getattr(purchaser, "paypal_link", None) or ""
+    *,
+    purchaser: Optional[object],
+    now_iso: str,
+    debts_by_stable_id: Dict[str, UserDebt],
+) -> CardSheetPayload:
+    purchaser_stable_id = getattr(purchaser, "stable_id", "") if purchaser else ""
+    purchaser_name = getattr(purchaser, "display_name", "") if purchaser else ""
+    paypal_link = (getattr(purchaser, "paypal_link", None) if purchaser else None) or ""
 
     total_consumed = sum(max(0, stats.total_coffees) for stats in card.consumer_stats.values())
-
-    # Calculate expected corrections for active cards if no debts exist.
-    # Uses the same settings source as the DebtManager (AppSettings.debt).
-    app_settings = await AppSettings.find_one()
-    if not app_settings:
-        app_settings = AppSettings()
-        await app_settings.insert()
-    correction_method = app_settings.debt.correction_method
-    correction_threshold = int(app_settings.debt.correction_threshold)
-    corrections_by_user = _calculate_missing_coffee_corrections(
-        card=card,
-        correction_method=correction_method,
-        correction_threshold=correction_threshold,
-    )
-
-    # Prefer persisted debts (corrections/paid amounts) whenever they exist.
-    # Even for active cards, debt docs can exist (e.g. previews/manual updates),
-    # so we always try to load them.
-    debts_by_stable_id: Dict[str, UserDebt] = {}
-    debts = await UserDebt.find(UserDebt.coffee_card == card, fetch_links=True).to_list()  # type: ignore
-    for debt in debts:
-        debtor = debt.debtor  # type: ignore
-        if isinstance(debtor, BeanieLink):
-            debtor = await PassiveUser.get(debtor.ref.id) or await TelegramUser.get(debtor.ref.id)
-
-        stable_id = getattr(debtor, "stable_id", "")
-        if stable_id:
-            debts_by_stable_id[stable_id] = debt
 
     user_rows: List[CardUserRow] = []
     for stable_id, stats in card.consumer_stats.items():
@@ -172,8 +139,8 @@ async def _build_payload_for_card(card: CoffeeCard) -> CardSheetPayload:
                 paid = float(debt.paid_amount)
                 cost = float(debt.base_amount)
             else:
-                # Active cards (no debts yet) or missing debt record
-                correction = float(corrections_by_user.get(stable_id, 0.0))
+                # No debt record -> don't invent corrections; keep correction 0.
+                correction = 0.0
                 total_debt = float(cost)
                 paid = 0.0
 
@@ -210,9 +177,30 @@ async def _build_payload_for_card(card: CoffeeCard) -> CardSheetPayload:
         remaining_coffees=int(card.remaining_coffees),
         cost_per_coffee=float(card.cost_per_coffee),
         total_cost=float(card.total_cost),
-        updated_at_iso=datetime.now().isoformat(timespec="seconds"),
+        updated_at_iso=now_iso,
         rows=user_rows,
     )
+
+
+def _grid_signature(grid: List[List[Any]]) -> str:
+    """Return a stable signature for a rendered grid.
+
+    We intentionally ignore the "Last updated" timestamp cell to allow skipping
+    Sheets updates when the underlying data hasn't changed.
+    """
+
+    normalized: List[List[Any]] = []
+    for r_idx, row in enumerate(grid):
+        normalized_row: List[Any] = []
+        for c_idx, value in enumerate(row):
+            if r_idx == 1 and c_idx == 4:
+                normalized_row.append("")
+            else:
+                normalized_row.append(value)
+        normalized.append(normalized_row)
+
+    payload = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _payload_to_grid(payload: CardSheetPayload) -> List[List[Any]]:
@@ -314,29 +302,14 @@ def _payload_to_grid(payload: CardSheetPayload) -> List[List[Any]]:
     return grid
 
 
-def _find_existing_chart_ids(spreadsheet: Any, sheet_id: int) -> List[int]:
-    """Return chart IDs already attached to the given sheet."""
-    metadata = spreadsheet.fetch_sheet_metadata()
-    for sheet in metadata.get("sheets", []):
-        props = sheet.get("properties", {})
-        if props.get("sheetId") == sheet_id:
-            charts = sheet.get("charts", [])
-            return [int(c.get("chartId")) for c in charts if c.get("chartId") is not None]
-    return []
-
-
-def _find_existing_protected_range_ids(spreadsheet: Any, sheet_id: int) -> List[int]:
-    """Return protectedRange IDs already attached to the given sheet."""
-    metadata = spreadsheet.fetch_sheet_metadata()
-    for sheet in metadata.get("sheets", []):
-        props = sheet.get("properties", {})
-        if props.get("sheetId") == sheet_id:
-            protected_ranges = sheet.get("protectedRanges", [])
-            return [int(r.get("protectedRangeId")) for r in protected_ranges if r.get("protectedRangeId") is not None]
-    return []
-
-
-def _apply_layout_chart_and_protection(*, api: GsheetAPI, worksheet: Any, payload: CardSheetPayload) -> None:
+def _apply_layout_chart_and_protection(
+    *,
+    api: GsheetAPI,
+    worksheet: Any,
+    payload: CardSheetPayload,
+    chart_ids_by_sheet_id: Dict[int, List[int]],
+    protected_range_ids_by_sheet_id: Dict[int, List[int]],
+) -> None:
     sheet_id = int(worksheet._properties.get("sheetId"))
 
     data_row_count = len(payload.rows)
@@ -344,13 +317,13 @@ def _apply_layout_chart_and_protection(*, api: GsheetAPI, worksheet: Any, payloa
     # Delete existing charts on this worksheet to avoid duplicates.
     delete_chart_requests = [
         {"deleteEmbeddedObject": {"objectId": chart_id}}
-        for chart_id in _find_existing_chart_ids(api.spreadsheet, sheet_id)
+        for chart_id in chart_ids_by_sheet_id.get(sheet_id, [])
     ]
 
     # Delete existing protections on this worksheet to avoid duplicates.
     delete_protection_requests = [
         {"deleteProtectedRange": {"protectedRangeId": pr_id}}
-        for pr_id in _find_existing_protected_range_ids(api.spreadsheet, sheet_id)
+        for pr_id in protected_range_ids_by_sheet_id.get(sheet_id, [])
     ]
 
     # Format ranges (0-based indices)
@@ -647,19 +620,86 @@ def _write_payloads_to_gsheet(payloads: List[CardSheetPayload]) -> None:
 
     payloads_sorted = sorted(payloads, key=lambda p: p.created_at, reverse=True)
 
+    metadata = api.spreadsheet.fetch_sheet_metadata()
+    existing_titles: Set[str] = {
+        str(s.get("properties", {}).get("title"))
+        for s in metadata.get("sheets", [])
+        if s.get("properties", {}).get("title") is not None
+    }
+
+    chart_ids_by_sheet_id: Dict[int, List[int]] = {}
+    protected_range_ids_by_sheet_id: Dict[int, List[int]] = {}
+    for sheet in metadata.get("sheets", []):
+        props = sheet.get("properties", {})
+        sheet_id = props.get("sheetId")
+        if sheet_id is None:
+            continue
+
+        charts = sheet.get("charts", [])
+        chart_ids_by_sheet_id[int(sheet_id)] = [
+            int(c.get("chartId")) for c in charts if c.get("chartId") is not None
+        ]
+
+        protected_ranges = sheet.get("protectedRanges", [])
+        protected_range_ids_by_sheet_id[int(sheet_id)] = [
+            int(r.get("protectedRangeId"))
+            for r in protected_ranges
+            if r.get("protectedRangeId") is not None
+        ]
+
+    updated_count = 0
+    skipped_count = 0
+
     for payload in payloads_sorted:
-        worksheet = api._get_or_create_worksheet(payload.worksheet_title)
-        worksheet.clear()
         grid = _payload_to_grid(payload)
         if not grid:
+            logger.debug(f"Skip worksheet (empty grid): title={payload.worksheet_title}")
             continue
+
+        signature = _grid_signature(grid)
+        cached = _LAST_EXPORTED_SIGNATURE_BY_WORKSHEET.get(payload.worksheet_title)
+        if payload.worksheet_title in existing_titles and cached == signature:
+            logger.debug(f"Skip worksheet (cache hit): title={payload.worksheet_title}")
+            logger.trace(f"Cache signature: title={payload.worksheet_title} sig={signature}")
+            skipped_count += 1
+            continue
+
+        if payload.worksheet_title in existing_titles:
+            logger.debug(
+                f"Update worksheet (cache miss): title={payload.worksheet_title} prev_sig={'set' if cached else 'none'}"
+            )
+            logger.trace(
+                f"Update signatures: title={payload.worksheet_title} prev={cached or ''} new={signature}"
+            )
+        else:
+            logger.debug(f"Create worksheet: title={payload.worksheet_title}")
+
+        worksheet = api._get_or_create_worksheet(payload.worksheet_title)
+        worksheet.clear()
 
         worksheet.update(values=grid, range_name="A1", value_input_option=ValueInputOption.user_entered)
 
         # Apply layout styling, chart and protection after values exist
-        _apply_layout_chart_and_protection(api=api, worksheet=worksheet, payload=payload)
+        _apply_layout_chart_and_protection(
+            api=api,
+            worksheet=worksheet,
+            payload=payload,
+            chart_ids_by_sheet_id=chart_ids_by_sheet_id,
+            protected_range_ids_by_sheet_id=protected_range_ids_by_sheet_id,
+        )
 
-    _reorder_card_worksheets(api=api, card_titles=[p.worksheet_title for p in payloads_sorted])
+        _LAST_EXPORTED_SIGNATURE_BY_WORKSHEET[payload.worksheet_title] = signature
+        updated_count += 1
+
+    card_titles = [p.worksheet_title for p in payloads_sorted]
+    global _LAST_EXPORTED_WORKSHEET_ORDER
+    if card_titles != _LAST_EXPORTED_WORKSHEET_ORDER:
+        _reorder_card_worksheets(api=api, card_titles=card_titles)
+        _LAST_EXPORTED_WORKSHEET_ORDER = card_titles
+
+    logger.info(
+        f"Gsheet export done: updated={updated_count} skipped={skipped_count} total={len(payloads_sorted)}"
+    )
 
 
 def _reorder_card_worksheets(*, api: GsheetAPI, card_titles: List[str]) -> None:
@@ -695,15 +735,108 @@ def _reorder_card_worksheets(*, api: GsheetAPI, card_titles: List[str]) -> None:
 
 
 async def sync_all_cards_once() -> None:
-    log_gsheet_sync_started("Coffee Cards")
+    async with _SYNC_LOCK:
+        log_gsheet_sync_started("Coffee Cards")
 
-    cards = await CoffeeCard.find(fetch_links=False).to_list()
-    payloads: List[CardSheetPayload] = []
+        start_ts = time.perf_counter()
+        logger.debug("Sync snapshot: start")
 
-    for card in cards:
-        payloads.append(await _build_payload_for_card(card))
+    # Snapshot all DB data up-front so the export isn't influenced by concurrent updates.
+        now_iso = datetime.now().isoformat(timespec="seconds")
 
-    await asyncio.to_thread(_write_payloads_to_gsheet, payloads)
+        cards = await CoffeeCard.find(fetch_links=False).to_list()
+
+        logger.debug(f"Snapshot loaded: cards={len(cards)}")
+
+        purchaser_ids: Set[Any] = set()
+        card_ids: List[Any] = []
+        for card in cards:
+            card_ids.append(card.id)
+            purchaser = getattr(card, "purchaser", None)
+            if isinstance(purchaser, BeanieLink):
+                purchaser_ids.add(purchaser.ref.id)
+
+    # Load all debts for all cards in one query.
+        debts = (
+            await UserDebt.find({"coffee_card.$id": {"$in": card_ids}}, fetch_links=False).to_list()  # type: ignore[arg-type]
+            if card_ids
+            else []
+        )
+
+        logger.debug(f"Snapshot loaded: debts={len(debts)}")
+
+        debtor_ids: Set[Any] = set()
+        for debt in debts:
+            debtor = getattr(debt, "debtor", None)
+            if isinstance(debtor, BeanieLink):
+                debtor_ids.add(debtor.ref.id)
+
+    # Resolve purchaser + debtor stable_ids in bulk.
+        user_ids = list(set(purchaser_ids) | debtor_ids)
+        passive_users = await PassiveUser.find({"_id": {"$in": user_ids}}).to_list() if user_ids else []
+        telegram_users = await TelegramUser.find({"_id": {"$in": user_ids}}).to_list() if user_ids else []
+
+        logger.debug(
+            f"Snapshot loaded: users_total={len(user_ids)} passive={len(passive_users)} telegram={len(telegram_users)}"
+        )
+
+        users_by_id: Dict[Any, object] = {}
+        stable_id_by_id: Dict[Any, str] = {}
+        for user in [*passive_users, *telegram_users]:
+            user_id = getattr(user, "id", None)
+            if user_id is None:
+                continue
+            users_by_id[user_id] = user
+            stable_id_by_id[user_id] = str(getattr(user, "stable_id", ""))
+
+        debts_by_card_and_stable_id: Dict[str, Dict[str, UserDebt]] = {}
+        for debt in debts:
+            card_link = getattr(debt, "coffee_card", None)
+            debtor_link = getattr(debt, "debtor", None)
+            if not isinstance(card_link, BeanieLink) or not isinstance(debtor_link, BeanieLink):
+                continue
+
+            card_id = str(card_link.ref.id)
+            debtor_id = debtor_link.ref.id
+            stable_id = stable_id_by_id.get(debtor_id, "")
+            if not stable_id:
+                continue
+
+            debts_by_card_and_stable_id.setdefault(card_id, {})[stable_id] = debt
+
+        logger.trace(
+            f"Snapshot indexed: cards_with_debts={len(debts_by_card_and_stable_id)}",
+        )
+
+        payload_tasks = []
+        for card in cards:
+            purchaser_obj: Optional[object] = None
+            purchaser = getattr(card, "purchaser", None)
+            if isinstance(purchaser, BeanieLink):
+                purchaser_obj = users_by_id.get(purchaser.ref.id)
+            else:
+                purchaser_obj = purchaser
+
+            payload_tasks.append(
+                _build_payload_for_card(
+                    card,
+                    purchaser=purchaser_obj,
+                    now_iso=now_iso,
+                    debts_by_stable_id=debts_by_card_and_stable_id.get(str(card.id), {}),
+                )
+            )
+
+        logger.debug(f"Building payloads: count={len(payload_tasks)}")
+        payloads = await asyncio.gather(*payload_tasks)
+
+        elapsed_snapshot = time.perf_counter() - start_ts
+        logger.debug(f"Payloads built: count={len(payloads)} elapsed_s={elapsed_snapshot:.2f}")
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(_GSHEET_EXECUTOR, _write_payloads_to_gsheet, payloads)
+
+        total_elapsed = time.perf_counter() - start_ts
+        logger.debug(f"Sync finished: elapsed_s={total_elapsed:.2f}")
 
 
 async def run_periodic_gsheet_sync(*, stop_event: asyncio.Event) -> None:
