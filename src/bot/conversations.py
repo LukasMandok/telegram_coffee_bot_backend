@@ -1032,156 +1032,156 @@ class ConversationManager:
         
         return True
 
-    @managed_conversation("setup_paypal_link", 120, use_existing_conv=True)
-    async def setup_paypal_link_subconversation_old(self, user_id: int, conv: Conversation, state: ConversationState, user: "TelegramUser", show_current: bool = True) -> bool:
-        """
-        Reusable subconversation to set up or change PayPal link for a user.
+    # @managed_conversation("setup_paypal_link", 120, use_existing_conv=True)
+    # async def setup_paypal_link_subconversation_old(self, user_id: int, conv: Conversation, state: ConversationState, user: "TelegramUser", show_current: bool = True) -> bool:
+    #     """
+    #     Reusable subconversation to set up or change PayPal link for a user.
         
-        Args:
-            user_id: User ID
-            conv: Active conversation (provided by decorator)
-            state: Conversation state (provided by decorator)
-            user: "TelegramUser" object
-            show_current: Whether to show current link and offer change/keep options
+    #     Args:
+    #         user_id: User ID
+    #         conv: Active conversation (provided by decorator)
+    #         state: Conversation state (provided by decorator)
+    #         user: "TelegramUser" object
+    #         show_current: Whether to show current link and offer change/keep options
             
-        Returns:
-            True if PayPal link was set up successfully, False otherwise
-        """
-        # If user has existing link and we should show it, offer options
-        if user.paypal_link and show_current:
-            from telethon import Button
+    #     Returns:
+    #         True if PayPal link was set up successfully, False otherwise
+    #     """
+    #     # If user has existing link and we should show it, offer options
+    #     if user.paypal_link and show_current:
+    #         from telethon import Button
             
-            current_link_text = (
-                f"💳 **Current PayPal Link**\n\n"
-                f"Your current PayPal link: {user.paypal_link}\n\n"
-                f"What would you like to do?"
-            )
+    #         current_link_text = (
+    #             f"💳 **Current PayPal Link**\n\n"
+    #             f"Your current PayPal link: {user.paypal_link}\n\n"
+    #             f"What would you like to do?"
+    #         )
             
-            keyboard = [
-                [Button.inline("🔄 Change Link", b"change_link")],
-                [Button.inline("✅ Keep Current", b"keep_current")],
-                [Button.inline("❌ Cancel", b"cancel")]
-            ]
+    #         keyboard = [
+    #             [Button.inline("🔄 Change Link", b"change_link")],
+    #             [Button.inline("✅ Keep Current", b"keep_current")],
+    #             [Button.inline("❌ Cancel", b"cancel")]
+    #         ]
             
-            data, message = await self.send_keyboard_and_wait_response(
-                conv, user_id, current_link_text, keyboard, 60
-            )
+    #         data, message = await self.send_keyboard_and_wait_response(
+    #             conv, user_id, current_link_text, keyboard, 60
+    #         )
             
-            if data is None or data == "cancel":
-                await self.send_or_edit_message(user_id, "❌ PayPal setup cancelled.", message, remove_buttons=True)
-                return False
+    #         if data is None or data == "cancel":
+    #             await self.send_or_edit_message(user_id, "❌ PayPal setup cancelled.", message, remove_buttons=True)
+    #             return False
             
-            if data == "keep_current":
-                await self.send_or_edit_message(
-                    user_id, 
-                    f"✅ Keeping your current PayPal link: {user.paypal_link}", 
-                    message, 
-                    remove_buttons=True
-                )
-                return True
+    #         if data == "keep_current":
+    #             await self.send_or_edit_message(
+    #                 user_id, 
+    #                 f"✅ Keeping your current PayPal link: {user.paypal_link}", 
+    #                 message, 
+    #                 remove_buttons=True
+    #             )
+    #             return True
             
-            # If "change_link" is selected, continue to setup
-            await self.send_or_edit_message(
-                user_id, 
-                "🔄 **Changing PayPal Link**\n\nLet's set up your new PayPal link.", 
-                message, 
-                remove_buttons=True
-            )
-        else:
-            # Show setup message
-            if user.paypal_link:
-                setup_message = "💳 **PayPal Link Update**\n\nLet's update your PayPal link."
-            else:
-                setup_message = (
-                    "💳 **PayPal Setup Required**\n\n"
-                    "To proceed, we need your PayPal information for payments."
-                )
+    #         # If "change_link" is selected, continue to setup
+    #         await self.send_or_edit_message(
+    #             user_id, 
+    #             "🔄 **Changing PayPal Link**\n\nLet's set up your new PayPal link.", 
+    #             message, 
+    #             remove_buttons=True
+    #         )
+    #     else:
+    #         # Show setup message
+    #         if user.paypal_link:
+    #             setup_message = "💳 **PayPal Link Update**\n\nLet's update your PayPal link."
+    #         else:
+    #             setup_message = (
+    #                 "💳 **PayPal Setup Required**\n\n"
+    #                 "To proceed, we need your PayPal information for payments."
+    #             )
             
-            await self.api.message_manager.send_text(
-                user_id, 
-                f"{setup_message}\n\n"
-                "Please provide either:\n"
-                "• Your PayPal username (e.g., `LukasMandok`)\n"
-                "• Your full PayPal.me link (e.g., `https://paypal.me/LukasMandok`)\n\n"
-                "ℹ️ Don't know your PayPal.me link? Check: https://www.paypal.com/myaccount/profile/",
-                True, True
-            )
+    #         await self.api.message_manager.send_text(
+    #             user_id, 
+    #             f"{setup_message}\n\n"
+    #             "Please provide either:\n"
+    #             "• Your PayPal username (e.g., `LukasMandok`)\n"
+    #             "• Your full PayPal.me link (e.g., `https://paypal.me/LukasMandok`)\n\n"
+    #             "ℹ️ Don't know your PayPal.me link? Check: https://www.paypal.com/myaccount/profile/",
+    #             True, True
+    #         )
         
-        max_attempts = 3
-        attempts = 0
+    #     max_attempts = 3
+    #     attempts = 0
         
-        while attempts < max_attempts:
-            paypal_event = await self.send_text_and_wait_message(
-                conv, user_id, "Enter your PayPal username or PayPal.me link:", 60
-            )
-            paypal_input = paypal_event.message.message.strip()
+    #     while attempts < max_attempts:
+    #         paypal_event = await self.send_text_and_wait_message(
+    #             conv, user_id, "Enter your PayPal username or PayPal.me link:", 60
+    #         )
+    #         paypal_input = paypal_event.message.message.strip()
 
-            if not paypal_input:
-                await self.api.message_manager.send_text(
-                    user_id, "❌ PayPal information is required to proceed.", True, True
-                )
-                return False
+    #         if not paypal_input:
+    #             await self.api.message_manager.send_text(
+    #                 user_id, "❌ PayPal information is required to proceed.", True, True
+    #             )
+    #             return False
 
-            try:
-                # Validate & format the PayPal input BEFORE assigning to the model or saving
-                self.logger.info(f"User input: {paypal_input}", extra_tag="PayPal Setup")
-                formatted, username = create_paypal_link(paypal_input)
-                self.logger.info(f"Normalized link: {formatted}", extra_tag="PayPal Setup")
-                is_valid = False
-                validation_error = None
-                try:
-                    is_valid = await validate_paypal_link(formatted, username)
-                except Exception as ve:
-                    validation_error = ve
-                    self.logger.error(f"Exception during validation", extra_tag="PayPal Setup", exc=ve)
+    #         try:
+    #             # Validate & format the PayPal input BEFORE assigning to the model or saving
+    #             self.logger.info(f"User input: {paypal_input}", extra_tag="PayPal Setup")
+    #             formatted, username = create_paypal_link(paypal_input)
+    #             self.logger.info(f"Normalized link: {formatted}", extra_tag="PayPal Setup")
+    #             is_valid = False
+    #             validation_error = None
+    #             try:
+    #                 is_valid = await validate_paypal_link(formatted, username)
+    #             except Exception as ve:
+    #                 validation_error = ve
+    #                 self.logger.error(f"Exception during validation", extra_tag="PayPal Setup", exc=ve)
 
-                self.logger.info(f"Validation result: {is_valid}", extra_tag="PayPal Setup")
+    #             self.logger.info(f"Validation result: {is_valid}", extra_tag="PayPal Setup")
 
-                if not is_valid:
-                    # Treat as validation failure; do NOT assign or save
-                    error_msg = f"PayPal link is not valid or doesn't exist."
-                    if validation_error:
-                        error_msg += f"\nError: {validation_error}"
-                    raise ValueError(error_msg)
+    #             if not is_valid:
+    #                 # Treat as validation failure; do NOT assign or save
+    #                 error_msg = f"PayPal link is not valid or doesn't exist."
+    #                 if validation_error:
+    #                     error_msg += f"\nError: {validation_error}"
+    #                 raise ValueError(error_msg)
 
-                # Only assign and save when validated
-                user.paypal_link = formatted
-                await user.save()
+    #             # Only assign and save when validated
+    #             user.paypal_link = formatted
+    #             await user.save()
 
-                await self.api.message_manager.send_text(
-                    user_id, f"✅ PayPal link validated and saved: {user.paypal_link}", True, True
-                )
-                return True
+    #             await self.api.message_manager.send_text(
+    #                 user_id, f"✅ PayPal link validated and saved: {user.paypal_link}", True, True
+    #             )
+    #             return True
 
-            except Exception as e:
-                # Field validation failed or other error; do NOT persist invalid value
-                self.logger.error(f"Exception during PayPal setup", extra_tag="PayPal Setup", exc=e)
-                attempts += 1
-                remaining = max_attempts - attempts
+    #         except Exception as e:
+    #             # Field validation failed or other error; do NOT persist invalid value
+    #             self.logger.error(f"Exception during PayPal setup", extra_tag="PayPal Setup", exc=e)
+    #             attempts += 1
+    #             remaining = max_attempts - attempts
 
-                error_details = f"\nError: {e}" if e else ""
+    #             error_details = f"\nError: {e}" if e else ""
 
-                if remaining > 0:
-                    await self.api.message_manager.send_text(
-                        user_id,
-                        "❌ The PayPal link you entered is not valid or does not exist.\n\n"
-                        "Please check:\n"
-                        "• Is your username correct?\n"
-                        "• Does your PayPal.me link exist?\n"
-                        "• Visit: https://www.paypal.com/myaccount/profile/\n\n"
-                        f"You have {remaining} attempt(s) remaining." + error_details,
-                        True, True
-                    )
-                else:
-                    await self.api.message_manager.send_text(
-                        user_id,
-                        "❌ Maximum attempts reached. PayPal setup failed.\n"
-                        "Please try again later or contact support." + error_details,
-                        True, True
-                    )
-                    return False
+    #             if remaining > 0:
+    #                 await self.api.message_manager.send_text(
+    #                     user_id,
+    #                     "❌ The PayPal link you entered is not valid or does not exist.\n\n"
+    #                     "Please check:\n"
+    #                     "• Is your username correct?\n"
+    #                     "• Does your PayPal.me link exist?\n"
+    #                     "• Visit: https://www.paypal.com/myaccount/profile/\n\n"
+    #                     f"You have {remaining} attempt(s) remaining." + error_details,
+    #                     True, True
+    #                 )
+    #             else:
+    #                 await self.api.message_manager.send_text(
+    #                     user_id,
+    #                     "❌ Maximum attempts reached. PayPal setup failed.\n"
+    #                     "Please try again later or contact support." + error_details,
+    #                     True, True
+    #                 )
+    #                 return False
         
-        return False
+    #     return False
 
 
 

@@ -237,6 +237,15 @@ class MessageDefinition(BaseModel):
         description="Remove buttons when exiting this state"
     )
     
+    # Terminal behavior
+    auto_exit_after_render: bool = Field(
+        default=False,
+        description=(
+            "If True, render this state once (edit/send) and then exit the flow. "
+            "This is an explicit alternative to the legacy heuristic of 'no buttons + short timeout'."
+        )
+    )
+    
     # Navigation
     next_state_map: Dict[str, str] = Field(
         default_factory=dict,
@@ -477,6 +486,25 @@ class MessageFlow:
     def __init__(self):
         self.states: Dict[str, MessageDefinition] = {}
         self.logger = Logger("MessageFlow")
+
+    async def _wait_filtered_callback(
+        self,
+        conv: "Conversation",
+        user_id: int,
+        api: Any,
+        timeout: int,
+    ) -> Any:
+        """Wait for a callback query using the same filtering as legacy conversations.
+
+        This preserves existing safety behavior (scoped to the user/session) and avoids
+        accidental cross-user/cross-message callback capture.
+        """
+        # ConversationManager.receive_button_response uses the project-specific filter.
+        # We request the raw event so callers can decide whether/when to answer.
+        _data, event = await api.conversation_manager.receive_button_response(
+            conv, user_id, timeout=timeout, return_event=True
+        )
+        return event
     
     def add_state(self, message_def: MessageDefinition) -> None:
         """Add a message state to the flow."""
@@ -692,8 +720,18 @@ class MessageFlow:
                     # Allow both text and buttons
                     
                     # Create tasks
-                    text_task = asyncio.create_task(conv.wait_event(events.NewMessage(incoming=True), timeout=current_def.input_timeout))
-                    callback_task = asyncio.create_task(conv.wait_event(events.CallbackQuery(), timeout=current_def.input_timeout)) if cancel_keyboard else None
+                    # Text path uses ConversationManager to keep /cancel semantics identical.
+                    text_task = asyncio.create_task(
+                        api.conversation_manager.receive_message(conv, user_id, timeout=current_def.input_timeout)
+                    )
+                    # Callback path uses the filtered wait helper to avoid capturing unrelated callbacks.
+                    callback_task = (
+                        asyncio.create_task(
+                            self._wait_filtered_callback(conv, user_id, api, timeout=current_def.input_timeout)
+                        )
+                        if cancel_keyboard
+                        else None
+                    )
                     
                     if callback_task:
                         done, pending = await asyncio.wait(
@@ -908,23 +946,25 @@ class MessageFlow:
             if action == MessageAction.AUTO:
                 action = MessageAction.EDIT if flow_state.current_message else MessageAction.SEND
             
-            # Special handling for exit states (no buttons, short timeout)
-            # These should just edit the message and exit without waiting for response
-            if keyboard is None and current_def.timeout <= 2:
-                # This is an exit state - edit message with buttons removed and exit
-                self.logger.trace(f"EXIT STATE DETECTED: state_id={current_def.state_id}, timeout={current_def.timeout}, has_message={flow_state.current_message is not None}")
+            # Special handling for terminal/exit states.
+            # Preserve legacy behavior: existing ExitStateBuilder used the heuristic
+            # (keyboard is None and timeout <= 2). We add an explicit flag
+            # `auto_exit_after_render` to support explicit terminal states without
+            # relying on the heuristic. Either condition triggers the same behavior.
+            is_legacy_exit = keyboard is None and current_def.timeout <= 2
+            is_explicit_exit = current_def.auto_exit_after_render
+            if is_legacy_exit or is_explicit_exit:
+                self.logger.trace(
+                    f"EXIT STATE DETECTED: state_id={current_def.state_id}, legacy={is_legacy_exit}, explicit={is_explicit_exit}, timeout={current_def.timeout}, has_message={flow_state.current_message is not None}"
+                )
                 if flow_state.current_message:
-                    self.logger.trace(f"Editing message with remove_buttons=True")
                     await api.conversation_manager.send_or_edit_message(
                         user_id, text, flow_state.current_message, remove_buttons=True
                     )
-                    self.logger.trace(f"Message edited successfully")
                 else:
-                    self.logger.trace(f"No current message to edit!")
-                # Wait for the timeout duration to let user see the message
-                self.logger.trace(f"Sleeping for {current_def.timeout} seconds")
+                    # Keep legacy behavior: if there is no message to edit, do not send a new one.
+                    pass
                 await asyncio.sleep(current_def.timeout)
-                self.logger.trace(f"Exiting flow with success")
                 return True
             
             # Send or edit message and wait for response
