@@ -13,6 +13,7 @@ from src.dependencies.dependencies import get_repo
 from src.common.log import log_app_startup, log_app_shutdown, log_database_connected, log_database_connection_failed, log_database_error
 from src.temp_debug_setup import run_debug_setup_if_enabled
 from src.bot.settings_manager import SettingsManager
+from src.services.gsheet_sync import run_periodic_gsheet_sync
 # from .middlewares.middleware import SecurityMiddleware
 
 ### connecting bot 
@@ -28,6 +29,9 @@ mongodb = get_repo()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log_app_startup()
+
+    gsheet_stop_event = asyncio.Event()
+    gsheet_task: asyncio.Task[None] | None = None
     
     try:
         await mongodb.connect(app_config.DATABASE_URL)
@@ -38,6 +42,9 @@ async def lifespan(app: FastAPI):
         
         # Initialize application settings from database
         await SettingsManager.initialize_log_settings_from_db()
+
+        # Periodic one-way export to Google Sheets (optional)
+        gsheet_task = asyncio.create_task(run_periodic_gsheet_sync(stop_event=gsheet_stop_event))
         
     except Exception as e:
         log_database_connection_failed(str(e))
@@ -46,6 +53,9 @@ async def lifespan(app: FastAPI):
     yield 
     
     try:
+        gsheet_stop_event.set()
+        if gsheet_task:
+            await gsheet_task
         await mongodb.close()
         log_app_shutdown()
     except Exception as e:

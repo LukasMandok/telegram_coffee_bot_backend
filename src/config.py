@@ -51,13 +51,26 @@ class AppConfig(BaseSettings):
     SERVICE_ACCOUNT_EMAIL: str
     SERVICE_ACCOUNT_PRIVATE_KEY: str
     PROJECT_ID: str
+
+    # Google Sheets periodic export (one-way)
+    GSHEET_SYNC_ENABLED: bool = False
+    GSHEET_SYNC_INTERVAL_SECONDS: int = 900
     
     DEBUG_MODE: bool = False  # Enable debug mode for development/testing
     
     @field_validator('SERVICE_ACCOUNT_PRIVATE_KEY')
     @classmethod
     def parse_private_key(cls, v: str) -> str:
-        return v.replace('\\n', '\n')
+        return v.strip().replace('\\n', '\n')
+
+    @field_validator(
+        'GSHEET_SSID',
+        'SERVICE_ACCOUNT_EMAIL',
+        'PROJECT_ID',
+    )
+    @classmethod
+    def strip_gsheet_values(cls, v: str) -> str:
+        return v.strip()
         
     class Config:
         env_file = './.env'

@@ -3,6 +3,7 @@ import gspread
 import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from gspread.utils import ValueInputOption
 
 from ..config import app_config
 from ..common.log import (
@@ -29,16 +30,58 @@ credentials_info = {
 }
 
 
+GSHEET_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+
+
 class GsheetAPI:
     def __init__(self):
         try:
-            credentials = service_account.Credentials.from_service_account_info(credentials_info)
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_info,
+                scopes=GSHEET_SCOPES,
+            )
             self.client = gspread.authorize(credentials)
             self.spreadsheet = self.client.open_by_key(app_config.GSHEET_SSID)
             log_gsheet_api_initialized()
         except Exception as e:
-            log_gsheet_api_initialization_failed(str(e))
+            log_gsheet_api_initialization_failed(f"{type(e).__name__}: {e!r}")
             raise
+
+    def ping(self) -> Dict[str, Any]:
+        """Validate credentials + spreadsheet access.
+
+        Returns basic spreadsheet metadata without performing any writes.
+        """
+        spreadsheet = self.spreadsheet
+        worksheets = spreadsheet.worksheets()
+        return {
+            "spreadsheet_title": spreadsheet.title,
+            "spreadsheet_id": spreadsheet.id,
+            "worksheet_titles": [ws.title for ws in worksheets],
+        }
+
+    def append_debug_row(self, message: str, worksheet_title: str = "Debug") -> Dict[str, Any]:
+        """Append a single debug row to a worksheet.
+
+        This is intended for smoke-testing write access.
+        It does not clear or overwrite any existing data.
+        """
+        worksheet = self._get_or_create_worksheet(worksheet_title)
+
+        values = [
+            datetime.now().isoformat(timespec="seconds"),
+            message,
+        ]
+
+        worksheet.append_row(values, value_input_option=ValueInputOption.user_entered)
+
+        return {
+            "worksheet_title": worksheet.title,
+            "appended_values": values,
+        }
 
     def _get_or_create_worksheet(self, title: str) -> gspread.Worksheet:
         """Get a worksheet by title or create it if it doesn't exist."""
