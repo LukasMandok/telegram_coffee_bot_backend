@@ -2082,13 +2082,6 @@ class ConversationManager:
 
         success = await self.repo.update_debt_settings(correction_threshold=threshold)
         if success:
-            await self.api.message_manager.send_text(
-                user_id,
-                f"✅ **Debt correction threshold set to {threshold}!**",
-                vanish=False,
-                conv=False,
-                delete_after=2
-            )
             return True
 
         await self.api.message_manager.send_text(
