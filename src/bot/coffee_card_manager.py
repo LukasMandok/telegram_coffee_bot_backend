@@ -52,6 +52,7 @@ class CoffeeCardManager:
         
     async def _deactivate_coffee_card(self, card: CoffeeCard):    
         card.is_active = False
+        card.completed_at = datetime.now()
         await card.save()
 
         if card in self.cards:
