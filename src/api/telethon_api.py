@@ -127,7 +127,8 @@ class TelethonAPI:
         # Handle persistent keyboard button presses
         self.add_handler(lambda event: self.command_manager.handle_persistent_button(event), events.NewMessage(incoming=True, pattern=re.compile(r'^(Place Order|Show Debts)$')))
         
-        self.add_handler(lambda event: self.command_manager.handle_digits_command(event), events.NewMessage(incoming=True, pattern=re.compile(r'[0-9]+')))
+        # Only trigger on messages that are purely a number (quick-order shortcut)
+        self.add_handler(lambda event: self.command_manager.handle_digits_command(event), events.NewMessage(incoming=True, pattern=re.compile(r'^\d+$')))
         self.add_handler(lambda event: self.command_manager.handle_unknown_command(event))
     
     async def setup_bot_commands(self) -> None:
