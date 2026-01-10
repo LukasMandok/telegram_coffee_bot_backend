@@ -168,7 +168,7 @@ class CoffeeCardManager:
             else:
                 break
         
-        if available > quantity:
+        if available >= quantity:
             return cards
         else:
             raise ValueError("Not enough available coffee")
@@ -414,8 +414,11 @@ class CoffeeCardManager:
         # Build allocation plan: {member_name: [cards]}
         allocations: Dict[str, List[CoffeeCard]] = {}
         
-        # Use cards in natural order (creation date) - self.cards is already sorted by insertion
+        # Use cards in natural order (creation date) - self.cards is already sorted by insertion.
+        # IMPORTANT: We must "reserve" capacity while allocating; otherwise later members may be
+        # assigned to a card that earlier members already exhausted.
         card_idx = 0
+        remaining_by_card = [max(0, int(c.remaining_coffees)) for c in self.cards]
         
         for member_name, member_data in session.group_state.members.items():
             if member_data.coffee_count == 0:
@@ -426,20 +429,22 @@ class CoffeeCardManager:
             
             while needed > 0 and card_idx < len(self.cards):
                 card = self.cards[card_idx]
-                
-                if card.remaining_coffees > 0:
-                    # This card can contribute
-                    member_cards.append(card)
-                    
-                    if card.remaining_coffees >= needed:
-                        # This card covers the rest
-                        needed = 0
-                    else:
-                        # Take what we can and move to next card
-                        needed -= card.remaining_coffees
-                        card_idx += 1
+                remaining_here = remaining_by_card[card_idx]
+
+                if remaining_here <= 0:
+                    card_idx += 1
+                    continue
+
+                member_cards.append(card)
+
+                if remaining_here >= needed:
+                    # This card covers the rest
+                    remaining_by_card[card_idx] = remaining_here - needed
+                    needed = 0
                 else:
-                    # Card empty, skip it
+                    # Take what we can and move to next card
+                    remaining_by_card[card_idx] = 0
+                    needed -= remaining_here
                     card_idx += 1
             
             if needed > 0:
