@@ -25,6 +25,8 @@ from ..common.log import (
     log_user_login_failed, Logger
 )
 
+from ..services.gsheet_sync import sync_all_cards_once
+
 if TYPE_CHECKING:
     from ..api.telethon_api import TelethonAPI
 
@@ -216,6 +218,37 @@ class CommandManager:
         
         # Start the conversation for adding passive users
         await self.api.conversation_manager.add_passive_user_conversation(user_id)
+
+    @dep.verify_admin
+    async def handle_sync_command(self, event: events.NewMessage.Event) -> None:
+        """Admin command to trigger a one-shot export to Google Sheets."""
+        user_id = event.sender_id
+        log_telegram_command(user_id, "/sync", getattr(event, 'chat_id', None))
+
+        await self.api.message_manager.send_text(
+            user_id,
+            "📄 Starting Google Sheets sync…",
+            True,
+            True,
+        )
+
+        try:
+            await sync_all_cards_once()
+        except Exception as exc:
+            await self.api.message_manager.send_text(
+                user_id,
+                f"❌ Google Sheets sync failed: {type(exc).__name__}: {exc!r}",
+                True,
+                True,
+            )
+            return
+
+        await self.api.message_manager.send_text(
+            user_id,
+            "✅ Google Sheets sync finished.",
+            True,
+            True,
+        )
 
     @dep.verify_user
     async def handle_order_command(self, event: events.NewMessage.Event) -> None:
@@ -582,8 +615,8 @@ class CommandManager:
             
             "**Coffee Orders:**\n"
             "• `/order` - Create or join a session to place an order\n"
-            "• `/cancel` - Cancel the current conversation\n\n"
-            
+            "• `send a number` - Quick order for yourself (e.g. send `2` → confirm)\n"
+
             "**Coffee Cards:**\n"
             "• `/card` - Show status and manage all coffee cards\n"
             "• `/new_card` - Create a new coffee card that you paid for\n"
@@ -601,7 +634,6 @@ class CommandManager:
             "  🔧 **Administration (Admins Only):**\n"
             "     📊 Logging settings\n"
             "     🔔 Notification preferences\n"
-            "  🔧 **Administration:** Admin features (coming soon)\n\n"
             
             "**Other:**\n"
             "• `/help` - Show this help message\n\n"

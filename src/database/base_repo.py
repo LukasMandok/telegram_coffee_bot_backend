@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional, Any, Dict
 
-from ..models.beanie_models import DebtSettings
+from ..models.beanie_models import DebtSettings, GsheetSettings
 
 class BaseRepository(ABC):
     @abstractmethod
@@ -104,5 +104,14 @@ class BaseRepository(ABC):
 
     async def update_debt_settings(self, **kwargs) -> bool:
         """Update app-wide debt calculation settings."""
+        raise NotImplementedError
+
+    # App-wide Google Sheets settings
+    async def get_gsheet_settings(self) -> Optional[GsheetSettings]:
+        """Get Google Sheets synchronization settings."""
+        raise NotImplementedError
+
+    async def update_gsheet_settings(self, **kwargs) -> bool:
+        """Update Google Sheets synchronization settings."""
         raise NotImplementedError
     

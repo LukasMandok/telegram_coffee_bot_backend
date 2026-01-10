@@ -71,7 +71,7 @@ class BeanieRepository(BaseRepository):
     async def close(self):
         try:
             if self.client:
-                self.client.close()
+                await self.client.close()
             log_database_disconnected()
         except Exception as e:
             log_database_error("close_connection", str(e))
@@ -669,6 +669,42 @@ class BeanieRepository(BaseRepository):
             return True
         except Exception as e:
             log_database_error("update_debt_settings", str(e), {"settings": kwargs})
+            return False
+
+    async def get_gsheet_settings(self) -> Optional[models.GsheetSettings]:
+        """Get Google Sheets synchronization settings from AppSettings."""
+        try:
+            app_settings = await models.AppSettings.find_one()
+            if not app_settings:
+                app_settings = models.AppSettings()
+                await app_settings.insert()
+            return app_settings.gsheet
+        except Exception as e:
+            log_database_error("get_gsheet_settings", str(e))
+            return None
+
+    async def update_gsheet_settings(self, **kwargs) -> bool:
+        """Update Google Sheets synchronization settings in AppSettings."""
+        try:
+            settings = await models.AppSettings.find_one()
+            if not settings:
+                settings = models.AppSettings()
+                await settings.insert()
+
+            if "periodic_sync_enabled" in kwargs and kwargs["periodic_sync_enabled"] is not None:
+                settings.gsheet.periodic_sync_enabled = bool(kwargs["periodic_sync_enabled"])
+
+            if "sync_period_minutes" in kwargs and kwargs["sync_period_minutes"] is not None:
+                settings.gsheet.sync_period_minutes = int(kwargs["sync_period_minutes"])
+
+            if "two_way_sync_enabled" in kwargs and kwargs["two_way_sync_enabled"] is not None:
+                settings.gsheet.two_way_sync_enabled = bool(kwargs["two_way_sync_enabled"])
+
+            await settings.save()
+            self.logger.info(f"Updated gsheet settings: {kwargs}")
+            return True
+        except Exception as e:
+            log_database_error("update_gsheet_settings", str(e), {"settings": kwargs})
             return False
 
     ### User Settings ###

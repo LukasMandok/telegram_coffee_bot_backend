@@ -118,6 +118,7 @@ class TelethonAPI:
         self.add_handler(lambda event: self.command_manager.handle_debt_command(event), "/debt")
         self.add_handler(lambda event: self.command_manager.handle_credit_command(event), "/credit")
         self.add_handler(lambda event: self.command_manager.handle_settings_command(event), "/settings")
+        self.add_handler(lambda event: self.command_manager.handle_sync_command(event), "/sync")
         self.add_handler(lambda event: self.command_manager.handle_help_command(event), "/help")
         self.add_handler(lambda event: self.command_manager.handle_cancel_command(event), "/cancel")
         # TODO: check if I actually need them
@@ -146,6 +147,7 @@ class TelethonAPI:
             BotCommand(command="debt", description="Show and manage your debts"),
             BotCommand(command="credit", description="Manage the debts others owe to you"),
             BotCommand(command="settings", description="Adjust your personal preferences"),
+            BotCommand(command="sync", description="(Admin) Export current state to Google Sheets"),
             BotCommand(command="card", description="Show the current status and manage all coffee cards"),
             BotCommand(command="new_card", description="Create a new coffee card that you paid for"),
             BotCommand(command="close_card", description="Close the last active coffee card"),

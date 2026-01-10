@@ -707,20 +707,33 @@ async def sync_all_cards_once() -> None:
 
 
 async def run_periodic_gsheet_sync(*, stop_event: asyncio.Event) -> None:
-    if not app_config.GSHEET_SYNC_ENABLED:
-        logger.info("GSHEET_SYNC_ENABLED is false; skipping periodic sync")
-        return
-
-    interval = max(30, int(app_config.GSHEET_SYNC_INTERVAL_SECONDS))
-    logger.info(f"Starting periodic gsheet sync every {interval}s")
+    logger.info("Starting periodic gsheet sync (admin-configured)")
 
     while not stop_event.is_set():
         try:
-            await sync_all_cards_once()
+            settings = await AppSettings.find_one()
+            if not settings:
+                settings = AppSettings()
+                await settings.insert()
+
+            gsheet_settings = settings.gsheet
+            enabled = bool(gsheet_settings.periodic_sync_enabled)
+            interval_seconds = max(30, int(gsheet_settings.sync_period_minutes) * 60)
         except Exception as exc:
-            log_gsheet_sync_failed("Coffee Cards", f"{type(exc).__name__}: {exc!r}")
+            # Fallback to env-based defaults if DB/settings are unavailable
+            log_gsheet_sync_failed("Coffee Cards", f"Failed to load gsheet settings: {type(exc).__name__}: {exc!r}")
+            enabled = bool(getattr(app_config, "GSHEET_SYNC_ENABLED", False))
+            interval_seconds = max(30, int(getattr(app_config, "GSHEET_SYNC_INTERVAL_SECONDS", 600)))
+
+        if enabled:
+            try:
+                await sync_all_cards_once()
+            except Exception as exc:
+                log_gsheet_sync_failed("Coffee Cards", f"{type(exc).__name__}: {exc!r}")
 
         try:
-            await asyncio.wait_for(stop_event.wait(), timeout=interval)
+            # When disabled, still poll periodically so enabling it via admin UI works without restart.
+            sleep_seconds = interval_seconds if enabled else 30
+            await asyncio.wait_for(stop_event.wait(), timeout=sleep_seconds)
         except TimeoutError:
             continue

@@ -254,6 +254,7 @@ class SettingsManager:
             [Button.inline("📊 Logging", b"logging")],
             [Button.inline("🔔 Notifications", b"notifications")],
             [Button.inline("💳 Debts", b"debts")],
+            [Button.inline("📄 Google Sheets", b"gsheet")],
             [Button.inline(f"{self.ICON_BACK} Back", b"back")]
         ]
 
@@ -278,6 +279,29 @@ class SettingsManager:
             [Button.inline("🧮 Correction Method", b"debt_method")],
             [Button.inline("🔢 Correction Threshold", b"debt_threshold")],
             [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+        ]
+
+    def get_gsheet_submenu_text(self, gsheet_settings) -> str:
+        enabled_status = "✅ On" if gsheet_settings.periodic_sync_enabled else "❌ Off"
+        two_way_status = "✅ On" if gsheet_settings.two_way_sync_enabled else "❌ Off"
+        period = int(gsheet_settings.sync_period_minutes)
+        return (
+            "📄 **Google Sheets Settings (App-Wide)**\n\n"
+            f"**Enable periodic syncing:** {enabled_status}\n"
+            f"**Syncing period:** {period} min\n"
+            f"**Two-way sync:** {two_way_status} *(currently does nothing)*\n\n"
+            "Use /sync to trigger a one-shot export.\n\n"
+            "Select a setting to adjust:"
+        )
+
+    def get_gsheet_submenu_keyboard(self, gsheet_settings) -> List[List[Button]]:
+        enabled_label = "🔴 Disable Periodic Sync" if gsheet_settings.periodic_sync_enabled else "🟢 Enable Periodic Sync"
+        two_way_label = "🔁 Disable Two-Way Sync" if gsheet_settings.two_way_sync_enabled else "🔁 Enable Two-Way Sync"
+        return [
+            [Button.inline(enabled_label, b"toggle_periodic")],
+            [Button.inline("⏱ Set Sync Period (min)", b"set_period")],
+            [Button.inline(two_way_label, b"toggle_two_way")],
+            [Button.inline(f"{self.ICON_BACK} Back", b"back")],
         ]
     
     def get_logging_submenu_text(self, log_settings: Dict) -> str:

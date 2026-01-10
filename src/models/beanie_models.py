@@ -204,6 +204,22 @@ class DebtSettings(BaseModel):
         return v
 
 
+class GsheetSettings(BaseModel):
+    """Google Sheets synchronization settings (admin-configurable)."""
+
+    periodic_sync_enabled: bool = Field(default=False, description="Enable periodic sync to Google Sheets")
+    sync_period_minutes: int = Field(
+        default=10,
+        ge=1,
+        le=24 * 60,
+        description="Periodic sync interval in minutes",
+    )
+    two_way_sync_enabled: bool = Field(
+        default=False,
+        description="Enable two-way sync (currently no-op)",
+    )
+
+
 class AppSettings(Document):
     """
     Global application settings organized into sections.
@@ -213,6 +229,7 @@ class AppSettings(Document):
     logging: LoggingSettings = Field(default_factory=LoggingSettings, description="Logging configuration")
     notifications: NotificationSettings = Field(default_factory=NotificationSettings, description="Notification configuration")
     debt: DebtSettings = Field(default_factory=DebtSettings, description="Debt calculation configuration")
+    gsheet: GsheetSettings = Field(default_factory=GsheetSettings, description="Google Sheets sync settings")
     
     class Settings:
         name = "app_settings"

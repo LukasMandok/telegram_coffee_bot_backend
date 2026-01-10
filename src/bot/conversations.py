@@ -667,7 +667,11 @@ class ConversationManager:
                     log_conversation_step(user_id, "registration", "passive_user_converted_successfully")
                     await self.api.message_manager.send_keyboard(
                         user_id,
-                        f"✅ User takeover successful! Thanks for registering, {first_name}!\nYour display name: **{new_user.display_name}**",
+                        (
+                            f"✅ User takeover successful! Thanks for registering, {first_name}!\n"
+                            f"Your display name: **{new_user.display_name}**\n\n"
+                            f"💡 Tip: send a number (e.g. `2`) to quick-order for yourself."
+                        ),
                         KeyboardManager.get_persistent_keyboard(),
                         True,
                         True
@@ -705,7 +709,10 @@ class ConversationManager:
             log_conversation_step(user_id, "registration", "user_created_successfully")
             await self.api.message_manager.send_keyboard(
                 user_id,
-                f"✅ Registration successful! Welcome {first_name}!",
+                (
+                    f"✅ Registration successful! Welcome {first_name}!\n\n"
+                    f"💡 Tip: send a number (e.g. `2`) to quick-order for yourself."
+                ),
                 KeyboardManager.get_persistent_keyboard(),
                 True,
                 True
@@ -2132,6 +2139,96 @@ class ConversationManager:
                     await event.answer()
                 success = await self._settings_debts_submenu(user_id, conv, message)
                 if not success:
+                    return False
+
+            elif data == "gsheet":
+                if event:
+                    await event.answer()
+                success = await self._settings_gsheet_submenu(user_id, conv, message)
+                if not success:
+                    return False
+
+
+    async def _settings_gsheet_submenu(self, user_id: int, conv: Conversation, message) -> bool:
+        """Handle the Google Sheets settings submenu (app-wide; admins only)."""
+        while True:
+            gsheet_settings = await self.repo.get_gsheet_settings()
+            if not gsheet_settings:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ Failed to load Google Sheets settings. Please try again later.",
+                    True,
+                    True,
+                )
+                return False
+
+            text = self.settings_manager.get_gsheet_submenu_text(gsheet_settings)
+            keyboard = self.settings_manager.get_gsheet_submenu_keyboard(gsheet_settings)
+
+            data, message, event = await self.edit_keyboard_and_wait_response(
+                conv, user_id, text, keyboard, message, 120, return_event=True
+            )
+
+            if data is None or data == "back":
+                if event:
+                    await event.answer()
+                return True
+
+            if data == "toggle_periodic":
+                if event:
+                    await event.answer()
+                new_value = not bool(gsheet_settings.periodic_sync_enabled)
+                success = await self.repo.update_gsheet_settings(periodic_sync_enabled=new_value)
+                if not success:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ Failed to save settings. Please try again.",
+                        True,
+                        True,
+                    )
+                    return False
+
+            elif data == "set_period":
+                if event:
+                    await event.answer()
+
+                current_value = int(gsheet_settings.sync_period_minutes)
+                minutes = await self.settings_manager.get_number_input(
+                    conv=conv,
+                    user_id=user_id,
+                    message_to_edit=message,
+                    setting_name="Google Sheets Sync Period",
+                    description="How often the bot exports the current DB state to Google Sheets (periodic sync).",
+                    current_value=current_value,
+                    min_value=1,
+                    max_value=24 * 60,
+                )
+
+                if minutes is None:
+                    continue
+
+                success = await self.repo.update_gsheet_settings(sync_period_minutes=minutes)
+                if not success:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ Failed to save settings. Please try again.",
+                        True,
+                        True,
+                    )
+                    return False
+
+            elif data == "toggle_two_way":
+                if event:
+                    await event.answer()
+                new_value = not bool(gsheet_settings.two_way_sync_enabled)
+                success = await self.repo.update_gsheet_settings(two_way_sync_enabled=new_value)
+                if not success:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ Failed to save settings. Please try again.",
+                        True,
+                        True,
+                    )
                     return False
 
 
