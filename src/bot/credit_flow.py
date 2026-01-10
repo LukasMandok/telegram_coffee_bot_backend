@@ -6,6 +6,8 @@ Compare this to credit_flow_example.py - much shorter and clearer!
 """
 
 from typing import Optional, List
+
+from ..models.beanie_models import TelegramUser
 from .message_flow import (
     MessageFlow, MessageDefinition, ButtonCallback, 
     MessageAction, StateType, NotificationStyle
@@ -83,7 +85,7 @@ async def handle_main_buttons(data: str, flow_state, api, user_id) -> Optional[s
         
         notified = 0
         for debt in all_credits:
-            if debt.debtor and hasattr(debt.debtor, 'user_id'):
+            if isinstance(debt.debtor, TelegramUser):
                 outstanding = debt.total_amount - debt.paid_amount
                 card_name = debt.coffee_card.name if debt.coffee_card else "Unknown Card"
                 

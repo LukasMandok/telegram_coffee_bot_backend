@@ -279,7 +279,7 @@ class CoffeeCardManager:
             debtor = debt.debtor  # type: ignore
             
             # Skip if debtor has no user_id (shouldn't happen for TelegramUsers)
-            if not hasattr(debtor, 'user_id') or not debtor.user_id:
+            if not isinstance(debtor, TelegramUser):
                 continue
             
             debtor_message = (
