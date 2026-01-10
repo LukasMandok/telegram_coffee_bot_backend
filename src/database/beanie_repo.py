@@ -658,6 +658,9 @@ class BeanieRepository(BaseRepository):
                 settings = models.AppSettings()
                 await settings.insert()
 
+            if "correction_method" in kwargs and kwargs["correction_method"] is not None:
+                settings.debt.correction_method = str(kwargs["correction_method"]).strip().lower()
+
             if "correction_threshold" in kwargs:
                 settings.debt.correction_threshold = int(kwargs["correction_threshold"])
 

@@ -48,6 +48,7 @@ class DebtManager:
     def _calculate_missing_coffee_corrections(
         *,
         card: CoffeeCard,
+        correction_method: str,
         correction_threshold: int,
     ) -> Dict[str, float]:
         """Return mapping stable_id -> correction amount for this card."""
@@ -57,6 +58,8 @@ class DebtManager:
 
         remaining_cost = remaining_coffees * card.cost_per_coffee
 
+        correction_method = (correction_method or "absolute").strip().lower()
+
         eligible_coffees: Dict[str, int] = {}
         for stable_id, stats in card.consumer_stats.items():
             if stats.total_coffees <= 0:
@@ -64,14 +67,25 @@ class DebtManager:
             if stats.total_coffees >= correction_threshold:
                 eligible_coffees[stable_id] = stats.total_coffees
 
-        total_eligible_coffees = sum(eligible_coffees.values())
-        if total_eligible_coffees <= 0:
+        if not eligible_coffees:
             return {}
 
-        return {
-            stable_id: remaining_cost * (coffees / total_eligible_coffees)
-            for stable_id, coffees in eligible_coffees.items()
-        }
+        if correction_method == "absolute":
+            per_user = remaining_cost / len(eligible_coffees)
+            return {stable_id: per_user for stable_id in eligible_coffees.keys()}
+
+        # proportional
+        elif correction_method == "proportional":
+            total_eligible_coffees = sum(eligible_coffees.values())
+            if total_eligible_coffees <= 0:
+                return {}
+
+            return {
+                stable_id: remaining_cost * (coffees / total_eligible_coffees)
+                for stable_id, coffees in eligible_coffees.items()
+            }
+        else:
+            return {}
     
     async def create_or_update_debts_for_card(self, card: CoffeeCard) -> List[UserDebt]:
         """
@@ -97,11 +111,14 @@ class DebtManager:
         debt_settings = await repo.get_debt_settings()
         if not debt_settings:
             self.logger.warning("Debt settings missing; using defaults")
-            correction_threshold = 3
+            correction_method = "absolute"
+            correction_threshold = 5
         else:
+            correction_method = debt_settings.correction_method
             correction_threshold = int(debt_settings.correction_threshold)
         corrections_by_user = self._calculate_missing_coffee_corrections(
             card=card,
+            correction_method=correction_method,
             correction_threshold=correction_threshold,
         )
         
@@ -131,8 +148,7 @@ class DebtManager:
                 {"debtor.$id": consumer.id, "coffee_card.$id": card.id}
             )
             
-            # Calculate debt amount using the helper method
-            total_amount = self.calculate_debt_amount(stats.total_coffees, card.cost_per_coffee)
+            # Calculate amounts
             base_amount = self.calculate_debt_amount(stats.total_coffees, card.cost_per_coffee)
             debt_correction = corrections_by_user.get(stable_id, 0.0)
             total_amount = base_amount + debt_correction

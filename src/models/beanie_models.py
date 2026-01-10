@@ -184,12 +184,24 @@ class NotificationSettings(BaseModel):
 
 class DebtSettings(BaseModel):
     """Debt calculation configuration section."""
+    correction_method: str = Field(
+        default="absolute",
+        description="How missing-coffee correction is distributed: 'absolute' (equal share) or 'proportional' (by coffees)"
+    )
     correction_threshold: int = Field(
         default=3,
         ge=0,
         le=50,
-        description="Users at or above this coffees-per-card threshold share the missing-coffee cost proportionally"
+        description="Users at or above this coffees-per-card threshold participate in missing-coffee correction"
     )
+
+    @field_validator("correction_method")
+    @classmethod
+    def validate_correction_method(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if v not in {"absolute", "proportional"}:
+            raise ValueError("correction_method must be 'absolute' or 'proportional'")
+        return v
 
 
 class AppSettings(Document):

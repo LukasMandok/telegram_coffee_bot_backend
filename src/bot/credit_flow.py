@@ -40,6 +40,7 @@ async def build_credit_main_text(flow_state, api, user_id) -> str:
     
     # Group credits by card
     groups = {}
+    group_totals = {}
     group_summaries = {}
     total = 0.0
     
@@ -50,11 +51,11 @@ async def build_credit_main_text(flow_state, api, user_id) -> str:
         
         if card_name not in groups:
             groups[card_name] = []
+            group_totals[card_name] = 0.0
         groups[card_name].append((debtor_name, f"{outstanding:.2f} €"))
         
-        # Calculate group total
-        current_total = sum(float(item[1].replace('€', '')) for item in groups[card_name])
-        group_summaries[card_name] = f"Subtotal: {current_total:.2f} €"
+        group_totals[card_name] += outstanding
+        group_summaries[card_name] = f"Subtotal: {group_totals[card_name]:.2f} €"
         total += outstanding
     
     # Use ListBuilder for formatting
