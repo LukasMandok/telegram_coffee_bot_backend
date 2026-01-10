@@ -8,6 +8,8 @@ Debts are created once per card completion, not on individual orders.
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 
+from beanie import Link as BeanieLink
+
 from ..common.log import Logger
 from ..models.coffee_models import CoffeeCard, Payment, UserDebt, PaymentMethod
 from ..models.beanie_models import TelegramUser, PassiveUser
@@ -41,6 +43,35 @@ class DebtManager:
             Total debt amount
         """
         return total_coffees * cost_per_coffee
+
+    @staticmethod
+    def _calculate_missing_coffee_corrections(
+        *,
+        card: CoffeeCard,
+        correction_threshold: int,
+    ) -> Dict[str, float]:
+        """Return mapping stable_id -> correction amount for this card."""
+        remaining_coffees = max(0, card.remaining_coffees)
+        if remaining_coffees <= 0:
+            return {}
+
+        remaining_cost = remaining_coffees * card.cost_per_coffee
+
+        eligible_coffees: Dict[str, int] = {}
+        for stable_id, stats in card.consumer_stats.items():
+            if stats.total_coffees <= 0:
+                continue
+            if stats.total_coffees >= correction_threshold:
+                eligible_coffees[stable_id] = stats.total_coffees
+
+        total_eligible_coffees = sum(eligible_coffees.values())
+        if total_eligible_coffees <= 0:
+            return {}
+
+        return {
+            stable_id: remaining_cost * (coffees / total_eligible_coffees)
+            for stable_id, coffees in eligible_coffees.items()
+        }
     
     async def create_or_update_debts_for_card(self, card: CoffeeCard) -> List[UserDebt]:
         """
@@ -61,6 +92,18 @@ class DebtManager:
         """
         creditor: TelegramUser = card.purchaser  # type: ignore
         creditor_stable_id = creditor.stable_id
+
+        repo = get_repo()
+        debt_settings = await repo.get_debt_settings()
+        if not debt_settings:
+            self.logger.warning("Debt settings missing; using defaults")
+            correction_threshold = 3
+        else:
+            correction_threshold = int(debt_settings.correction_threshold)
+        corrections_by_user = self._calculate_missing_coffee_corrections(
+            card=card,
+            correction_threshold=correction_threshold,
+        )
         
         # Create or update debts for each consumer (except purchaser)
         processed_debts = []
@@ -90,6 +133,9 @@ class DebtManager:
             
             # Calculate debt amount using the helper method
             total_amount = self.calculate_debt_amount(stats.total_coffees, card.cost_per_coffee)
+            base_amount = self.calculate_debt_amount(stats.total_coffees, card.cost_per_coffee)
+            debt_correction = corrections_by_user.get(stable_id, 0.0)
+            total_amount = base_amount + debt_correction
             
             now = datetime.now()
             if existing_debt:
@@ -97,11 +143,17 @@ class DebtManager:
                 existing_debt.total_coffees = stats.total_coffees
                 existing_debt.cost_per_coffee = card.cost_per_coffee
                 existing_debt.total_amount = total_amount
+                existing_debt.base_amount = base_amount
+                existing_debt.debt_correction = debt_correction
                 existing_debt.updated_at = now
+                existing_debt.is_settled = existing_debt.paid_amount >= existing_debt.total_amount
                 # Note: Don't reset paid_amount - keep existing payments
                 await existing_debt.save()
                 processed_debts.append(existing_debt)
-                self.logger.info(f"Updated debt: {stats.display_name} owes {creditor.display_name} €{total_amount:.2f} ({stats.total_coffees} coffees)")
+                self.logger.info(
+                    f"Updated debt: {stats.display_name} owes {creditor.display_name} €{total_amount:.2f} "
+                    f"({stats.total_coffees} coffees, base=€{base_amount:.2f}, correction=€{debt_correction:.2f})"
+                )
             else:
                 # Create new debt record
                 debt = UserDebt(
@@ -110,14 +162,19 @@ class DebtManager:
                     coffee_card=card,  # type: ignore
                     total_coffees=stats.total_coffees,
                     cost_per_coffee=card.cost_per_coffee,
+                    base_amount=base_amount,
                     total_amount=total_amount,
+                    debt_correction=debt_correction,
                     paid_amount=0.0,
                     is_settled=False,
                     updated_at=now
                 )
                 await debt.insert()
                 processed_debts.append(debt)
-                self.logger.info(f"Created debt: {stats.display_name} owes {creditor.display_name} €{total_amount:.2f} ({stats.total_coffees} coffees)")
+                self.logger.info(
+                    f"Created debt: {stats.display_name} owes {creditor.display_name} €{total_amount:.2f} "
+                    f"({stats.total_coffees} coffees, base=€{base_amount:.2f}, correction=€{debt_correction:.2f})"
+                )
         
         return processed_debts
     
@@ -153,7 +210,6 @@ class DebtManager:
         #     await debt.fetch_link(UserDebt.coffee_card)
         #     await debt.fetch_all_links()
                 
-        from beanie import Link as BeanieLink
         for debt in results:
             if isinstance(debt.debtor, BeanieLink):
                 debt.debtor = await PassiveUser.get(debt.debtor.ref.id) or await TelegramUser.get(debt.debtor.ref.id)
@@ -198,10 +254,10 @@ class DebtManager:
             # Initialize creditor entry if not exists
             if creditor_name not in creditor_summary:
                 creditor_summary[creditor_name] = {
-                    "creditor_id": creditor.user_id if hasattr(creditor, 'user_id') else None,  # type: ignore
+                    "creditor_id": creditor.user_id,  # type: ignore
                     "creditor_name": creditor_name,
                     "total_owed": 0.0,
-                    "paypal_link": creditor.paypal_link if hasattr(creditor, 'paypal_link') else None,  # type: ignore
+                    "paypal_link": creditor.paypal_link,  # type: ignore
                     "debts": []
                 }
             
@@ -244,7 +300,6 @@ class DebtManager:
         #     await debt.fetch_link(UserDebt.coffee_card)
         #     await debt.fetch_all_links()
                 
-        from beanie import Link as BeanieLink
         for debt in results:
             if isinstance(debt.debtor, BeanieLink):
                 debt.debtor = await PassiveUser.get(debt.debtor.ref.id) or await TelegramUser.get(debt.debtor.ref.id)
@@ -363,11 +418,11 @@ class DebtManager:
             # TODO: improve this and make it less bloated (maybe dont fetch at all)
             
             # Only fetch links if they haven't been loaded yet
-            if not hasattr(debt.debtor, 'display_name'):
+            if isinstance(debt.debtor, BeanieLink):
                 await debt.fetch_link("debtor")
-            if not hasattr(debt.creditor, 'display_name'):
+            if isinstance(debt.creditor, BeanieLink):
                 await debt.fetch_link("creditor")
-            if not hasattr(debt.coffee_card, 'name'):
+            if isinstance(debt.coffee_card, BeanieLink):
                 await debt.fetch_link("coffee_card")
             
             self.logger.info(f"Debt settled: {debt.debtor.display_name} → {debt.creditor.display_name} for card '{debt.coffee_card.name}'")  # type: ignore
@@ -415,7 +470,9 @@ class DebtManager:
                     "card_name": d.coffee_card.name,  # type: ignore
                     "total_coffees": d.total_coffees,
                     "total_amount": d.total_amount,
+                    "base_amount": d.base_amount,
                     "paid_amount": d.paid_amount,
+                    "debt_correction": d.debt_correction,
                     "remaining": d.total_amount - d.paid_amount,
                     "created_at": d.created_at
                 }
@@ -427,7 +484,9 @@ class DebtManager:
                     "card_name": d.coffee_card.name,  # type: ignore
                     "total_coffees": d.total_coffees,
                     "total_amount": d.total_amount,
+                    "base_amount": d.base_amount,
                     "paid_amount": d.paid_amount,
+                    "debt_correction": d.debt_correction,
                     "remaining": d.total_amount - d.paid_amount,
                     "created_at": d.created_at
                 }

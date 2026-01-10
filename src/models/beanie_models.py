@@ -182,6 +182,16 @@ class NotificationSettings(BaseModel):
     silent: bool = Field(default=False, description="Whether notifications should be sent silently by default (overrides user preference if True)")
 
 
+class DebtSettings(BaseModel):
+    """Debt calculation configuration section."""
+    correction_threshold: int = Field(
+        default=3,
+        ge=0,
+        le=50,
+        description="Users at or above this coffees-per-card threshold share the missing-coffee cost proportionally"
+    )
+
+
 class AppSettings(Document):
     """
     Global application settings organized into sections.
@@ -190,6 +200,7 @@ class AppSettings(Document):
     # Settings sections
     logging: LoggingSettings = Field(default_factory=LoggingSettings, description="Logging configuration")
     notifications: NotificationSettings = Field(default_factory=NotificationSettings, description="Notification configuration")
+    debt: DebtSettings = Field(default_factory=DebtSettings, description="Debt calculation configuration")
     
     class Settings:
         name = "app_settings"

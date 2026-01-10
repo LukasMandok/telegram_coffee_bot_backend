@@ -237,7 +237,21 @@ class UserDebt(Document):
     # Debt details
     total_coffees: int = Field(..., ge=0, description="Number of coffees consumed from this card")
     cost_per_coffee: float = Field(..., gt=0, description="Cost per coffee at time of card completion")
-    total_amount: float = Field(..., ge=0, description="Total debt amount (total_coffees * cost_per_coffee)")
+    base_amount: float = Field(
+        ...,
+        ge=0,
+        description="Uncorrected debt amount (total_coffees * cost_per_coffee)"
+    )
+    debt_correction: float = Field(
+        default=0.0,
+        ge=0,
+        description="Additional debt correction to cover missing coffees when a card is completed with remaining coffees"
+    )
+    total_amount: float = Field(
+        ...,
+        ge=0,
+        description="Total debt amount including correction (base_amount + debt_correction)"
+    )
     paid_amount: float = Field(default=0.0, ge=0, description="Amount already paid towards this debt")
     
     # Future: adjustment tracking
@@ -248,6 +262,47 @@ class UserDebt(Document):
     updated_at: datetime = Field(default_factory=datetime.now, description="Last update time for this debt")
     is_settled: bool = Field(default=False, description="Whether debt is fully paid")
     settled_at: Optional[datetime] = Field(None, description="When debt was fully settled")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_amount_fields(cls, data: Any):
+        """Backwards-compatible migration.
+
+        Older documents stored the uncorrected amount in `total_amount` and optionally had `debt_correction`.
+        New schema stores:
+        - `base_amount`: uncorrected
+        - `debt_correction`: correction
+        - `total_amount`: corrected (base + correction)
+        """
+        if not isinstance(data, dict):
+            return data
+
+        debt_correction = float(data.get("debt_correction", 0.0) or 0.0)
+
+        # Old docs: only `total_amount` existed (and maybe `debt_correction`). Treat old `total_amount` as base.
+        if "base_amount" not in data and "total_amount" in data:
+            base_amount = float(data.get("total_amount", 0.0) or 0.0)
+            data["base_amount"] = base_amount
+            data["total_amount"] = base_amount + debt_correction
+            return data
+
+        # New docs missing `total_amount` (shouldn't happen, but be defensive).
+        if "base_amount" in data and "total_amount" not in data:
+            base_amount = float(data.get("base_amount", 0.0) or 0.0)
+            data["total_amount"] = base_amount + debt_correction
+            return data
+
+        # If both exist but total looks uncorrected, correct it.
+        if "base_amount" in data and "total_amount" in data:
+            base_amount = float(data.get("base_amount", 0.0) or 0.0)
+            total_amount = float(data.get("total_amount", 0.0) or 0.0)
+            expected_total = base_amount + debt_correction
+
+            # If `total_amount` equals base (old semantics), update to corrected.
+            if abs(total_amount - base_amount) < 1e-9 and abs(total_amount - expected_total) > 1e-9:
+                data["total_amount"] = expected_total
+
+        return data
     
     class Settings:
         name = "user_debts"

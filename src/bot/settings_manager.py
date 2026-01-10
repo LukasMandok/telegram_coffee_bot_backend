@@ -253,6 +253,26 @@ class SettingsManager:
         return [
             [Button.inline("📊 Logging", b"logging")],
             [Button.inline("🔔 Notifications", b"notifications")],
+            [Button.inline("💳 Debts", b"debts")],
+            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+        ]
+
+    def get_debts_submenu_text(self, debt_settings) -> str:
+        """Generate the debts settings submenu text."""
+        threshold = debt_settings.correction_threshold
+        return (
+            "💳 **Debt Settings (App-Wide)**\n\n"
+            "These settings control how debts are calculated when a coffee card is completed.\n\n"
+            f"**Missing-coffee correction threshold:** {threshold}\n\n"
+            "If a card is completed with remaining coffees, the missing cost is distributed\n"
+            "proportionally among users who consumed at least this many coffees on that card.\n\n"
+            "Select a setting to adjust:"
+        )
+
+    def get_debts_submenu_keyboard(self) -> List[List[Button]]:
+        """Generate the debts settings submenu keyboard."""
+        return [
+            [Button.inline("🔢 Correction Threshold", b"debt_threshold")],
             [Button.inline(f"{self.ICON_BACK} Back", b"back")]
         ]
     

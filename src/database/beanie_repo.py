@@ -637,6 +637,37 @@ class BeanieRepository(BaseRepository):
             log_database_error("update_notification_settings", str(e), {"settings": kwargs})
             return False
 
+    async def get_debt_settings(self) -> Optional[models.DebtSettings]:
+        """Get debt calculation settings from AppSettings."""
+        try:
+            app_settings = await models.AppSettings.find_one()
+            if not app_settings:
+                app_settings = models.AppSettings()
+                await app_settings.insert()
+
+            return app_settings.debt
+        except Exception as e:
+            log_database_error("get_debt_settings", str(e))
+            return None
+
+    async def update_debt_settings(self, **kwargs) -> bool:
+        """Update debt calculation settings in AppSettings."""
+        try:
+            settings = await models.AppSettings.find_one()
+            if not settings:
+                settings = models.AppSettings()
+                await settings.insert()
+
+            if "correction_threshold" in kwargs:
+                settings.debt.correction_threshold = int(kwargs["correction_threshold"])
+
+            await settings.save()
+            self.logger.info(f"Updated debt settings: {kwargs}")
+            return True
+        except Exception as e:
+            log_database_error("update_debt_settings", str(e), {"settings": kwargs})
+            return False
+
     ### User Settings ###
 
     async def get_user_settings(self, user_id: int) -> Optional[models.UserSettings]:

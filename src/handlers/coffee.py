@@ -195,15 +195,17 @@ async def settle_debts_for_payment(payment: Payment) -> None:
         if remaining_amount <= 0:
             break
             
-        if debt.total_amount <= remaining_amount:
-            # Fully settle this debt
+        unpaid = debt.total_amount - debt.paid_amount
+        if unpaid <= 0:
+            continue
+
+        to_apply = min(remaining_amount, unpaid)
+        debt.paid_amount += to_apply
+        remaining_amount -= to_apply
+
+        if debt.paid_amount >= debt.total_amount:
             debt.is_settled = True
-            remaining_amount -= debt.total_amount
             debt.settled_at = datetime.now()
-        else:
-            # Partially settle this debt
-            debt.total_amount -= remaining_amount
-            remaining_amount = 0.0
         
         await debt.save()
         
@@ -242,7 +244,10 @@ async def get_coffee_statistics() -> Dict:
     
     # Outstanding debts
     outstanding_debts = await UserDebt.find(UserDebt.is_settled == False).to_list()
-    total_outstanding = sum(debt.total_amount for debt in outstanding_debts)
+    total_outstanding = sum(
+        debt.total_amount - debt.paid_amount
+        for debt in outstanding_debts
+    )
     
     return {
         "cards": {

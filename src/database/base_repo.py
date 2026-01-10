@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional, Any, Dict
 
+from ..models.beanie_models import DebtSettings
+
 class BaseRepository(ABC):
     @abstractmethod
     async def connect(self, uri: str) -> None:
@@ -85,4 +87,22 @@ class BaseRepository(ABC):
     async def update_log_settings(self, **kwargs) -> bool:
         """Update logging settings in config."""
         pass
+
+    # App-wide notification settings
+    async def get_notification_settings(self) -> Optional[Dict[str, Any]]:
+        """Get app-wide notification settings."""
+        raise NotImplementedError
+
+    async def update_notification_settings(self, **kwargs) -> bool:
+        """Update app-wide notification settings."""
+        raise NotImplementedError
+
+    # App-wide debt settings
+    async def get_debt_settings(self) -> Optional[DebtSettings]:
+        """Get app-wide debt calculation settings."""
+        raise NotImplementedError
+
+    async def update_debt_settings(self, **kwargs) -> bool:
+        """Update app-wide debt calculation settings."""
+        raise NotImplementedError
     

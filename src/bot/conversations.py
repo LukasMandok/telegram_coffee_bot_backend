@@ -2018,6 +2018,86 @@ class ConversationManager:
                 if not success:
                     return False
 
+            elif data == "debts":
+                if event:
+                    await event.answer()
+                success = await self._settings_debts_submenu(user_id, conv, message)
+                if not success:
+                    return False
+
+
+    async def _settings_debts_submenu(self, user_id: int, conv: Conversation, message) -> bool:
+        """Handle the debt settings submenu (app-wide; admins only)."""
+        while True:
+            debt_settings = await self.repo.get_debt_settings()
+            if not debt_settings:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ Failed to load debt settings. Please try again later.",
+                    True, True
+                )
+                return False
+
+            debts_text = self.settings_manager.get_debts_submenu_text(debt_settings)
+            keyboard = self.settings_manager.get_debts_submenu_keyboard()
+
+            data, message, event = await self.edit_keyboard_and_wait_response(
+                conv, user_id, debts_text, keyboard, message, 120, return_event=True
+            )
+
+            if data is None or data == "back":
+                if event:
+                    await event.answer()
+                return True
+
+            if data == "debt_threshold":
+                if event:
+                    await event.answer()
+                success = await self._settings_debt_threshold_flow(user_id, conv, debt_settings, message)
+                if not success:
+                    return False
+
+
+    async def _settings_debt_threshold_flow(self, user_id: int, conv: Conversation, debt_settings, message) -> bool:
+        """Handle correction threshold adjustment flow (admins only)."""
+        current_value = int(debt_settings.correction_threshold)
+
+        threshold = await self.settings_manager.get_number_input(
+            conv=conv,
+            user_id=user_id,
+            message_to_edit=message,
+            setting_name="Debt Correction Threshold",
+            description=(
+                "Minimum coffees consumed on a card to participate in the missing-coffee correction. "
+                "If a card is completed with remaining coffees, the missing cost is distributed proportionally "
+                "among users at or above this threshold."
+            ),
+            current_value=current_value,
+            min_value=0,
+            max_value=50
+        )
+
+        if threshold is None:
+            return True
+
+        success = await self.repo.update_debt_settings(correction_threshold=threshold)
+        if success:
+            await self.api.message_manager.send_text(
+                user_id,
+                f"✅ **Debt correction threshold set to {threshold}!**",
+                vanish=False,
+                conv=False,
+                delete_after=2
+            )
+            return True
+
+        await self.api.message_manager.send_text(
+            user_id,
+            "❌ Failed to save settings. Please try again.",
+            True, True
+        )
+        return False
+
     async def _settings_logging_submenu(self, user_id: int, conv: Conversation, message) -> bool:
         """
         Handle the logging settings submenu.
