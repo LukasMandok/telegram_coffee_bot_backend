@@ -22,6 +22,9 @@ from .settings_manager import SettingsManager
 from .keyboards import KeyboardManager
 from .credit_flow import create_credit_flow
 
+from ..services.order import place_order
+from ..exceptions.coffee_exceptions import InsufficientCoffeeError
+
 from ..common.log import (
     log_telegram_callback, log_conversation_started, log_conversation_step, log_unexpected_error,
     log_conversation_completed, log_conversation_timeout, log_conversation_cancelled, Logger
@@ -972,6 +975,110 @@ class ConversationManager:
         
         # Timeout or other exit
         return False
+
+
+    @managed_conversation("quick_order", 45)
+    async def quick_order_conversation(self, user_id: int, conv: Conversation, state: ConversationState, quantity: int) -> bool:
+        """Quick solo order flow: confirm/cancel then place a non-session order for the user."""
+        if quantity <= 0:
+            await self.api.message_manager.send_text(
+                user_id,
+                "❌ Please enter a number greater than 0.",
+                True,
+                True,
+            )
+            return False
+
+        initiator = await self.repo.find_user_by_id(user_id)
+        if not initiator:
+            await self.api.message_manager.send_text(user_id, "❌ User not found.", True, True)
+            return False
+
+        # Refresh cards from DB only when cached availability looks insufficient
+        cached_available = await self.api.coffee_card_manager.get_available()
+        if quantity > cached_available:
+            await self.api.coffee_card_manager.load_from_db()
+
+        available = await self.api.coffee_card_manager.get_available()
+        if quantity > available:
+            await self.api.message_manager.send_text(
+                user_id,
+                f"❌ Not enough coffees available right now. Requested={quantity}, available={available}.",
+                True,
+                True,
+            )
+            return False
+
+        confirm_text = (
+            "☕ **Quick Order**\n\n"
+            f"Order **{quantity}** coffee(s) for **{initiator.display_name}**?\n"
+            f"Available right now: **{available}**\n\n"
+            "Confirm?"
+        )
+
+        data, message_confirm = await self.send_keyboard_and_wait_response(
+            conv,
+            user_id,
+            confirm_text,
+            KeyboardManager.get_confirmation_keyboard(),
+            30,
+        )
+
+        if data is None:
+            await self.send_or_edit_message(
+                user_id,
+                "⏱️ Confirmation timed out.",
+                message_confirm,
+                remove_buttons=True,
+            )
+            return False
+
+        if data == "No":
+            await self.send_or_edit_message(user_id, "❌ Order cancelled.", message_confirm, remove_buttons=True)
+            return False
+
+        await self.send_or_edit_message(user_id, "⏳ Placing order...", message_confirm, remove_buttons=True)
+
+        try:
+            cards = await self.api.coffee_card_manager.get_coffee_cards_for_order(quantity)
+            await place_order(
+                initiator=initiator,
+                consumer=initiator,
+                cards=cards,
+                quantity=quantity,
+                from_session=False,
+                session=None,
+                enforce_capacity=True,
+            )
+
+            # Refresh cached counts after mutating cards
+            await self.api.coffee_card_manager.load_from_db()
+
+            await self.api.message_manager.send_text(
+                user_id,
+                f"✅ Ordered **{quantity}** coffee(s) for **{initiator.display_name}**.",
+                True,
+                True,
+            )
+            return True
+
+        except InsufficientCoffeeError as e:
+            await self.api.message_manager.send_text(
+                user_id,
+                f"❌ Not enough coffees available. Requested={e.requested}, available={e.available}.",
+                True,
+                True,
+            )
+            return False
+        except Exception as e:
+            self.logger.error("Quick order failed", exc=e)
+            await self.api.message_manager.send_text(
+                user_id,
+                "❌ Quick order failed due to an unexpected error.",
+                True,
+                True,
+            )
+            return False
                 
 
     @managed_conversation("add_passive_user", 60)
@@ -1420,9 +1527,10 @@ class ConversationManager:
                     
                     # Update all debts for this creditor
                     for debt in creditor_info["debts"]:
-                        remaining = debt.total_amount - debt.paid_amount
+                        total_due = debt.total_amount + getattr(debt, "debt_correction", 0.0)
+                        remaining = total_due - debt.paid_amount
                         if remaining > 0:
-                            debt.paid_amount = debt.total_amount
+                            debt.paid_amount = total_due
                             await debt.save()
                     
                     # Show success message
@@ -1462,7 +1570,8 @@ class ConversationManager:
                         # Update debts with custom amount
                         remaining_to_pay = paid_amount
                         for debt in creditor_info["debts"]:
-                            debt_remaining = debt.total_amount - debt.paid_amount
+                            total_due = debt.total_amount + getattr(debt, "debt_correction", 0.0)
+                            debt_remaining = total_due - debt.paid_amount
                             if debt_remaining > 0 and remaining_to_pay > 0:
                                 payment_for_this_debt = min(remaining_to_pay, debt_remaining)
                                 debt.paid_amount += payment_for_this_debt
@@ -2057,13 +2166,6 @@ class ConversationManager:
                 if not success:
                     return False
 
-            if data == "debt_method":
-                if event:
-                    await event.answer()
-                success = await self._settings_debt_method_flow(user_id, conv, debt_settings, message)
-                if not success:
-                    return False
-
 
     async def _settings_debt_threshold_flow(self, user_id: int, conv: Conversation, debt_settings, message) -> bool:
         """Handle correction threshold adjustment flow (admins only)."""
@@ -2076,7 +2178,7 @@ class ConversationManager:
             setting_name="Debt Correction Threshold",
             description=(
                 "Minimum coffees consumed on a card to participate in the missing-coffee correction. "
-                "If a card is completed with remaining coffees, the missing cost is distributed "
+                "If a card is completed with remaining coffees, the missing cost is distributed proportionally "
                 "among users at or above this threshold."
             ),
             current_value=current_value,
@@ -2089,61 +2191,13 @@ class ConversationManager:
 
         success = await self.repo.update_debt_settings(correction_threshold=threshold)
         if success:
-            return True
-
-        await self.api.message_manager.send_text(
-            user_id,
-            "❌ Failed to save settings. Please try again.",
-            True, True
-        )
-        return False
-
-
-    async def _settings_debt_method_flow(self, user_id: int, conv: Conversation, debt_settings, message) -> bool:
-        """Handle correction method selection flow (admins only)."""
-        current_method = (debt_settings.correction_method or "absolute").strip().lower()
-        current_label = "Absolute" if current_method == "absolute" else "Proportional"
-
-        text = (
-            "🧮 **Missing-Coffee Correction Method**\n\n"
-            f"Current: **{current_label}**\n\n"
-            "- **Absolute**: equal share for each eligible user\n"
-            "- **Proportional**: share based on coffees consumed\n\n"
-            "Select a method:"
-        )
-
-        keyboard = [
-            [Button.inline("✅ Absolute" if current_method == "absolute" else "Absolute", b"absolute")],
-            [Button.inline("✅ Proportional" if current_method == "proportional" else "Proportional", b"proportional")],
-            [Button.inline("« Back", b"back")],
-        ]
-
-        data, message, event = await self.edit_keyboard_and_wait_response(
-            conv, user_id, text, keyboard, message, 120, return_event=True
-        )
-
-        if data is None or data == "back":
-            if event:
-                await event.answer()
-            return True
-
-        if data not in {"absolute", "proportional"}:
-            if event:
-                await event.answer()
-            return True
-
-        success = await self.repo.update_debt_settings(correction_method=data)
-        if success:
-            label = "Absolute" if data == "absolute" else "Proportional"
             await self.api.message_manager.send_text(
                 user_id,
-                f"✅ **Debt correction method set to {label}.**",
+                f"✅ **Debt correction threshold set to {threshold}!**",
                 vanish=False,
                 conv=False,
                 delete_after=2
             )
-            if event:
-                await event.answer()
             return True
 
         await self.api.message_manager.send_text(

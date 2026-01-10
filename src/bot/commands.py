@@ -279,6 +279,7 @@ class CommandManager:
                 True, True
             )
 
+    @dep.verify_user
     async def handle_digits_command(self, event: events.NewMessage.Event) -> None:
         """
         Handle digit messages (temporary handler for testing).
@@ -294,9 +295,14 @@ class CommandManager:
         # Don't process digits if user is in an active conversation
         if self.api.conversation_manager.has_active_conversation(user_id):
             return
-        
-        # TODO: This handler can be used for quick coffee ordering via digit shortcuts
-        await self.api.message_manager.send_text(user_id, f'catches digits: {event.text}', True, True)
+
+        raw = (event.text or "").strip()
+        try:
+            quantity = int(raw)
+        except ValueError:
+            return
+
+        await self.api.conversation_manager.quick_order_conversation(user_id, quantity)
 
     async def handle_unknown_command(self, event: events.NewMessage.Event) -> None:
         """
