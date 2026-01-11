@@ -2274,12 +2274,85 @@ class ConversationManager:
                     await event.answer()
                 return True
 
+            if data == "debt_method":
+                if event:
+                    await event.answer()
+
+                success = await self._settings_debt_method_flow(user_id, conv, debt_settings, message)
+                if not success:
+                    return False
+                continue
+
             if data == "debt_threshold":
                 if event:
                     await event.answer()
                 success = await self._settings_debt_threshold_flow(user_id, conv, debt_settings, message)
                 if not success:
                     return False
+
+
+    async def _settings_debt_method_flow(self, user_id: int, conv: Conversation, debt_settings, message) -> bool:
+        """Handle correction method adjustment flow (admins only)."""
+        current_method = str(getattr(debt_settings, "correction_method", "absolute") or "absolute").strip().lower()
+        current_label = "Absolute" if current_method == "absolute" else "Proportional"
+
+        text = (
+            "🧮 **Debt Correction Method**\n\n"
+            "This controls how missing-coffee cost is distributed when a card is closed with remaining coffees.\n\n"
+            f"**Current method:** {current_label}\n\n"
+            "Choose a method:"
+        )
+
+        keyboard = [
+            [
+                Button.inline("🧮 Absolute", b"debt_method_absolute"),
+                Button.inline("📊 Proportional", b"debt_method_proportional"),
+            ],
+            [Button.inline("◁ Back", b"back")],
+        ]
+
+        data, _message, event = await self.edit_keyboard_and_wait_response(
+            conv,
+            user_id,
+            text,
+            keyboard,
+            message,
+            120,
+            return_event=True,
+        )
+
+        if event:
+            await event.answer()
+
+        if data is None or data == "back":
+            return True
+
+        if data == "debt_method_absolute":
+            new_method = "absolute"
+        elif data == "debt_method_proportional":
+            new_method = "proportional"
+        else:
+            return True
+
+        success = await self.repo.update_debt_settings(correction_method=new_method)
+        if success:
+            pretty = "Absolute" if new_method == "absolute" else "Proportional"
+            await self.api.message_manager.send_text(
+                user_id,
+                f"✅ **Debt correction method set to {pretty}!**",
+                vanish=False,
+                conv=False,
+                delete_after=2,
+            )
+            return True
+
+        await self.api.message_manager.send_text(
+            user_id,
+            "❌ Failed to save settings. Please try again.",
+            True,
+            True,
+        )
+        return False
 
 
     async def _settings_debt_threshold_flow(self, user_id: int, conv: Conversation, debt_settings, message) -> bool:
