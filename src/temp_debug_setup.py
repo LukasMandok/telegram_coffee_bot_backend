@@ -18,10 +18,12 @@ Environment Variables:
 """
 
 import asyncio
+import os
 from typing import List, Tuple
 from .handlers import users as handlers
 from .dependencies.dependencies import get_repo
 from .common.log import log_database_error, Logger
+from .models import beanie_models as models
 
 logger = Logger("DebugSetup")
 
@@ -241,7 +243,20 @@ async def run_debug_setup_if_enabled() -> None:
     if is_debug_mode():
         logger.info("Debug mode detected, setting up defaults and passive users...")
         repo = get_repo()
-        await repo.setup_defaults()  # type: ignore - repo is BeanieRepository at runtime
+
+        # IMPORTANT: do not reset defaults on every startup.
+        # setup_defaults() deletes AppSettings/Config/Password and will wipe persisted admin settings.
+        # Only run it when required (fresh DB) or explicitly forced.
+        
+        have_config = await models.Config.find_one() is not None
+        have_password = await models.Password.find_one() is not None
+        have_app_settings = await models.AppSettings.find_one() is not None
+
+        if not (have_config and have_password and have_app_settings):
+            await repo.setup_defaults()  # type: ignore - repo is BeanieRepository at runtime
+        else:
+            logger.info("Defaults already exist; skipping setup_defaults()")
+
         await setup_debug_passive_users()
     else:
         logger.debug("Debug mode not enabled, skipping debug setup")
