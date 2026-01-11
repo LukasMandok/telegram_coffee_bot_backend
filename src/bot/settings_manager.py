@@ -284,12 +284,14 @@ class SettingsManager:
     def get_gsheet_submenu_text(self, gsheet_settings) -> str:
         enabled_status = "✅ On" if gsheet_settings.periodic_sync_enabled else "❌ Off"
         two_way_status = "✅ On" if gsheet_settings.two_way_sync_enabled else "❌ Off"
+        after_actions_status = "✅ On" if getattr(gsheet_settings, "sync_after_actions_enabled", True) else "❌ Off"
         period = int(gsheet_settings.sync_period_minutes)
         return (
             "📄 **Google Sheets Settings (App-Wide)**\n\n"
             f"**Enable periodic syncing:** {enabled_status}\n"
             f"**Syncing period:** {period} min\n"
-            f"**Two-way sync:** {two_way_status} *(currently does nothing)*\n\n"
+            f"**Two-way sync:** {two_way_status} *(currently does nothing)*\n"
+            f"**Sync after actions:** {after_actions_status}\n"
             "Use /sync to trigger a one-shot export.\n\n"
             "Select a setting to adjust:"
         )
@@ -297,10 +299,13 @@ class SettingsManager:
     def get_gsheet_submenu_keyboard(self, gsheet_settings) -> List[List[Button]]:
         enabled_label = "🔴 Disable Periodic Sync" if gsheet_settings.periodic_sync_enabled else "🟢 Enable Periodic Sync"
         two_way_label = "🔁 Disable Two-Way Sync" if gsheet_settings.two_way_sync_enabled else "🔁 Enable Two-Way Sync"
+        after_actions_enabled = getattr(gsheet_settings, "sync_after_actions_enabled", True)
+        after_actions_label = "🔴 Disable Sync After Actions" if after_actions_enabled else "🟢 Enable Sync After Actions"
         return [
             [Button.inline(enabled_label, b"toggle_periodic")],
             [Button.inline("⏱ Set Sync Period (min)", b"set_period")],
             [Button.inline(two_way_label, b"toggle_two_way")],
+            [Button.inline(after_actions_label, b"toggle_after_actions")],
             [Button.inline(f"{self.ICON_BACK} Back", b"back")],
         ]
     

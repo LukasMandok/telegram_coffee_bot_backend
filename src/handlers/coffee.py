@@ -16,6 +16,7 @@ from ..models.coffee_models import (
 
 from ..dependencies.dependencies import repo
 from ..services.order import place_order
+from ..services.gsheet_sync import request_gsheet_sync_after_action
 
 from ..bot.group_state_helpers import initialize_group_state_from_db
 from ..models.beanie_models import TelegramUser
@@ -82,6 +83,8 @@ async def create_coffee_order(
         session=None,
         enforce_capacity=True
     )
+
+    request_gsheet_sync_after_action(reason="quick_order_completed")
     
     log_coffee_order_created(str(order.id), consumer_id, initiator_id, quantity, card.name)
 

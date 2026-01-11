@@ -14,6 +14,7 @@ from ..common.log import Logger
 from ..models.coffee_models import CoffeeCard, Payment, UserDebt, PaymentMethod
 from ..models.beanie_models import TelegramUser, PassiveUser
 from ..dependencies.dependencies import get_repo
+from ..services.gsheet_sync import request_gsheet_sync_after_action
 
 
 class DebtManager:
@@ -404,6 +405,8 @@ class DebtManager:
                 if remaining <= 0:
                     break
                 remaining = await self._apply_payment_to_debt(debt, remaining)
+
+        request_gsheet_sync_after_action(reason="debt_paid")
         
         return payment
     

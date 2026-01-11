@@ -23,6 +23,7 @@ from .keyboards import KeyboardManager
 from .credit_flow import create_credit_flow
 
 from ..services.order import place_order
+from ..services.gsheet_sync import request_gsheet_sync_after_action
 from ..exceptions.coffee_exceptions import InsufficientCoffeeError
 
 from ..common.log import (
@@ -1060,6 +1061,8 @@ class ConversationManager:
 
             # Refresh cached counts after mutating cards
             await self.api.coffee_card_manager.load_from_db()
+
+            request_gsheet_sync_after_action(reason="quick_order_completed")
 
             await self.api.message_manager.send_text(
                 user_id,
@@ -2222,6 +2225,21 @@ class ConversationManager:
                     await event.answer()
                 new_value = not bool(gsheet_settings.two_way_sync_enabled)
                 success = await self.repo.update_gsheet_settings(two_way_sync_enabled=new_value)
+                if not success:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ Failed to save settings. Please try again.",
+                        True,
+                        True,
+                    )
+                    return False
+
+            elif data == "toggle_after_actions":
+                if event:
+                    await event.answer()
+                current_value = bool(getattr(gsheet_settings, "sync_after_actions_enabled", True))
+                new_value = not current_value
+                success = await self.repo.update_gsheet_settings(sync_after_actions_enabled=new_value)
                 if not success:
                     await self.api.message_manager.send_text(
                         user_id,

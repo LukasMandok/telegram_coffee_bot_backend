@@ -219,6 +219,14 @@ class GsheetSettings(BaseModel):
         description="Enable two-way sync (currently no-op)",
     )
 
+    sync_after_actions_enabled: bool = Field(
+        default=True,
+        description=(
+            "Trigger a one-shot sync to Google Sheets after state-changing actions "
+            "(order placed, debt paid, card created/closed)."
+        ),
+    )
+
 
 class AppSettings(Document):
     """

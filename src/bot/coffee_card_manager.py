@@ -14,6 +14,7 @@ from ..utils.beanie_utils import requires_beanie
 
 from src.common.log import log_coffee_card_created, Logger
 from .keyboards import KeyboardManager
+from ..services.gsheet_sync import request_gsheet_sync_after_action
 
 # Type-only imports - only needed for type annotations
 if TYPE_CHECKING:
@@ -152,6 +153,8 @@ class CoffeeCardManager:
 
         await self._add_coffee_card(card)
 
+        request_gsheet_sync_after_action(reason="card_created")
+
         return card
     
     async def get_available(self) -> int:
@@ -230,6 +233,8 @@ class CoffeeCardManager:
         
         # NOW mark card as completed and deactivate
         await self._deactivate_coffee_card(card)
+
+        request_gsheet_sync_after_action(reason="card_closed")
         
         self.logger.info(f"Card '{card.name}' marked as completed")
         
@@ -395,6 +400,7 @@ class CoffeeCardManager:
         )
         
         await self._update_available()
+        request_gsheet_sync_after_action(reason="quick_order_completed")
         return order
     
     def allocate_session_orders(self, session: CoffeeSession) -> Dict[str, List[CoffeeCard]]:
@@ -519,5 +525,7 @@ class CoffeeCardManager:
         
         # Update cached available count
         await self._update_available()
+
+        request_gsheet_sync_after_action(reason="session_completed")
         
         return orders_created

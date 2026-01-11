@@ -40,6 +40,10 @@ _GSHEET_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gsheet"
 _SYNC_LOCK = asyncio.Lock()
 
 
+# Debounced background sync task for action-triggered syncs.
+_ACTION_SYNC_TASK: Optional[asyncio.Task[None]] = None
+
+
 async def warmup_gsheet_api() -> None:
     """Initialize the Google Sheets client early (startup warmup)."""
     loop = asyncio.get_running_loop()
@@ -50,6 +54,45 @@ async def warmup_gsheet_api() -> None:
         _ = api.spreadsheet.fetch_sheet_metadata()
 
     await loop.run_in_executor(_GSHEET_EXECUTOR, _warm)
+
+
+def request_gsheet_sync_after_action(*, reason: str) -> None:
+    """Request a background one-shot sync after a state-changing action.
+
+    This is intentionally fire-and-forget and debounced (only one outstanding task).
+    """
+    global _ACTION_SYNC_TASK
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop (e.g., called from a sync script context). Ignore.
+        return
+
+    if _ACTION_SYNC_TASK is not None and not _ACTION_SYNC_TASK.done():
+        logger.debug(f"Action-triggered sync already running; skip (reason={reason})")
+        return
+
+    _ACTION_SYNC_TASK = loop.create_task(_run_action_triggered_sync(reason=reason))
+
+
+async def _run_action_triggered_sync(*, reason: str) -> None:
+    try:
+        settings_doc = await AppSettings.find_one()
+        gsheet_settings = settings_doc.gsheet if settings_doc else AppSettings().gsheet
+
+        if not bool(getattr(gsheet_settings, "sync_after_actions_enabled", True)):
+            logger.debug(f"Sync-after-actions disabled; skip (reason={reason})")
+            return
+
+        logger.info(f"Starting action-triggered Google Sheets sync (reason={reason})")
+        await sync_all_cards_once()
+        logger.info(f"Finished action-triggered Google Sheets sync (reason={reason})")
+    except Exception as exc:
+        logger.error(
+            f"Action-triggered Google Sheets sync failed (reason={reason}): {type(exc).__name__}: {exc!r}",
+            exc_info=exc,
+        )
 
 
 @dataclass(frozen=True)

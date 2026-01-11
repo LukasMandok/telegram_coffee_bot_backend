@@ -700,6 +700,9 @@ class BeanieRepository(BaseRepository):
             if "two_way_sync_enabled" in kwargs and kwargs["two_way_sync_enabled"] is not None:
                 settings.gsheet.two_way_sync_enabled = bool(kwargs["two_way_sync_enabled"])
 
+            if "sync_after_actions_enabled" in kwargs and kwargs["sync_after_actions_enabled"] is not None:
+                settings.gsheet.sync_after_actions_enabled = bool(kwargs["sync_after_actions_enabled"])
+
             await settings.save()
             self.logger.info(f"Updated gsheet settings: {kwargs}")
             return True
