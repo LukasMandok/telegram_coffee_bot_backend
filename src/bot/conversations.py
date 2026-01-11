@@ -1739,11 +1739,12 @@ class ConversationManager:
             return False
         
         # Main settings menu
+        is_admin = await self.repo.is_user_admin(user_id)
         message = None
         while True:
             # Use SettingsManager to generate menu
             settings_text = self.settings_manager.get_main_menu_text()
-            keyboard = self.settings_manager.get_main_menu_keyboard()
+            keyboard = self.settings_manager.get_main_menu_keyboard(include_admin=is_admin)
             
             # First time: send message, subsequent times: edit message
             if message is None:

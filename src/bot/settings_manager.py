@@ -88,15 +88,19 @@ class SettingsManager:
             "Select a category to adjust:"
         )
     
-    def get_main_menu_keyboard(self) -> List[List[Button]]:
+    def get_main_menu_keyboard(self, *, include_admin: bool = True) -> List[List[Button]]:
         """Generate the main settings menu keyboard."""
-        return [
+        keyboard: List[List[Button]] = [
             [Button.inline("📋 Ordering Settings", b"ordering")],
             [Button.inline("💬 Vanishing Messages", b"vanishing")],
             [Button.inline("🔔 Notifications", b"user_notifications")],
-            [Button.inline("🔧 Administration", b"admin")],
-            [Button.inline("✅ Done", b"done")]
         ]
+
+        if include_admin:
+            keyboard.append([Button.inline("🔧 Administration", b"admin")])
+
+        keyboard.append([Button.inline("✅ Done", b"done")])
+        return keyboard
     
     def get_ordering_submenu_text(self, settings) -> str:
         """
