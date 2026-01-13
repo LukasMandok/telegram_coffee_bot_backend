@@ -5,7 +5,7 @@ Handles debt creation when coffee cards are completed, and payment processing.
 Debts are created once per card completion, not on individual orders.
 """
 
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Protocol, Callable, Tuple, Sequence
 from datetime import datetime
 
 from beanie import Link as BeanieLink
@@ -167,6 +167,8 @@ class DebtManager:
                 # Note: Don't reset paid_amount - keep existing payments
                 await existing_debt.save()
                 processed_debts.append(existing_debt)
+
+                await self._offset_mutual_debts_between_users(debtor_id=consumer.id, creditor_id=creditor.id)
                 self.logger.info(
                     f"Updated debt: {stats.display_name} owes {creditor.display_name} €{total_amount:.2f} "
                     f"({stats.total_coffees} coffees, base=€{base_amount:.2f}, correction=€{debt_correction:.2f})"
@@ -188,12 +190,282 @@ class DebtManager:
                 )
                 await debt.insert()
                 processed_debts.append(debt)
+
+                await self._offset_mutual_debts_between_users(debtor_id=consumer.id, creditor_id=creditor.id)
                 self.logger.info(
                     f"Created debt: {stats.display_name} owes {creditor.display_name} €{total_amount:.2f} "
                     f"({stats.total_coffees} coffees, base=€{base_amount:.2f}, correction=€{debt_correction:.2f})"
                 )
         
         return processed_debts
+
+    class _DebtLike(Protocol):
+        total_amount: float
+        paid_amount: float
+        created_at: datetime
+        updated_at: datetime
+        is_settled: bool
+        settled_at: Optional[datetime]
+
+    @staticmethod
+    def _format_debt_for_offset_log(debt: "DebtManager._DebtLike") -> str:
+        debt_id = getattr(debt, "id", None)
+        debt_id_str = str(debt_id) if debt_id is not None else f"mem:{id(debt)}"
+
+        created_at = getattr(debt, "created_at", None)
+        created_str = created_at.isoformat() if isinstance(created_at, datetime) else "?"
+
+        return (
+            f"debt={debt_id_str} created_at={created_str} "
+            f"paid=€{debt.paid_amount:.2f}/€{debt.total_amount:.2f}"
+        )
+
+    @staticmethod
+    def _apply_offset_amount(debt: "DebtManager._DebtLike", amount: float, *, now: datetime) -> float:
+        """Apply an internal offset (non-cash) payment to a debt.
+
+        This mirrors `_apply_payment_to_debt` behavior, but avoids any DB fetches/log spam.
+
+        Returns remaining amount not applied.
+        """
+        epsilon = 1e-9
+
+        unpaid = debt.total_amount - debt.paid_amount
+        if unpaid <= epsilon:
+            return amount
+
+        to_apply = min(amount, unpaid)
+        debt.paid_amount += to_apply
+
+        if debt.paid_amount + epsilon >= debt.total_amount:
+            debt.paid_amount = debt.total_amount
+            debt.is_settled = True
+            debt.settled_at = now
+
+        debt.updated_at = now
+        return amount - to_apply
+
+    @classmethod
+    def _offset_mutual_debts_in_memory(
+        cls,
+        *,
+        debts_ab: Sequence["DebtManager._DebtLike"],
+        debts_ba: Sequence["DebtManager._DebtLike"],
+        now: datetime,
+        log_line: Optional[Callable[[str], None]] = None,
+    ) -> int:
+        """Offset mutual debts between two users (A->B and B->A), oldest first.
+
+        The algorithm walks both debt lists (sorted by `created_at`) and applies the same
+        offset amount to *both* sides, reducing unnecessary cash transfers.
+
+        Returns number of debts that were modified.
+        """
+        epsilon = 1e-9
+
+        debts_ab_sorted = sorted(debts_ab, key=lambda d: d.created_at)
+        debts_ba_sorted = sorted(debts_ba, key=lambda d: d.created_at)
+
+        modified_ids = set()
+
+        idx_ab = 0
+        idx_ba = 0
+
+        while idx_ab < len(debts_ab_sorted) and idx_ba < len(debts_ba_sorted):
+            debt_ab = debts_ab_sorted[idx_ab]
+            debt_ba = debts_ba_sorted[idx_ba]
+
+            remaining_ab = debt_ab.total_amount - debt_ab.paid_amount
+            remaining_ba = debt_ba.total_amount - debt_ba.paid_amount
+
+            if remaining_ab <= epsilon:
+                idx_ab += 1
+                continue
+            if remaining_ba <= epsilon:
+                idx_ba += 1
+                continue
+
+            offset = min(remaining_ab, remaining_ba)
+
+            before_ab = debt_ab.paid_amount
+            before_ba = debt_ba.paid_amount
+
+            cls._apply_offset_amount(debt_ab, offset, now=now)
+            cls._apply_offset_amount(debt_ba, offset, now=now)
+
+            if log_line is not None:
+                log_line(
+                    "Netting offset applied: "
+                    f"offset=€{offset:.2f} | "
+                    f"A->B {cls._format_debt_for_offset_log(debt_ab)} (was €{before_ab:.2f}) | "
+                    f"B->A {cls._format_debt_for_offset_log(debt_ba)} (was €{before_ba:.2f})"
+                )
+
+            if debt_ab.paid_amount != before_ab:
+                modified_ids.add(id(debt_ab))
+            if debt_ba.paid_amount != before_ba:
+                modified_ids.add(id(debt_ba))
+
+            # Advance past fully settled debts
+            if debt_ab.total_amount - debt_ab.paid_amount <= epsilon:
+                idx_ab += 1
+            if debt_ba.total_amount - debt_ba.paid_amount <= epsilon:
+                idx_ba += 1
+
+        return len(modified_ids)
+
+    async def _offset_mutual_debts_between_users(self, *, debtor_id: Any, creditor_id: Any) -> None:
+        """Offset unsettled debts between two users in both directions.
+
+        Triggered after creating/updating a debt, so mutual debts are netted immediately.
+        """
+        if debtor_id == creditor_id:
+            return
+
+        # Unsettled debts: debtor -> creditor
+        debts_ab: List[UserDebt] = await UserDebt.find(
+            {
+                "debtor.$id": debtor_id,
+                "creditor.$id": creditor_id,
+                "is_settled": False,
+            }
+        ).to_list()
+
+        # Unsettled debts: creditor -> debtor (opposite direction)
+        debts_ba: List[UserDebt] = await UserDebt.find(
+            {
+                "debtor.$id": creditor_id,
+                "creditor.$id": debtor_id,
+                "is_settled": False,
+            }
+        ).to_list()
+
+        if not debts_ab or not debts_ba:
+            return
+
+        now = datetime.now()
+
+        debtor_user: Optional[PassiveUser] = await TelegramUser.get(debtor_id) or await PassiveUser.get(debtor_id)
+        creditor_user: Optional[TelegramUser] = await TelegramUser.get(creditor_id)
+        debtor_name = getattr(debtor_user, "display_name", str(debtor_id))
+        creditor_name = getattr(creditor_user, "display_name", str(creditor_id))
+
+        # Snapshot before for notification/debugging
+        before_state: Dict[str, Tuple[float, bool]] = {}
+        for debt in debts_ab + debts_ba:
+            debt_id = getattr(debt, "id", None)
+            key = str(debt_id) if debt_id is not None else f"mem:{id(debt)}"
+            before_state[key] = (float(debt.paid_amount), bool(debt.is_settled))
+
+        def _log_line(message: str) -> None:
+            self.logger.info(message, extra_tag="DEBT_OFFSET")
+
+        outstanding_ab = sum(max(0.0, d.total_amount - d.paid_amount) for d in debts_ab)
+        outstanding_ba = sum(max(0.0, d.total_amount - d.paid_amount) for d in debts_ba)
+        _log_line(
+            f"Netting start: {debtor_name} ↔ {creditor_name} "
+            f"count_ab={len(debts_ab)} outstanding_ab=€{outstanding_ab:.2f} "
+            f"count_ba={len(debts_ba)} outstanding_ba=€{outstanding_ba:.2f}"
+        )
+
+        modified_count = self._offset_mutual_debts_in_memory(
+            debts_ab=debts_ab,
+            debts_ba=debts_ba,
+            now=now,
+            log_line=_log_line,
+        )
+        if modified_count <= 0:
+            return
+
+        # Persist changes
+        for debt in debts_ab:
+            await debt.save()
+        for debt in debts_ba:
+            await debt.save()
+
+        # Build user-facing summary (only changed debts), grouped by direction
+        changes_by_direction: Dict[str, List[Tuple[datetime, str]]] = {}
+        for debt in debts_ab + debts_ba:
+            debt_id = getattr(debt, "id", None)
+            key = str(debt_id) if debt_id is not None else f"mem:{id(debt)}"
+            before_paid, before_settled = before_state.get(key, (0.0, False))
+            after_paid = float(debt.paid_amount)
+            after_settled = bool(debt.is_settled)
+
+            if abs(after_paid - before_paid) <= 1e-9 and after_settled == before_settled:
+                continue
+
+            direction = f"{debtor_name} ↔ {creditor_name}"
+            try:
+                debtor_link = getattr(debt, "debtor", None)
+                creditor_link = getattr(debt, "creditor", None)
+                debtor_ref_id = getattr(getattr(debtor_link, "ref", None), "id", None)
+                creditor_ref_id = getattr(getattr(creditor_link, "ref", None), "id", None)
+                if debtor_ref_id == debtor_id and creditor_ref_id == creditor_id:
+                    direction = f"{debtor_name} → {creditor_name}"
+                elif debtor_ref_id == creditor_id and creditor_ref_id == debtor_id:
+                    direction = f"{creditor_name} → {debtor_name}"
+            except Exception:
+                direction = f"{debtor_name} ↔ {creditor_name}"
+
+            card_name = "(unknown card)"
+            try:
+                if isinstance(getattr(debt, "coffee_card", None), BeanieLink):
+                    await debt.fetch_link("coffee_card")
+                if getattr(debt, "coffee_card", None) is not None:
+                    card_name = f"'{debt.coffee_card.name}'"  # type: ignore
+            except Exception:
+                card_name = "(card lookup failed)"
+
+            became_settled = after_settled and not before_settled
+            status_label = "Settled" if became_settled or after_settled else "Partial"
+            status_icon = "✅" if status_label == "Settled" else "🟡"
+
+            created_at = getattr(debt, "created_at", now)
+            if not isinstance(created_at, datetime):
+                created_at = now
+
+            entry = (
+                f"- {card_name}: €{before_paid:.2f} → €{after_paid:.2f} / €{debt.total_amount:.2f} ({status_icon} {status_label})"
+            )
+            changes_by_direction.setdefault(direction, []).append((created_at, entry))
+
+        outstanding_ab_after = sum(max(0.0, d.total_amount - d.paid_amount) for d in debts_ab)
+        outstanding_ba_after = sum(max(0.0, d.total_amount - d.paid_amount) for d in debts_ba)
+        _log_line(
+            f"Netting done: {debtor_name} ↔ {creditor_name} modified={modified_count} "
+            f"outstanding_ab=€{outstanding_ab:.2f}->€{outstanding_ab_after:.2f} "
+            f"outstanding_ba=€{outstanding_ba:.2f}->€{outstanding_ba_after:.2f}"
+        )
+
+        # Notify both parties (Telegram users only) about the compensatory offset.
+        if changes_by_direction:
+            directions_sorted = sorted(changes_by_direction.keys())
+            blocks: List[str] = []
+            for direction in directions_sorted:
+                entries = changes_by_direction[direction]
+                entries_sorted = sorted(entries, key=lambda t: t[0])
+                block = "\n".join([direction] + [f"  {line}" for _, line in entries_sorted])
+                blocks.append(block)
+
+            notification_text = (
+                "🔄 Compensatory offset applied.\n\n"
+                "**Updated payments**:\n" + "\n".join(blocks)
+            )
+
+            try:
+                if isinstance(debtor_user, TelegramUser):
+                    await self.api.message_manager.send_text(debtor_user.user_id, notification_text, True, True)
+                if creditor_user is not None:
+                    await self.api.message_manager.send_text(creditor_user.user_id, notification_text, True, True)
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to notify users about debt offset: {debtor_name} ↔ {creditor_name}",
+                    extra_tag="DEBT_OFFSET",
+                    exc=e,
+                )
+
+        request_gsheet_sync_after_action(reason="debt_offset")
     
     async def get_user_debts(
         self, 
