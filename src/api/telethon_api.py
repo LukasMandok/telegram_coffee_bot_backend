@@ -22,13 +22,12 @@ Note: Telegram-specific models have been moved to bot/telethon_models.py.
 
 import asyncio
 import re
-from typing import Callable, Optional, Dict, Union, Any, TYPE_CHECKING
+from typing import Callable, Optional, Dict, Union, Any, TYPE_CHECKING, cast
 
 # Runtime imports - actually used at runtime
 from telethon import TelegramClient, events, errors
 
 from ..handlers import exceptions, users
-from ..dependencies import dependencies as dep
 from ..bot.telethon_models import ( MessageModel, BotConfiguration )
 from ..bot.keyboards import KeyboardButton, KeyboardManager
 from ..common.log import (
@@ -43,6 +42,8 @@ from ..bot.group_keyboard_manager import GroupKeyboardManager
 from ..bot.session_manager import SessionManager
 from ..bot.coffee_card_manager import CoffeeCardManager
 from ..bot.debt_manager import DebtManager
+from ..database.snapshot_manager import SnapshotManager
+from ..database.base_repo import BaseRepository
 
 # Type-only imports - only needed for type annotations
 if TYPE_CHECKING:
@@ -61,7 +62,7 @@ class TelethonAPI:
     and coffee group ordering through Telegram inline keyboards.
     """
     
-    def __init__(self, api_id: Union[int, str], api_hash: str, bot_token: str) -> None:
+    def __init__(self, api_id: Union[int, str], api_hash: str, bot_token: str, repo: BaseRepository) -> None:
         """
         Initialize the TelethonAPI bot and set up handlers and state.
         
@@ -82,15 +83,15 @@ class TelethonAPI:
             bot_token=bot_token
         )
 
+        self.repo = repo
+
         session_name = "coffee_bot_session"
-        
+
         self.bot: TelegramClient = TelegramClient(
             session_name,
             self.config.api_id,
-            self.config.api_hash
-        ).start(bot_token=self.config.bot_token)
-        
-        log_telegram_bot_started(self.config.api_id)
+            self.config.api_hash,
+        )
 
         self.message_manager = MessageManager(self.bot)
         self.conversation_manager = ConversationManager(self)
@@ -102,6 +103,13 @@ class TelethonAPI:
 
         # Register all handlers
         self._register_handlers()
+
+    def get_snapshot_manager(self) -> SnapshotManager:
+        """Get the SnapshotManager instance from the repository."""
+        snapshot_manager = getattr(self.repo, "snapshot_manager", None)
+        if snapshot_manager is None:
+            raise RuntimeError("SnapshotManager is not initialized yet; call repository.connect() first")
+        return snapshot_manager
         
     def _register_handlers(self) -> None:
         """Register all bot event handlers."""
@@ -173,13 +181,20 @@ class TelethonAPI:
         This method starts background tasks and keeps the bot running
         until manually disconnected or an error occurs.
         """
+        # Telethon's type stubs don't always mark `start()` as awaitable,
+        # but at runtime it must be awaited in an async app.
+        await cast(Any, self.bot).start(bot_token=self.config.bot_token)
+        log_telegram_bot_started(self.config.api_id)
+
         # Set up bot commands in Telegram UI
         await self.setup_bot_commands()
         
         asyncio.create_task(self.message_manager.message_vanisher()) 
         asyncio.create_task(self.coffee_card_manager.load_from_db())
-        
-        await self.bot.run_until_disconnected()
+
+        # Telethon's type stubs sometimes model run_until_disconnected() as returning None,
+        # but waiting on the disconnected Future is equivalent here.
+        await self.bot.disconnected
         
         
     ### SECTION: handler administration

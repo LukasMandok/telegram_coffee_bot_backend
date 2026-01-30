@@ -15,6 +15,7 @@ from ..common.log import (
 
 from ..config import app_config
 from ..common.helpers import hash_password
+from .snapshot_manager import SnapshotManager
 
 
 class BeanieRepository(BaseRepository):
@@ -31,6 +32,7 @@ class BeanieRepository(BaseRepository):
         self.db = None
         self.logger = Logger("BeanieRepository")
         self.client = None
+        self.snapshot_manager: SnapshotManager | None = None
 
     # ---------------------------
     #     Connection
@@ -63,6 +65,8 @@ class BeanieRepository(BaseRepository):
             # IDEA: maybe use asyncio.create_task to run them in the background
 
             await self.ping()
+
+            self.snapshot_manager = SnapshotManager(self.db)
             
         except Exception as e:
             log_database_connection_failed(str(e))

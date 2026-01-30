@@ -16,15 +16,16 @@ from src.bot.settings_manager import SettingsManager
 from src.services.gsheet_sync import run_periodic_gsheet_sync, warmup_gsheet_api
 # from .middlewares.middleware import SecurityMiddleware
 
+mongodb = get_repo()
+# mongodb = MongoRepository(settings.DATABASE_URL)
+
 ### connecting bot 
 telethon_api = TelethonAPI(
     app_config.API_ID,
     app_config.API_HASH,
-    app_config.BOT_TOKEN
+    app_config.BOT_TOKEN,
+    repo=mongodb,
 )
-
-mongodb = get_repo()
-# mongodb = MongoRepository(settings.DATABASE_URL)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -86,12 +87,12 @@ uvicorn_server = uvicorn.Server(uvicorn.Config(app, host="localhost", port=8000)
 async def run_fastapi():
     # uvicorn.run(app, host="localhost", port=8000)
     await uvicorn_server.serve()
-    
+
 async def run_telethon():
     await telethon_api.run()
 
+async def main() -> None:
+    await asyncio.gather(run_fastapi(), run_telethon())
+
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    tasks = [run_fastapi(), run_telethon()]
-    loop.run_until_complete(asyncio.gather(*tasks))
-    loop.close()
+    asyncio.run(main())

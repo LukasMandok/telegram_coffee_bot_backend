@@ -123,39 +123,41 @@ class CoffeeCardManager:
         purchaser_id: int
     ) -> CoffeeCard:
         """Create a new coffee card."""
-        repo = get_repo()
-        purchaser = await repo.find_user_by_id(purchaser_id)
-        if not purchaser:
-            raise ValueError("Purchaser not found")
+        snapshot_manager = self.api.get_snapshot_manager()
+        async with snapshot_manager.pending_snapshot(reason="create_card_manual"):
+            repo = get_repo()
+            purchaser = await repo.find_user_by_id(purchaser_id)
+            if not purchaser:
+                raise ValueError("Purchaser not found")
 
-        # Count existing cards for naming
-        existing_cards = await CoffeeCard.find().to_list()
-        card_number = len(existing_cards) + 1
-        card_name = f"Card {card_number}"
+            # Count existing cards for naming
+            existing_cards = await CoffeeCard.find().to_list()
+            card_number = len(existing_cards) + 1
+            card_name = f"Card {card_number}"
 
-        total_cost = float(total_coffees) * cost_per_coffee
+            total_cost = float(total_coffees) * cost_per_coffee
 
-        card = CoffeeCard(
-            name=card_name,
-            total_coffees=total_coffees,
-            remaining_coffees=total_coffees,
-            cost_per_coffee=cost_per_coffee,
-            total_cost=total_cost,
-            purchaser=purchaser
-        )
+            card = CoffeeCard(
+                name=card_name,
+                total_coffees=total_coffees,
+                remaining_coffees=total_coffees,
+                cost_per_coffee=cost_per_coffee,
+                total_cost=total_cost,
+                purchaser=purchaser
+            )
 
-        await card.insert()
-        log_coffee_card_created(card_name, total_coffees, purchaser_id, cost_per_coffee)
-        self.logger.info(
-            f"Coffee card created: name='{card_name}', total_coffees={total_coffees}, "
-            f"cost_per_coffee=€{cost_per_coffee:.2f}, purchaser={purchaser.display_name} (id={purchaser_id})"
-        )
+            await card.insert()
+            log_coffee_card_created(card_name, total_coffees, purchaser_id, cost_per_coffee)
+            self.logger.info(
+                f"Coffee card created: name='{card_name}', total_coffees={total_coffees}, "
+                f"cost_per_coffee=€{cost_per_coffee:.2f}, purchaser={purchaser.display_name} (id={purchaser_id})"
+            )
 
-        await self._add_coffee_card(card)
+            await self._add_coffee_card(card)
 
-        request_gsheet_sync_after_action(reason="card_created")
+            request_gsheet_sync_after_action(reason="card_created")
 
-        return card
+            return card
     
     async def get_available(self) -> int:
         """Get the total number of available coffees across all cards."""
@@ -194,6 +196,7 @@ class CoffeeCardManager:
         self, 
         card: CoffeeCard,  
         requesting_user_id: Optional[int] = None,
+        closed_by_session: bool = False,
         require_confirmation: bool = False  # Deprecated - confirmation should be handled in conversation
     ) -> List[UserDebt]:
         """
@@ -223,20 +226,31 @@ class CoffeeCardManager:
         if not card.is_active:
             raise ValueError(f"Card '{card.name}' is already completed")
         
-        # Create or update debts FIRST (before deactivating card)
-        # because debt_manager checks if card is active
-        debts = await self.api.debt_manager.create_or_update_debts_for_card(card)
-        
-        # Update inactive_card_count for all users
-        # Reset to 0 for users who ordered on this card, increment for users who didn't
-        await self._update_inactive_counters(card)
-        
-        # NOW mark card as completed and deactivate
-        await self._deactivate_coffee_card(card)
+        if closed_by_session:
+            # Session submission snapshot should cover this close.
+            # (We still do the actual close work here.)
+            debts = await self.api.debt_manager.create_or_update_debts_for_card(card)
+            await self._update_inactive_counters(card)
+            await self._deactivate_coffee_card(card)
+            request_gsheet_sync_after_action(reason="card_closed")
+            self.logger.info(f"Card '{card.name}' marked as completed")
+        else:
+            snapshot_manager = self.api.get_snapshot_manager()
+            async with snapshot_manager.pending_snapshot(reason=f"close_card_manual:{card.name}"):
+                # Create or update debts FIRST (before deactivating card)
+                # because debt_manager checks if card is active
+                debts = await self.api.debt_manager.create_or_update_debts_for_card(card)
 
-        request_gsheet_sync_after_action(reason="card_closed")
-        
-        self.logger.info(f"Card '{card.name}' marked as completed")
+                # Update inactive_card_count for all users
+                # Reset to 0 for users who ordered on this card, increment for users who didn't
+                await self._update_inactive_counters(card)
+
+                # NOW mark card as completed and deactivate
+                await self._deactivate_coffee_card(card)
+
+                request_gsheet_sync_after_action(reason="card_closed")
+
+                self.logger.info(f"Card '{card.name}' marked as completed")
         
         # Build debt summary message for purchaser
         if debts:

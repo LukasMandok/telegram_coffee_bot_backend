@@ -638,6 +638,14 @@ class DebtManager:
             Created Payment document
         """
         repo = get_repo()
+
+        if amount > 0:
+            snapshot_manager = self.api.get_snapshot_manager()
+            await snapshot_manager.create_snapshot(
+                reason=f"record_payment:{payer_id}->{recipient_id}",
+                collections=("user_debts", "payments"),
+                persist_in_background=True,
+            )
         
         payer = await repo.find_user_by_id(payer_id)
         recipient = await repo.find_user_by_id(recipient_id)

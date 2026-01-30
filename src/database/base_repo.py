@@ -1,9 +1,14 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, TYPE_CHECKING
 
 from ..models.beanie_models import DebtSettings, GsheetSettings
 
+if TYPE_CHECKING:
+    from .snapshot_manager import SnapshotManager
+
 class BaseRepository(ABC):
+    snapshot_manager: "SnapshotManager | None" = None
+
     @abstractmethod
     async def connect(self, uri: str) -> None:
         pass

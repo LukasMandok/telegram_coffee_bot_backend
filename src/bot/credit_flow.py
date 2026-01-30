@@ -274,6 +274,14 @@ async def handle_debtor_debts_button(data: str, flow_state, api, user_id) -> Opt
         return None
     
     elif data == "save":
+        if staging.has_changes():
+            snapshot_manager = api.get_snapshot_manager()
+            await snapshot_manager.create_snapshot(
+                reason="apply_payment_credit_menu",
+                collections=("user_debts", "payments"),
+                persist_in_background=True,
+            )
+
         # Commit staged payments
         async def apply_payment(debt_id: str, amount: float):
             if debt_id in debtor_debts:
