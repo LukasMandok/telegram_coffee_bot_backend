@@ -34,6 +34,7 @@ from ..common.log import (
     log_telegram_bot_started, log_telegram_command, log_telegram_callback,
     log_telegram_message_sent, log_telegram_api_error, log_unexpected_error
 )
+from ..common.log import Logger
 
 from ..bot.message_manager import MessageManager
 from ..bot.commands import CommandManager
@@ -84,6 +85,7 @@ class TelethonAPI:
         )
 
         self.repo = repo
+        self.logger = Logger("TelethonAPI")
 
         session_name = "coffee_bot_session"
 
@@ -203,7 +205,7 @@ class TelethonAPI:
         self,
         handler: Callable[..., Any],
         event: Optional[Union[str, Any]] = None,  # More flexible type
-        exception_handler: Optional[Callable[[Callable], Callable]] = None
+        exception_handler: Optional[Callable[[Callable], Callable]] = None,
     ) -> None:
         """
         Add a handler to the bot with optional event and exception handler.
@@ -224,11 +226,12 @@ class TelethonAPI:
             
         async def wrapped_handler(event_obj) -> None:
             message = event_obj.message
+            sender_id = event_obj.sender_id
+
             # Convert telegram message to our MessageModel for consistency
             message_model = MessageModel.from_telegram_message(message)
             
             # Check if there's an active conversation for this user
-            sender_id = event_obj.sender_id
             has_active_conversation = self.conversation_manager.has_conversation(sender_id)
             
             # Only create a new conversation group if there's no active conversation
@@ -278,6 +281,8 @@ class TelethonAPI:
                 log_telegram_api_error("invalid_event", str(e))
                 # Prevent other handlers from handling this same event after an internal error
                 raise events.StopPropagation
+            # except events.StopPropagation:
+            #     raise
             except asyncio.TimeoutError as e:
                 log_telegram_api_error("timeout", str(e))
             except errors.rpcerrorlist.FloodWaitError as e:

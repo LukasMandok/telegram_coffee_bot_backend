@@ -19,6 +19,7 @@ from ..common.log import (
 )
 from ..bot.group_state_helpers import initialize_group_state_from_db
 from .telethon_models import GroupState
+from ..database.snapshot_manager import pending_snapshot
 
 if TYPE_CHECKING:
     from ..api.telethon_api import TelethonAPI
@@ -365,7 +366,12 @@ class SessionManager:
             )
             # Don't fail the session completion if auto-complete fails
     
-    async def complete_session(self, submitted_by_user_id: int) -> bool:
+    @pending_snapshot(
+        lambda self, submitted_by_user_id, **_: f"submit_session:{str(self.session.id) if self.session else 'unknown'}",
+        enabled=lambda self, submitted_by_user_id, **_: bool(self.session and self.session.is_active),
+        inject_snapshot_kwarg="snapshot",
+    )
+    async def complete_session(self, submitted_by_user_id: int, *, snapshot: Optional[Any] = None) -> bool:
         """
         Complete a session when a user submits their order.
         
@@ -376,188 +382,186 @@ class SessionManager:
             return False
 
         session_id = str(self.session.id)
-        snapshot_manager = self.api.get_snapshot_manager()
+        if snapshot is None:
+            raise RuntimeError("Snapshot context was not injected")
 
-        async with snapshot_manager.pending_snapshot(reason=f"submit_session:{session_id}") as snapshot:
-            # TODO: as a last check, check if there are enough coffees available in the CoffeeCardManager
-        
-            # Mark session as completed
-            self.session.is_active = False
-            self.session.completed_date = datetime.now()
-            submitted_by = await TelegramUser.find_one(TelegramUser.user_id == submitted_by_user_id)
-            self.session.submitted_by = submitted_by
-            await self.session.save()
+        # TODO: as a last check, check if there are enough coffees available in the CoffeeCardManager
 
-            # Get total coffees
-            total_coffees = await self.session.get_total_coffees()
+        # Mark session as completed
+        self.session.is_active = False
+        self.session.completed_date = datetime.now()
+        submitted_by = await TelegramUser.find_one(TelegramUser.user_id == submitted_by_user_id)
+        self.session.submitted_by = submitted_by
+        await self.session.save()
 
-            # Get participant user IDs from session
-            await self.session.fetch_link("participants")
-            participant_user_ids = {getattr(p, 'user_id', None) for p in self.session.participants if getattr(p, 'user_id', None) is not None}
+        # Get total coffees
+        total_coffees = await self.session.get_total_coffees()
 
-            # Notify Telegram Users about their orders (but not session participants - they get the full summary)
-            for name, group_member_data in self.session.group_state.members.items():
-                if group_member_data.coffee_count > 0:
-                    # Skip PassiveUsers (who don't have user_id)
-                    if group_member_data.user_id is None:
-                        continue
+        # Get participant user IDs from session
+        await self.session.fetch_link("participants")
+        participant_user_ids = {getattr(p, 'user_id', None) for p in self.session.participants if getattr(p, 'user_id', None) is not None}
 
-                    # Skip users who were active participants in the session
-                    if group_member_data.user_id in participant_user_ids:
-                        continue
-                        
-                    await self.session.fetch_link("initiator")
-                    initiator_display_name = self.session.initiator.display_name # type: ignore
-                    
-                    # Use singular/plural correctly and make key info bold
-                    coffee_word = "coffee" if group_member_data.coffee_count == 1 else "coffees"
-                    await self.api.message_manager.send_text(
-                        group_member_data.user_id,
-                        f"**{initiator_display_name}** has ordered **{group_member_data.coffee_count}** {coffee_word} for you.\n",
-                        True, True
-                    )
+        # Notify Telegram Users about their orders (but not session participants - they get the full summary)
+        for name, group_member_data in self.session.group_state.members.items():
+            if group_member_data.coffee_count > 0:
+                # Skip PassiveUsers (who don't have user_id)
+                if group_member_data.user_id is None:
+                    continue
 
-            # Close all keyboards immediately for this session so UI is consistent
-            await self.api.group_keyboard_manager.cleanup_session_keyboards(session_id)
+                # Skip users who were active participants in the session
+                if group_member_data.user_id in participant_user_ids:
+                    continue
 
-            # Try to create orders FIRST - this may fail if insufficient coffees
-            try:
-                await self.create_orders()
-            except InsufficientCoffeeError as e:
-                # Orders may have been partially created before the failure (e.g., first card got exhausted).
-                # Ensure any fully depleted cards are closed so they don't remain active with 0 remaining.
-                await self._auto_complete_filled_cards(submitted_by_user_id)
+                await self.session.fetch_link("initiator")
+                initiator_display_name = self.session.initiator.display_name # type: ignore
 
-                # Expected: user requested more coffees than available
-                self.logger.warning(
-                    f"Insufficient coffee capacity: requested={getattr(e, 'requested', '?')}, available={getattr(e, 'available', '?')}, session_id={session_id}",
-                    extra_tag="ORDER"
-                )
-                self.session.is_active = True  # Re-activate session
-                self.session.completed_date = None
-                await self.session.save()
-
-                # Cancel all active conversations for this session to prevent timeout errors
-                if session_id in self.api.group_keyboard_manager.active_keyboards:
-                    for participant_user_id in list(self.api.group_keyboard_manager.active_keyboards[session_id].keys()):
-                        self.api.conversation_manager.cancel_conversation(participant_user_id)
-
+                # Use singular/plural correctly and make key info bold
+                coffee_word = "coffee" if group_member_data.coffee_count == 1 else "coffees"
                 await self.api.message_manager.send_text(
-                    submitted_by_user_id,
-                    f"⚠️ **Session Suspended!**\n\n"
-                    f"❌ Not enough coffees remaining on your cards.\n"
-                    f"• Requested: {e.requested}\n"
-                    f"• Available: {e.available}\n\n"
-                    f"💡 Someone needs to buy and open a new coffee card!\n"
-                    f"Use /new_card to add a new card.\n\n"
-                    f"Your session is still active and you can submit again once a new card is available.",
-                    vanish=False,
-                    conv=False
+                    group_member_data.user_id,
+                    f"**{initiator_display_name}** has ordered **{group_member_data.coffee_count}** {coffee_word} for you.\n",
+                    True, True
                 )
 
-                await snapshot.abort()
-                return False
-            except Exception as e:
-                # Only truly unexpected errors get a stacktrace
-                log_unexpected_error(
-                    operation="create_orders",
-                    error=str(e),
-                    context={"session_id": session_id}
-                )
-                self.session.is_active = True  # Re-activate session
-                self.session.completed_date = None
-                await self.session.save()
+        # Close all keyboards immediately for this session so UI is consistent
+        await self.api.group_keyboard_manager.cleanup_session_keyboards(session_id)
 
-                # Cancel all active conversations for this session to prevent timeout errors
-                if session_id in self.api.group_keyboard_manager.active_keyboards:
-                    for participant_user_id in list(self.api.group_keyboard_manager.active_keyboards[session_id].keys()):
-                        self.api.conversation_manager.cancel_conversation(participant_user_id)
-
-                await self.api.message_manager.send_text(
-                    submitted_by_user_id,
-                    f"⚠️ **Session Suspended!**\n\n"
-                    f"❌ Error: {str(e)}\n\n"
-                    f"Your session is still active. Please try again.",
-                    vanish=False,
-                    conv=False
-                )
-
-                await snapshot.abort()
-                return False
-
-            # Orders created successfully - now check for fully filled cards and auto-complete them
+        # Try to create orders FIRST - this may fail if insufficient coffees
+        try:
+            await self.create_orders()
+        except InsufficientCoffeeError as e:
+            # Orders may have been partially created before the failure (e.g., first card got exhausted).
+            # Ensure any fully depleted cards are closed so they don't remain active with 0 remaining.
             await self._auto_complete_filled_cards(submitted_by_user_id)
 
-            # Send notifications to participants captured earlier
-            for participant_user_id in participant_user_ids:
-                if participant_user_id is None:
-                    continue
-                if participant_user_id == submitted_by_user_id:
+            # Expected: user requested more coffees than available
+            self.logger.warning(
+                f"Insufficient coffee capacity: requested={getattr(e, 'requested', '?')}, available={getattr(e, 'available', '?')}, session_id={session_id}",
+                extra_tag="ORDER"
+            )
+            self.session.is_active = True  # Re-activate session
+            self.session.completed_date = None
+            await self.session.save()
+
+            # Cancel all active conversations for this session to prevent timeout errors
+            if session_id in self.api.group_keyboard_manager.active_keyboards:
+                for participant_user_id in list(self.api.group_keyboard_manager.active_keyboards[session_id].keys()):
+                    self.api.conversation_manager.cancel_conversation(participant_user_id)
+
+            await self.api.message_manager.send_text(
+                submitted_by_user_id,
+                f"⚠️ **Session Suspended!**\n\n"
+                f"❌ Not enough coffees remaining on your cards.\n"
+                f"• Requested: {e.requested}\n"
+                f"• Available: {e.available}\n\n"
+                f"💡 Someone needs to buy and open a new coffee card!\n"
+                f"Use /new_card to add a new card.\n\n"
+                f"Your session is still active and you can submit again once a new card is available.",
+                vanish=False,
+                conv=False
+            )
+
+            await snapshot.abort()
+            return False
+        except Exception as e:
+            # Only truly unexpected errors get a stacktrace
+            log_unexpected_error(
+                operation="create_orders",
+                error=str(e),
+                context={"session_id": session_id}
+            )
+            self.session.is_active = True  # Re-activate session
+            self.session.completed_date = None
+            await self.session.save()
+
+            # Cancel all active conversations for this session to prevent timeout errors
+            if session_id in self.api.group_keyboard_manager.active_keyboards:
+                for participant_user_id in list(self.api.group_keyboard_manager.active_keyboards[session_id].keys()):
+                    self.api.conversation_manager.cancel_conversation(participant_user_id)
+
+            await self.api.message_manager.send_text(
+                submitted_by_user_id,
+                f"⚠️ **Session Suspended!**\n\n"
+                f"❌ Error: {str(e)}\n\n"
+                f"Your session is still active. Please try again.",
+                vanish=False,
+                conv=False
+            )
+
+            await snapshot.abort()
+            return False
+
+        # Orders created successfully - now check for fully filled cards and auto-complete them
+        await self._auto_complete_filled_cards(submitted_by_user_id)
+
+        # Send notifications to participants captured earlier
+        for participant_user_id in participant_user_ids:
+            if participant_user_id is None:
+                continue
+            if participant_user_id == submitted_by_user_id:
+                await self.api.message_manager.send_text(
+                    participant_user_id,
+                    f"✅ **Session Completed!**\n"
+                    f"Total: {total_coffees} coffees\n",
+                    vanish=True,
+                    conv=True,
+                    silent=False
+                )
+            else:
+                await self.api.message_manager.send_text(
+                    participant_user_id,
+                    f"🔒 **Session Completed by Another User**\n",
+                    vanish=True,
+                    conv=False,
+                    silent=True
+                )
+
+        # Remove conversation state for all participants so they are unblocked
+        for participant_user_id in participant_user_ids:
+            if participant_user_id is not None:
+                self.api.conversation_manager.cancel_conversation(participant_user_id)
+
+        # Delete persisted initial session notifications (they were sent with vanish=False)
+        try:
+            notif_key = session_id
+            if notif_key in self.session_notifications:
+                for msg in self.session_notifications[notif_key]:
+                    try:
+                        await msg.delete()
+                    except Exception:
+                        pass
+                del self.session_notifications[notif_key]
+        except Exception:
+            pass
+
+        # Build summary using central helper and send to all TelegramUsers
+        try:
+            summary_text = await self.get_session_summary()
+            full_users = await TelegramUser.find().to_list()
+            for user in full_users:
+                user_id_to_notify = user.user_id
+                try:
                     await self.api.message_manager.send_text(
-                        participant_user_id,
-                        f"✅ **Session Completed!**\n"
-                        f"Total: {total_coffees} coffees\n",
-                        vanish=True,
-                        conv=True,
-                        silent=False
-                    )
-                else:
-                    await self.api.message_manager.send_text(
-                        participant_user_id,
-                        f"🔒 **Session Completed by Another User**\n",
-                        vanish=True,
+                        user_id_to_notify,
+                        summary_text,
+                        vanish=False,
                         conv=False,
                         silent=True
                     )
+                except Exception as e:
+                    self.logger.error(f"Failed to send session summary to TelegramUser {user_id_to_notify}", exc=e)
+        except Exception as e:
+            log_unexpected_error(
+                operation="build_or_send_session_summary",
+                error=str(e),
+                context={"session_id": session_id}
+            )
 
-            # Remove conversation state for all participants so they are unblocked
-            for participant_user_id in participant_user_ids:
-                if participant_user_id is not None:
-                    self.api.conversation_manager.cancel_conversation(participant_user_id)
+        # Clear current session reference
+        if self.session and str(self.session.id) == session_id:
+            self.session = None
 
-            # Delete persisted initial session notifications (they were sent with vanish=False)
-            try:
-                notif_key = session_id
-                if notif_key in self.session_notifications:
-                    for msg in self.session_notifications[notif_key]:
-                        try:
-                            await msg.delete()
-                        except Exception:
-                            pass
-                    del self.session_notifications[notif_key]
-            except Exception:
-                pass
-
-            # Build summary using central helper and send to all TelegramUsers
-            try:
-                summary_text = await self.get_session_summary()
-                full_users = await TelegramUser.find().to_list()
-                for user in full_users:
-                    user_id_to_notify = user.user_id
-                    try:
-                        await self.api.message_manager.send_text(
-                            user_id_to_notify,
-                            summary_text,
-                            vanish=False,
-                            conv=False,
-                            silent=True
-                        )
-                    except Exception as e:
-                        self.logger.error(f"Failed to send session summary to TelegramUser {user_id_to_notify}", exc=e)
-            except Exception as e:
-                log_unexpected_error(
-                    operation="build_or_send_session_summary",
-                    error=str(e),
-                    context={"session_id": session_id}
-                )
-
-            # Clear current session reference
-            if self.session and str(self.session.id) == session_id:
-                self.session = None
-
-            return True
-
-        return False
+        return True
     
     async def cancel_session(self) -> None:
         """

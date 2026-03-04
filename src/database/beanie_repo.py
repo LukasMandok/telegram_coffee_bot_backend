@@ -22,17 +22,20 @@ class BeanieRepository(BaseRepository):
     _instance = None
 
     def __new__(cls, *args, **kwargs):
-        if not cls._instance:
+        if cls._instance is None:
             cls._instance = super(BeanieRepository, cls).__new__(cls)
-            cls._instance.__init__(*args, **kwargs)
         return cls._instance
 
     def __init__(self) -> None:
+        if getattr(self, "_initialized", False):
+            return
+
         self.uri = None
         self.db = None
         self.logger = Logger("BeanieRepository")
         self.client = None
         self.snapshot_manager: SnapshotManager | None = None
+        self._initialized = True
 
     # ---------------------------
     #     Connection
