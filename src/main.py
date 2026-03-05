@@ -35,13 +35,6 @@ async def lifespan(app: FastAPI):
     gsheet_task: asyncio.Task[None] | None = None
     
     try:
-        database_url = app_config.DATABASE_URL
-        if not database_url:
-            raise RuntimeError("DATABASE_URL is not set")
-
-        await mongodb.connect(database_url)
-        log_database_connected(database_url)
-        
         # Run debug setup (dev-only operations like defaults and passive users)
         await run_debug_setup_if_enabled()
         
@@ -92,6 +85,13 @@ async def run_telethon():
     await telethon_api.run()
 
 async def main() -> None:
+    database_url = app_config.DATABASE_URL
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is not set")
+
+    await mongodb.connect(database_url)
+    log_database_connected(database_url)
+
     await asyncio.gather(run_fastapi(), run_telethon())
 
 if __name__ == "__main__":

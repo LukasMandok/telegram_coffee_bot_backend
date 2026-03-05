@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import hashlib
 import json
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Set
@@ -135,6 +136,35 @@ def _sanitize_worksheet_title(title: str) -> str:
     sanitized = "".join("_" if c in invalid else c for c in title)
     sanitized = sanitized.strip()
     return sanitized[:100] if len(sanitized) > 100 else sanitized
+
+
+_CARD_WORKSHEET_TITLE_RE = re.compile(r".* \([0-9a-fA-F]{4}\)$")
+
+
+def _is_card_worksheet_title(title: str) -> bool:
+    return bool(_CARD_WORKSHEET_TITLE_RE.fullmatch(title or ""))
+
+
+def _delete_orphaned_card_worksheets(*, api: GsheetAPI, existing_titles: Set[str], desired_titles: Set[str]) -> None:
+    orphaned = sorted(t for t in existing_titles if _is_card_worksheet_title(t) and t not in desired_titles)
+    if not orphaned:
+        return
+
+    deleted = 0
+    for title in orphaned:
+        try:
+            ws = api.spreadsheet.worksheet(title)
+            api.spreadsheet.del_worksheet(ws)
+            _LAST_EXPORTED_SIGNATURE_BY_WORKSHEET.pop(title, None)
+            deleted += 1
+        except Exception as exc:
+            logger.error(
+                f"Failed to delete orphaned worksheet: title={title} error={type(exc).__name__}: {exc!r}",
+                exc_info=exc,
+            )
+
+    if deleted:
+        logger.info(f"Deleted orphaned card worksheets: count={deleted}")
 
 
 def _format_percent(numerator: int, denominator: int) -> str:
@@ -735,6 +765,13 @@ def _write_payloads_to_gsheet(payloads: List[CardSheetPayload]) -> None:
         updated_count += 1
 
     card_titles = [p.worksheet_title for p in payloads_sorted]
+
+    _delete_orphaned_card_worksheets(
+        api=api,
+        existing_titles=existing_titles,
+        desired_titles=set(card_titles),
+    )
+
     global _LAST_EXPORTED_WORKSHEET_ORDER
     if card_titles != _LAST_EXPORTED_WORKSHEET_ORDER:
         _reorder_card_worksheets(api=api, card_titles=card_titles)
