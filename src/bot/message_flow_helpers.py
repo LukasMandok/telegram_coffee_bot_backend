@@ -109,7 +109,12 @@ class StagingManager(Generic[T]):
         """Check if there are any staged changes."""
         return bool(self.get_staged())
     
-    async def commit(self, committer: Callable[[str, T], Awaitable[None]]):
+    async def commit(
+        self,
+        committer: Callable[[str, T], Awaitable[None]],
+        *,
+        pre_commit: Callable[[], Awaitable[None]] | None = None,
+    ):
         """
         Apply all staged items and clear staging area.
         
@@ -117,6 +122,11 @@ class StagingManager(Generic[T]):
             committer: Async function that takes (item_id, value) and applies the change
         """
         staged = self.get_staged()
+        if not staged:
+            return
+
+        if pre_commit is not None:
+            await pre_commit()
         for item_id, value in staged.items():
             await committer(item_id, value)
         self.clear()

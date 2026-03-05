@@ -21,6 +21,7 @@ from ..dependencies.dependencies import get_repo
 from .settings_manager import SettingsManager
 from .keyboards import KeyboardManager
 from .credit_flow import create_credit_flow
+from .conversation_flows.snapshots_flow import create_snapshots_flow
 
 from ..services.order import place_order
 from ..services.gsheet_sync import request_gsheet_sync_after_action
@@ -1646,6 +1647,12 @@ class ConversationManager:
         from .settings_flow import create_paypal_flow
         
         flow = create_paypal_flow()
+        return await flow.run(conv, user_id, self.api, start_state="main")
+
+    @managed_conversation("snapshots", 180)
+    async def snapshots_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
+        """Admin snapshots menu (MessageFlow-based)."""
+        flow = create_snapshots_flow()
         return await flow.run(conv, user_id, self.api, start_state="main")
     
     @managed_conversation("close_card", 60)

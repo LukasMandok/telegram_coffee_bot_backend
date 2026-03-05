@@ -642,7 +642,8 @@ class DebtManager:
         if amount > 0:
             snapshot_manager = self.api.get_snapshot_manager()
             await snapshot_manager.create_snapshot(
-                reason=f"record_payment:{payer_id}->{recipient_id}",
+                reason="Record Payment",
+                context=f"record_payment:{payer_id}->{recipient_id}",
                 collections=("user_debts", "payments"),
                 persist_in_background=True,
             )

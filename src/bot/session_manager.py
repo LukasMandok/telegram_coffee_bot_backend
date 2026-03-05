@@ -332,7 +332,7 @@ class SessionManager:
         # This is a helper method that can be expanded later
         pass
     
-    async def _auto_complete_filled_cards(self, notifier_user_id: int) -> None:
+    async def _auto_complete_filled_cards(self, notifier_user_id: int, *, snapshot: Optional[Any] = None) -> None:
         """
         Check for fully filled cards and auto-complete them.
         
@@ -350,6 +350,12 @@ class SessionManager:
             # Complete each filled card
             for card in cards_to_complete:
                 self.logger.info(f"Auto-completing fully filled card: {card.name}")
+                if snapshot is not None:
+                    try:
+                        snapshot.add_reason(f"Closed Card ({card.name})")
+                        snapshot.add_context(f"close_card:{str(getattr(card, 'id', 'unknown'))}")
+                    except Exception:
+                        pass
                 # Use the shared completion function (no confirmation needed for auto-complete)
                 await self.api.coffee_card_manager.close_card(
                     card,
@@ -368,6 +374,7 @@ class SessionManager:
     
     @pending_snapshot(
         lambda self, submitted_by_user_id, **_: f"submit_session:{str(self.session.id) if self.session else 'unknown'}",
+        reason="Submit Session",
         enabled=lambda self, submitted_by_user_id, **_: bool(self.session and self.session.is_active),
         inject_snapshot_kwarg="snapshot",
     )
@@ -432,7 +439,7 @@ class SessionManager:
         except InsufficientCoffeeError as e:
             # Orders may have been partially created before the failure (e.g., first card got exhausted).
             # Ensure any fully depleted cards are closed so they don't remain active with 0 remaining.
-            await self._auto_complete_filled_cards(submitted_by_user_id)
+            await self._auto_complete_filled_cards(submitted_by_user_id, snapshot=snapshot)
 
             # Expected: user requested more coffees than available
             self.logger.warning(
@@ -492,7 +499,7 @@ class SessionManager:
             return False
 
         # Orders created successfully - now check for fully filled cards and auto-complete them
-        await self._auto_complete_filled_cards(submitted_by_user_id)
+        await self._auto_complete_filled_cards(submitted_by_user_id, snapshot=snapshot)
 
         # Send notifications to participants captured earlier
         for participant_user_id in participant_user_ids:

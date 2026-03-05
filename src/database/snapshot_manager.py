@@ -36,13 +36,26 @@ class SnapshotCollectionInfo:
     document_count: int
 
 
-@dataclass(frozen=True)
-class CapturedSnapshot:
+@dataclass
+class Snapshot:
     snapshot_id: str
     created_at: datetime
-    reason: str
+    reasons: List[str]
+    contexts: List[str]
     collections: tuple[str, ...]
     documents_by_collection: Dict[str, List[Mapping[str, Any]]]
+
+    def add_reason(self, reason: str) -> None:
+        self.reasons.append(reason)
+
+    def add_context(self, context: str) -> None:
+        self.contexts.append(context)
+
+    def print_reason(self) -> str:
+        return ", ".join(self.reasons)
+
+    def print_context(self) -> str:
+        return " | ".join(self.contexts)
 
 
 class SnapshotManager:
@@ -77,10 +90,10 @@ class SnapshotManager:
             extra_tag="SNAPSHOT",
         )
 
-    def _meta(self):
+    def _meta_collection(self):
         return self.db.get_collection(self.META_COLLECTION)
 
-    def _data(self):
+    def _data_collection(self):
         return self.db.get_collection(self.DATA_COLLECTION)
 
     async def list_snapshots(self, *, include_pending: bool = False, limit: int = 50) -> List[Dict[str, Any]]:
@@ -88,21 +101,22 @@ class SnapshotManager:
         if not include_pending:
             query["status"] = "committed"
 
-        cursor = self._meta().find(query).sort("created_at", -1).limit(int(limit))
+        cursor = self._meta_collection().find(query).sort("created_at", -1).limit(int(limit))
         return [doc async for doc in cursor]
 
     async def get_snapshot_meta(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
-        return await self._meta().find_one({"snapshot_id": snapshot_id})
+        return await self._meta_collection().find_one({"snapshot_id": snapshot_id})
 
     async def capture_snapshot(
         self,
         *,
         snapshot_id: str,
         reason: str,
+        context: str | None = None,
         collections: Sequence[str] = DEFAULT_SNAPSHOT_COLLECTIONS,
-    ) -> CapturedSnapshot:
+    ) -> Snapshot:
         self.logger.debug(
-            f"Starting snapshot capture: snapshot_id={snapshot_id}, reason={reason}, collections={list(collections)}",
+            f"Starting snapshot capture: snapshot_id={snapshot_id}, reason={reason}, context={context}, collections={list(collections)}",
             extra_tag="SNAPSHOT",
         )
         created_at = datetime.now()
@@ -125,10 +139,11 @@ class SnapshotManager:
             extra_tag="SNAPSHOT",
         )
 
-        return CapturedSnapshot(
+        return Snapshot(
             snapshot_id=snapshot_id,
             created_at=created_at,
-            reason=reason,
+            reasons=[reason],
+            contexts=[context] if context is not None else [],
             collections=tuple(collections),
             documents_by_collection=docs_by_collection,
         )
@@ -137,34 +152,42 @@ class SnapshotManager:
         self,
         *,
         reason: str,
+        context: str | None = None,
         collections: Sequence[str] = DEFAULT_SNAPSHOT_COLLECTIONS,
         keep_last: int = 10,
         persist_in_background: bool = True,
     ) -> str:
         snapshot_id = uuid4().hex
         self.logger.debug(
-            f"create_snapshot called: snapshot_id={snapshot_id}, reason={reason}, background={persist_in_background}",
+            f"create_snapshot called: snapshot_id={snapshot_id}, reason={reason}, context={context}, background={persist_in_background}",
             extra_tag="SNAPSHOT",
         )
-        captured = await self.capture_snapshot(snapshot_id=snapshot_id, reason=reason, collections=collections)
-        await self._persist_captured_snapshot(captured, keep_last=keep_last, background=persist_in_background)
+        snapshot = await self.capture_snapshot(
+            snapshot_id=snapshot_id,
+            reason=reason,
+            context=context,
+            collections=collections,
+        )
+        await self._persist_snapshot(snapshot, keep_last=keep_last, background=persist_in_background)
         return snapshot_id
 
     def pending_snapshot(
         self,
         *,
         reason: str,
+        context: str | None = None,
         collections: Sequence[str] = DEFAULT_SNAPSHOT_COLLECTIONS,
         keep_last: int = 10,
         persist_in_background: bool = True,
     ) -> "PendingSnapshot":
         self.logger.trace(
-            f"pending_snapshot created: reason={reason}, collections={list(collections)}, keep_last={keep_last}, background={persist_in_background}",
+            f"pending_snapshot created: reason={reason}, context={context}, collections={list(collections)}, keep_last={keep_last}, background={persist_in_background}",
             extra_tag="SNAPSHOT",
         )
         return PendingSnapshot(
             self,
             reason=reason,
+            context=context,
             collections=collections,
             keep_last=keep_last,
             persist_in_background=persist_in_background,
@@ -213,9 +236,9 @@ class SnapshotManager:
         await self._delete_snapshot_by_meta(meta)
         return True
 
-    async def _persist_captured_snapshot(
+    async def _persist_snapshot(
         self,
-        captured: CapturedSnapshot,
+        snapshot: Snapshot,
         *,
         keep_last: int,
         background: bool,
@@ -225,32 +248,34 @@ class SnapshotManager:
             inserted_chunk_ids: List[ObjectId] = []
             try:
                 self.logger.debug(
-                    f"Persist started: snapshot_id={captured.snapshot_id}, keep_last={keep_last}",
+                    f"Persist started: snapshot_id={snapshot.snapshot_id}, keep_last={keep_last}",
                     extra_tag="SNAPSHOT",
                 )
+
                 meta_doc: Dict[str, Any] = {
-                    "snapshot_id": captured.snapshot_id,
-                    "created_at": captured.created_at,
-                    "reason": captured.reason,
+                    "snapshot_id": snapshot.snapshot_id,
+                    "created_at": snapshot.created_at,
+                    "reasons": list(snapshot.reasons),
+                    "contexts": list(snapshot.contexts),
                     "status": "writing",
                     "collections": {},
                     "total_documents": 0,
                 }
 
-                meta_insert = await self._meta().insert_one(meta_doc)
+                meta_insert = await self._meta_collection().insert_one(meta_doc)
                 meta_id = meta_insert.inserted_id
 
                 total_docs = 0
                 collections_info: Dict[str, Any] = {}
 
-                for collection_name in captured.collections:
-                    docs = captured.documents_by_collection.get(collection_name, [])
+                for collection_name in snapshot.collections:
+                    docs = snapshot.documents_by_collection.get(collection_name, [])
                     self.logger.trace(
-                        f"Persisting collection: snapshot_id={captured.snapshot_id}, collection={collection_name}, documents={len(docs)}",
+                        f"Persisting collection: snapshot_id={snapshot.snapshot_id}, collection={collection_name}, documents={len(docs)}",
                         extra_tag="SNAPSHOT",
                     )
                     info = await self._persist_one_collection(
-                        snapshot_id=captured.snapshot_id,
+                        snapshot_id=snapshot.snapshot_id,
                         source_collection=collection_name,
                         documents=docs,
                     )
@@ -261,7 +286,7 @@ class SnapshotManager:
                         "document_count": info.document_count,
                     }
 
-                await self._meta().update_one(
+                await self._meta_collection().update_one(
                     {"_id": meta_id},
                     {
                         "$set": {
@@ -274,7 +299,7 @@ class SnapshotManager:
                 )
 
                 self.logger.info(
-                    f"Persist committed: snapshot_id={captured.snapshot_id}, total_documents={total_docs}, chunk_count={len(inserted_chunk_ids)}",
+                    f"Persist committed: snapshot_id={snapshot.snapshot_id}, total_documents={total_docs}, chunk_count={len(inserted_chunk_ids)}",
                     extra_tag="SNAPSHOT",
                 )
 
@@ -282,30 +307,40 @@ class SnapshotManager:
 
             except Exception as e:
                 self.logger.error(
-                    f"Snapshot persist failed: snapshot_id={captured.snapshot_id}, error={e}",
+                    f"Snapshot persist failed: snapshot_id={snapshot.snapshot_id}, error={e}",
                     extra_tag="SNAPSHOT",
                     exc_info=e,
                 )
                 try:
                     if inserted_chunk_ids:
-                        await self._data().delete_many({"_id": {"$in": inserted_chunk_ids}})
+                        await self._data_collection().delete_many({"_id": {"$in": inserted_chunk_ids}})
                     if meta_id is not None:
-                        await self._meta().delete_one({"_id": meta_id})
+                        await self._meta_collection().delete_one({"_id": meta_id})
                 except Exception:
                     pass
 
         if background:
             self.logger.debug(
-                f"Scheduling snapshot persist in background: snapshot_id={captured.snapshot_id}",
+                f"Scheduling snapshot persist in background: snapshot_id={snapshot.snapshot_id}",
                 extra_tag="SNAPSHOT",
             )
             asyncio.create_task(persist())
         else:
             self.logger.debug(
-                f"Running snapshot persist inline: snapshot_id={captured.snapshot_id}",
+                f"Running snapshot persist inline: snapshot_id={snapshot.snapshot_id}",
                 extra_tag="SNAPSHOT",
             )
             await persist()
+
+    async def _persist_captured_snapshot(
+        self,
+        captured: Snapshot,
+        *,
+        keep_last: int,
+        background: bool,
+    ) -> None:
+        """Backward-compatible alias (older name)."""
+        await self._persist_snapshot(captured, keep_last=keep_last, background=background)
 
     async def _persist_one_collection(
         self,
@@ -388,7 +423,7 @@ class SnapshotManager:
         if len(BSON.encode(doc)) > self.max_bson_bytes:
             raise DocumentTooLarge("Snapshot chunk exceeds BSON size limit")
 
-        result = await self._data().insert_one(doc)
+        result = await self._data_collection().insert_one(doc)
         return result.inserted_id
 
     async def _insert_data_chunk_with_split(
@@ -441,7 +476,7 @@ class SnapshotManager:
             return []
 
         cursor = (
-            self._data()
+            self._data_collection()
             .find(
                 {
                     "snapshot_id": snapshot_id,
@@ -470,15 +505,15 @@ class SnapshotManager:
             ids.extend(list(info.get("chunk_ids") or []))
 
         if ids:
-            await self._data().delete_many({"_id": {"$in": ids}})
-        await self._meta().delete_one({"_id": meta["_id"]})
+            await self._data_collection().delete_many({"_id": {"$in": ids}})
+        await self._meta_collection().delete_one({"_id": meta["_id"]})
 
     async def _prune_old_snapshots(self, *, keep_last: int) -> None:
         keep_last = int(keep_last)
         if keep_last <= 0:
             return
 
-        cursor = self._meta().find({"status": "committed"}).sort("created_at", -1).skip(keep_last)
+        cursor = self._meta_collection().find({"status": "committed"}).sort("created_at", -1).skip(keep_last)
         to_delete = [doc async for doc in cursor]
         for meta in to_delete:
             await self._delete_snapshot_by_meta(meta)
@@ -490,29 +525,42 @@ class PendingSnapshot:
         manager: SnapshotManager,
         *,
         reason: str,
+        context: str | None,
         collections: Sequence[str],
         keep_last: int,
         persist_in_background: bool,
     ) -> None:
         self.manager = manager
         self.reason = reason
+        self.context = context
         self.collections = collections
         self.keep_last = int(keep_last)
         self.persist_in_background = bool(persist_in_background)
 
         self.snapshot_id: str | None = None
-        self._captured: CapturedSnapshot | None = None
+        self._snapshot: Snapshot | None = None
         self._aborted = False
+
+    def add_reason(self, reason: str) -> None:
+        if self._snapshot is None:
+            return
+        self._snapshot.add_reason(reason)
+
+    def add_context(self, context: str) -> None:
+        if self._snapshot is None:
+            return
+        self._snapshot.add_context(context)
 
     async def __aenter__(self) -> "PendingSnapshot":
         self.snapshot_id = uuid4().hex
         self.manager.logger.debug(
-            f"PendingSnapshot enter: snapshot_id={self.snapshot_id}, reason={self.reason}",
+            f"PendingSnapshot enter: snapshot_id={self.snapshot_id}, reason={self.reason}, context={self.context}",
             extra_tag="SNAPSHOT",
         )
-        self._captured = await self.manager.capture_snapshot(
+        self._snapshot = await self.manager.capture_snapshot(
             snapshot_id=self.snapshot_id,
             reason=self.reason,
+            context=self.context,
             collections=self.collections,
         )
         return self
@@ -520,7 +568,7 @@ class PendingSnapshot:
     async def abort(self) -> None:
         """Prevent commit on __aexit__ and drop captured state."""
         self._aborted = True
-        self._captured = None
+        self._snapshot = None
         self.manager.logger.info(
             f"PendingSnapshot aborted: snapshot_id={self.snapshot_id}",
             extra_tag="SNAPSHOT",
@@ -532,14 +580,14 @@ class PendingSnapshot:
                 f"PendingSnapshot exit without commit: snapshot_id={self.snapshot_id}, exc_type={exc_type}, aborted={self._aborted}",
                 extra_tag="SNAPSHOT",
             )
-            self._captured = None
+            self._snapshot = None
             return False
 
-        if not self._captured:
+        if not self._snapshot:
             return False
 
-        await self.manager._persist_captured_snapshot(
-            self._captured,
+        await self.manager._persist_snapshot(
+            self._snapshot,
             keep_last=self.keep_last,
             background=self.persist_in_background,
         )
@@ -547,20 +595,22 @@ class PendingSnapshot:
             f"PendingSnapshot committed: snapshot_id={self.snapshot_id}, background={self.persist_in_background}",
             extra_tag="SNAPSHOT",
         )
-        self._captured = None
+        self._snapshot = None
         return False
 
 
 def pending_snapshot(
-    reason: str | Callable[..., str],
+    context: str | Callable[..., str],
     *,
+    reason: str | Callable[..., str] | None = None,
     snapshot_manager_getter: Callable[[Any], Any] = lambda self: self.api.get_snapshot_manager(),
     enabled: Callable[..., bool] | None = None,
     inject_snapshot_kwarg: str | None = None,
 ) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
     """Decorator that wraps an async method in SnapshotManager.pending_snapshot(...).
 
-    - `reason`: string or a callable that computes a reason from `*args, **kwargs`
+    - `context`: string or a callable that computes a context from `*args, **kwargs`
+    - `reason`: optional string/callable for a human-readable reason; defaults to `context`
     - `enabled`: optional callable; when it returns False, no snapshot context is used
     - `inject_snapshot_kwarg`: if set, injects the yielded snapshot object as kwarg
     """
@@ -573,13 +623,18 @@ def pending_snapshot(
 
             self = args[0]
             snapshot_manager = snapshot_manager_getter(self)
-            computed_reason = reason(*args, **kwargs) if callable(reason) else reason
+            computed_context = context(*args, **kwargs) if callable(context) else context
+            computed_reason = (
+                (reason(*args, **kwargs) if callable(reason) else reason)
+                if reason is not None
+                else computed_context
+            )
             snapshot_manager.logger.trace(
-                f"pending_snapshot decorator activated: reason={computed_reason}, function={func.__name__}",
+                f"pending_snapshot decorator activated: reason={computed_reason}, context={computed_context}, function={func.__name__}",
                 extra_tag="SNAPSHOT",
             )
 
-            async with snapshot_manager.pending_snapshot(reason=computed_reason) as snapshot:
+            async with snapshot_manager.pending_snapshot(reason=computed_reason, context=computed_context) as snapshot:
                 if inject_snapshot_kwarg is not None and inject_snapshot_kwarg not in kwargs:
                     kwargs[inject_snapshot_kwarg] = snapshot  # type: ignore[assignment]
 

@@ -117,7 +117,7 @@ class CoffeeCardManager:
                 await user.save()
         
 
-    @pending_snapshot("create_card_manual")
+    @pending_snapshot("create_card_manual", reason="Create Coffee Card")
     async def create_coffee_card(
         self,
         total_coffees: int,
@@ -194,6 +194,7 @@ class CoffeeCardManager:
     
     @pending_snapshot(
         lambda self, card, **_: f"close_card_manual:{card.name}",
+        reason=lambda self, card, **_: f"Close Coffee Card ({card.name})",
         enabled=lambda self, card, requesting_user_id=None, closed_by_session=False, require_confirmation=False: not closed_by_session,
     )
     async def close_card(

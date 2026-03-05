@@ -133,6 +133,7 @@ class ButtonCallback:
 class PaginationConfig:
     """Configuration for paginated lists."""
     page_size: int = 10
+    items_per_row: int = 1
     show_page_numbers: bool = True
     prev_button_text: str = "◀️ Previous"
     next_button_text: str = "Next ▶️"
@@ -329,11 +330,11 @@ class ConfirmationDialog:
     def __init__(
         self,
         state_id: str,
-        question: str,
+        question: str | Callable[["MessageFlowState", Any, int], Awaitable[str]],
         on_confirm_state: str,
         on_cancel_state: str,
         confirm_text: str = "✅ Yes, confirm",
-        cancel_text: str = "❌ No, cancel",
+        cancel_text: str = "◁ Back",
         warning: Optional[str] = None,
         action: MessageAction = MessageAction.EDIT
     ):
@@ -348,24 +349,29 @@ class ConfirmationDialog:
     
     def create_state(self) -> MessageDefinition:
         """Create the confirmation dialog state."""
-        text = f"⚠️ **Confirmation Required**\n\n{self.question}"
-        if self.warning:
-            text += f"\n\n{self.warning}"
-        
+        async def build_text(flow_state: MessageFlowState, api: Any, user_id: int) -> str:
+            question_text = await self.question(flow_state, api, user_id) if callable(self.question) else self.question
+            text = f"⚠️ **Confirmation Required**\n\n{question_text}"
+            if self.warning:
+                text += f"\n\n{self.warning}"
+            return text
+
         return MessageDefinition(
             state_id=self.state_id,
-            text=text,
+            text_builder=build_text,
             buttons=[
                 [ButtonCallback(self.confirm_text, "confirm")],
-                [ButtonCallback(self.cancel_text, "cancel")]
+                [ButtonCallback(self.cancel_text, "back")],
             ],
             action=self.action,
             timeout=60,
             next_state_map={
                 "confirm": self.on_confirm_state,
-                "cancel": self.on_cancel_state
+                "back": self.on_cancel_state,
             },
-            remove_buttons_on_exit=True
+            # Prevent 'confirm'/'back' from being treated as default exit buttons.
+            exit_buttons=[],
+            remove_buttons_on_exit=True,
         )
 
 
@@ -517,10 +523,10 @@ class MessageFlow:
     def add_confirmation(
         self,
         state_id: str,
-        question: str,
+        question: str | Callable[["MessageFlowState", Any, int], Awaitable[str]],
         on_confirm_state: str,
         on_cancel_state: str,
-        **kwargs
+        **kwargs,
     ) -> None:
         """
         Add a confirmation dialog state.
@@ -578,12 +584,22 @@ class MessageFlow:
         end_idx = min(start_idx + config.page_size, len(all_items))
         page_items = all_items[start_idx:end_idx]
         
-        # Build item buttons
-        buttons = []
+        # Build item buttons (optionally grouped into a grid)
+        buttons: List[List[ButtonCallback]] = []
+        items_per_row = max(1, int(getattr(config, "items_per_row", 1)))
+        current_row: List[ButtonCallback] = []
         for idx, item in enumerate(page_items, start=start_idx):
-            if current_def.pagination_item_button_builder:
-                btn = current_def.pagination_item_button_builder(item, idx)
-                buttons.append([btn])
+            if not current_def.pagination_item_button_builder:
+                continue
+
+            btn = current_def.pagination_item_button_builder(item, idx)
+            current_row.append(btn)
+            if len(current_row) >= items_per_row:
+                buttons.append(current_row)
+                current_row = []
+
+        if current_row:
+            buttons.append(current_row)
         
         # Add navigation buttons
         nav_buttons = []
@@ -964,7 +980,10 @@ class MessageFlow:
                 else:
                     # Keep legacy behavior: if there is no message to edit, do not send a new one.
                     pass
-                await asyncio.sleep(current_def.timeout)
+                # Legacy exit states historically slept for <=2s; explicit exit states
+                # should return immediately to release exclusive Telethon conversations.
+                if is_legacy_exit:
+                    await asyncio.sleep(current_def.timeout)
                 return True
             
             # Send or edit message and wait for response
