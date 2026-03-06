@@ -125,7 +125,12 @@ async def handle_main_buttons(data: str, flow_state, api, user_id) -> Optional[s
     """Handle main menu buttons."""
     if data == "toggle_view":
         current_mode = _get_view_mode(flow_state)
-        flow_state.set(VIEW_MODE_KEY, VIEW_BY_DEBTOR if current_mode == VIEW_BY_CARD else VIEW_BY_CARD)
+        new_mode = VIEW_BY_DEBTOR if current_mode == VIEW_BY_CARD else VIEW_BY_CARD
+        flow_state.set(VIEW_MODE_KEY, new_mode)
+        await api.conversation_manager.repo.update_user_settings(
+            user_id,
+            credit_overview_view_mode=new_mode,
+        )
         return None
 
     if data == "notify_all":
@@ -403,5 +408,16 @@ async def run_credit_flow(conv, user_id: int, api) -> bool:
         )
         return True
 
+    user_settings = await api.conversation_manager.repo.get_user_settings(user_id)
+    initial_view_mode = VIEW_BY_CARD
+    if user_settings and user_settings.credit_overview_view_mode in (VIEW_BY_CARD, VIEW_BY_DEBTOR):
+        initial_view_mode = user_settings.credit_overview_view_mode
+
     flow = create_credit_flow()
-    return await flow.run(conv, user_id, api, start_state="main")
+    return await flow.run(
+        conv,
+        user_id,
+        api,
+        start_state="main",
+        initial_data={VIEW_MODE_KEY: initial_view_mode},
+    )

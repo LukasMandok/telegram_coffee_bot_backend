@@ -296,12 +296,25 @@ class UserSettings(Document):
     
     # Notification settings (user preference)
     notifications_silent: bool = Field(default=False, description="Whether notifications should be sent silently (user preference, can be overridden by app settings)")
+
+    # Credit overview settings
+    credit_overview_view_mode: str = Field(
+        default="by_card",
+        description="Credit overview view mode: 'by_card' or 'by_debtor'"
+    )
     
     @field_validator('group_sort_by')
     @classmethod
     def validate_sort_by(cls, v: str) -> str:
         if v not in ['alphabetical', 'coffee_count']:
             raise ValueError("group_sort_by must be 'alphabetical' or 'coffee_count'")
+        return v
+
+    @field_validator('credit_overview_view_mode')
+    @classmethod
+    def validate_credit_overview_view_mode(cls, v: str) -> str:
+        if v not in ['by_card', 'by_debtor']:
+            raise ValueError("credit_overview_view_mode must be 'by_card' or 'by_debtor'")
         return v
     
     class Settings:
