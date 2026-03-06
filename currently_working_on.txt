@@ -1,0 +1,77 @@
+working on:
+- restructure all conversations using the message flow
+done: 
+- credit
+- paypal
+remaining:
+- card
+- settings
+- signup
+- passive user
+
+
+
+next: 
+- gsheet update is not carried out anymore reliably after card creation (manual sync works)
+
+
+
+- add a /card command, that gives the current status of all active cards and also provides buttons to create new cards or close current cards
+
+-prevent users from joning the same session multiple times (this is porbably only possible because of a bug but still)
+- sessions should timout after 10 min if it is suspended and noone joins again (probably already implemented)
+
+- improve the coffee card (and other) creation, when entering a number -> should be done as in the settings
+-> the function for requesting a number should be implemented in the messageManager
+
+- use fonts to highight certain text
+
+- allow searching for changes on the google spreadsheet and propagating them down before updating the spreadsheet. Has to be fast
+mongo 
+- the /new_card command still wants to use the setup_paypal_link_subconversation_old (which does not exist anymore)
+- the debt overview is not working currently 
+
+- quick order currently does not trigger the closing of a coffee card if it is filled up, even though splitting coffees between active cards work.
+also the quick order should notify, the user in case the order will be split between multiple cards
+
+- add an option to message flows, which allow actions on initiation, submit and cancel -> so I can so gsheet synchronizations on sumbit and start backups on initiation save them on submit and delete them on cancel 
+
+Snapshots: 
+- an option to make specific snapshots as permanent, so they are not part of the fixed number of snapshots that are deleted, when more are created.
+- highlight when a snapshot was loaded in the recovery list and also all snapshots, which where created afterwards (at the time of loading)
+
+- new snapshot (normal)
+- old snapshot 2 created after the snapshot loaded (marked)
+- old snapshot 1 created after the snapshot loaded (marked)
+- loaded snapshot (marked)
+- old snapshot created before the loaded one (normal)
+
+- add two-way sync to gsheet, so changes remote can also be propagated to the bot, but only if an admin allows this, especially if something is marked as paid.
+
+- for quick ordering, the splitting between two coffee cards work, but the first card is not closed.
+
+bugs:
+- if there are no outstanding credits, dont show the menu
+- in the coffee order summary, add who gave the order/completed the session to the message
+- if a card is completed because all coffees were used up it does not update the spreadsheet but earlier when the session was closed, so the card is not marked as completed in google spreadsheet yet
+- the Card Completed (All debtors have been notified) message is not necessary at all.
+- add a emtpy row in the spreadsheet above the table to make it less cramped
+- currently the save button in the credit overview does nothing 
+- coffee prices with 1,2 (comma) are not valid anymore (but they should be)
+
+- after a card is completed, in the syncing process to GSHEET, the card is still marked as active there
+
+- catch the Ctrl+C in the terminal, to make sure that the bot is closed properly
+
+
+maybe:
+- emulate other users
+
+- reorganize the code, to put general stuff into the services and remvove the telethon specific send message stuff -> should only go via the api, which should be more generic
+this should also allow to use the restapi with a webpage instead (except for notifications)
+
+- make settings generate dynamically from the settings entries without having to define each flow. Just a few templates for certain types (true/false toggle), range, a list of possible strings
+
+
+not working:
+- add a reply keyboard and close if pressed and reopen if the coversation finishes. 
