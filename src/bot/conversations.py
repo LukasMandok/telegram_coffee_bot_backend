@@ -126,9 +126,14 @@ def managed_conversation(conversation_type: str, timeout: int = 60, use_existing
                             log_conversation_cancelled(user_id, conversation_type, reason="user_cancelled")
                             return False
             except asyncio.TimeoutError:
-                # Mark that a timeout occurred
+                # Mark that a timeout occurred and handle cleanup centrally
                 timed_out = True
-                raise
+                await self.handle_timeout_abort(
+                    user_id,
+                    conversation_type,
+                    clear_latest_messages=True,
+                )
+                return False
             except Exception as e:
                 # Log unexpected errors and return False to the caller
                 log_unexpected_error(f"managed_conversation_{conversation_type}", str(e), {"user_id": user_id})
@@ -312,6 +317,48 @@ class ConversationManager:
         
         self.logger.warning(f"No active conversation found for user {user_id} to cancel")
         return False
+
+    async def handle_timeout_abort(
+        self,
+        user_id: int,
+        context: str,
+        *,
+        current_message: Any = None,
+        clear_latest_messages: bool = False,
+    ) -> None:
+        """Apply consistent timeout handling: close stale UI, notify, and clear state."""
+        try:
+            log_conversation_timeout(user_id, context, "inactivity")
+        except Exception:
+            pass
+
+        if clear_latest_messages:
+            try:
+                while self.api.message_manager.latest_messages:
+                    await self.api.message_manager.delete_oldest_message()
+            except Exception:
+                pass
+        elif current_message is not None:
+            try:
+                await current_message.delete()
+            except Exception:
+                pass
+
+        try:
+            await self.api.message_manager.send_text(
+                user_id,
+                "⏱️ Conversation aborted due to inactivity.",
+                vanish=True,
+                conv=True,
+                delete_after=300,
+            )
+        except Exception:
+            pass
+
+        try:
+            self.remove_conversation_state(user_id)
+        except Exception:
+            pass
     
     # === Messages ===
 
@@ -423,6 +470,8 @@ class ConversationManager:
             # Wait for button response
             data = await self.receive_button_response(conv, user_id, timeout)
             return data, message
+        except asyncio.TimeoutError:
+            raise
         except Exception as e:
             # Return the message object even if button response failed
             # so caller can still use it for error handling
@@ -459,6 +508,8 @@ class ConversationManager:
             else:
                 data = await self.receive_button_response(conv, user_id, timeout)
                 return data, message_to_edit
+        except asyncio.TimeoutError:
+            raise
         except Exception as e:
             # Return the message object even if button response failed
             self.logger.error(f"Error in edit_keyboard_and_wait_response", exc=e)
@@ -828,31 +879,31 @@ class ConversationManager:
             except TimeoutError:
                 log_conversation_timeout(chat_id, "registration", "password_authentication")
                 await self.api.message_manager.send_text(
-                    chat_id, 
-                    "⏱️ Password entry timed out. Registration aborted.", 
-                    True, 
+                    chat_id,
+                    "⏱️ Password entry timed out. Registration aborted.",
+                    True,
                     True
                 )
                 return False
-                
+
         return False
-    
+
     @managed_conversation("group_selection", 180)
     async def group_selection(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
         """
         Start the group selection conversation with a user using integrated session management.
-        
+
         This handles the interactive coffee ordering interface with:
         - Session-based group management with integrated GroupState
         - Real-time synchronization across all participants
         - Per-participant pagination state
         - Dynamic keyboard updates via GroupKeyboardManager
-        
+
         Args:
             user_id: Telegram user ID for the conversation
             conv: Active Telethon conversation object (provided by decorator)
             state: Conversation state object (provided by decorator)
-            
+
         Returns:
             bool: True if session completed successfully, False otherwise
         """

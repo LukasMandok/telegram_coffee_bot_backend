@@ -274,9 +274,11 @@ class TelethonAPI:
                     
                 except asyncio.TimeoutError as e:
                     log_telegram_api_error("conversation_timeout", str(e), sender_id)
-                    # Remove conversation state on timeout
-                    self.conversation_manager.remove_conversation_state(sender_id)
-                    await self.message_manager.send_text(sender_id, "Your request has expired. Please start again from the beginning.")
+                    await self.conversation_manager.handle_timeout_abort(
+                        sender_id,
+                        "telethon_handler",
+                        clear_latest_messages=True,
+                    )
                     raise events.StopPropagation
                     
             except AttributeError as e:

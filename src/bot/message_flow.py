@@ -683,7 +683,7 @@ class MessageFlow:
         Handle a text input state.
         
         Returns:
-            Next state_id, or None if cancelled/timeout, or "__exit__" to exit flow
+            Next state_id, or None if cancelled/invalid input, or "__exit__" to exit flow
         """
         # Build full prompt text
         full_text = text
@@ -765,7 +765,7 @@ class MessageFlow:
                         
                         if not done:
                             # Timeout
-                            return None
+                            raise TimeoutError()
                         
                         result = done.pop().result()
                         
@@ -851,7 +851,7 @@ class MessageFlow:
                 return current_def.default_next_state
                 
             except TimeoutError:
-                return None
+                raise
             except Exception as e:
                 # Log error and retry
                 if attempt == max_attempts - 1:
@@ -918,7 +918,7 @@ class MessageFlow:
                 )
                 
                 if next_state_id is None:
-                    # Input cancelled or timed out
+                    # Input cancelled
                     return False
                 elif next_state_id == "__exit__":
                     return True
@@ -1073,7 +1073,7 @@ class MessageFlow:
                 if next_state_id is None:
                     self.logger.trace(f"on_button_press returned None, checking button callbacks")
                     # Check button-specific callbacks
-                    for row in button_callbacks:
+                    for row in (button_callbacks or []):
                         for btn in row:
                             if btn.callback_data == data and btn.callback_handler:
                                 self.logger.trace(f"Found button-specific callback for {data}")
