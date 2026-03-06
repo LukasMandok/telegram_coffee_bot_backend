@@ -1724,7 +1724,6 @@ class ConversationManager:
         debts = await self.api.coffee_card_manager.close_card(
             card,
             requesting_user_id=user_id,
-            require_confirmation=False  # We already handled confirmation above
         )
         
         return len(debts) > 0  # True if debts were created, False otherwise
