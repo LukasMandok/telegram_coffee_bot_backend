@@ -21,6 +21,7 @@ from ..dependencies.dependencies import get_repo
 from .settings_manager import SettingsManager
 from .keyboards import KeyboardManager
 from .credit_flow import create_credit_flow
+from .conversation_flows.debt_overview_flow import create_debt_overview_flow
 from .conversation_flows.snapshots_flow import create_snapshots_flow
 
 from ..services.order import place_order
@@ -1424,8 +1425,13 @@ class ConversationManager:
 
     @managed_conversation("debt_overview", 300)
     async def debt_overview_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
+        """Interactive debt overview conversation (MessageFlow-based)."""
+        flow = create_debt_overview_flow()
+        return await flow.run(conv, user_id, self.api, start_state="main")
+
+    async def debt_overview_conversation_old(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
         """
-        Interactive debt overview conversation with payment marking.
+        Interactive debt overview conversation with payment marking (legacy implementation).
         
         Args:
             user_id: Telegram user ID
@@ -2945,4 +2951,3 @@ class ConversationManager:
                 True, True
             )
             return False
-
