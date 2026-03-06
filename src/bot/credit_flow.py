@@ -26,6 +26,18 @@ from .payment_flow import (
 )
 
 
+VIEW_MODE_KEY = "credit_overview_view_mode"
+VIEW_BY_CARD = "by_card"
+VIEW_BY_DEBTOR = "by_debtor"
+
+
+def _get_view_mode(flow_state) -> str:
+    mode = flow_state.get(VIEW_MODE_KEY, VIEW_BY_CARD)
+    if mode not in (VIEW_BY_CARD, VIEW_BY_DEBTOR):
+        return VIEW_BY_CARD
+    return mode
+
+
 # NOTE: it seams like the staging manager is created quite often. is this really necessary?
 # shouldnt this be put directly into the create flow function with a dedicated message flow functionallity, which creates you the staging manager
 
@@ -52,30 +64,46 @@ async def build_credit_main_text(flow_state, api, user_id) -> str:
     if not all_credits:
         return "✅ **No Outstanding Credits**\n\nNo one owes you money! 🎉"
     
-    # Group credits by card
+    mode = _get_view_mode(flow_state)
     groups = {}
     group_totals = {}
     group_summaries = {}
     total = 0.0
-    
-    for debt in all_credits:
-        card_name = debt.coffee_card.name if debt.coffee_card else "Unknown Card"
-        debtor_name = debt.debtor.display_name if debt.debtor else "Unknown"
-        outstanding = debt.total_amount - debt.paid_amount
-        
-        if card_name not in groups:
-            groups[card_name] = []
-            group_totals[card_name] = 0.0
-        groups[card_name].append((debtor_name, f"{outstanding:.2f} €"))
-        
-        group_totals[card_name] += outstanding
-        group_summaries[card_name] = f"Subtotal: {group_totals[card_name]:.2f} €"
-        total += outstanding
+
+    if mode == VIEW_BY_DEBTOR:
+        for debt in all_credits:
+            debtor_name = debt.debtor.display_name if debt.debtor else "Unknown"
+            card_name = debt.coffee_card.name if debt.coffee_card else "Unknown Card"
+            outstanding = debt.total_amount - debt.paid_amount
+
+            if debtor_name not in groups:
+                groups[debtor_name] = []
+                group_totals[debtor_name] = 0.0
+
+            groups[debtor_name].append((card_name, f"{outstanding:.2f} €"))
+            group_totals[debtor_name] += outstanding
+            group_summaries[debtor_name] = f"Subtotal: {group_totals[debtor_name]:.2f} €"
+            total += outstanding
+    else:
+        for debt in all_credits:
+            card_name = debt.coffee_card.name if debt.coffee_card else "Unknown Card"
+            debtor_name = debt.debtor.display_name if debt.debtor else "Unknown"
+            outstanding = debt.total_amount - debt.paid_amount
+
+            if card_name not in groups:
+                groups[card_name] = []
+                group_totals[card_name] = 0.0
+
+            groups[card_name].append((debtor_name, f"{outstanding:.2f} €"))
+            group_totals[card_name] += outstanding
+            group_summaries[card_name] = f"Subtotal: {group_totals[card_name]:.2f} €"
+            total += outstanding
     
     # Use ListBuilder for formatting
     builder = ListBuilder()
+    title = "💰 Your Credit Overview (By Debtor)" if mode == VIEW_BY_DEBTOR else "💰 Your Credit Overview"
     return builder.build_grouped(
-        title="💰 Your Credit Overview",
+        title=title,
         groups=groups,
         group_summaries=group_summaries,
         overall_summary=f"Total Owed to You: {total:.2f} €",
@@ -85,7 +113,9 @@ async def build_credit_main_text(flow_state, api, user_id) -> str:
 
 async def build_credit_main_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
     """Build the main credit overview keyboard."""
+    toggle_label = "👥 View by User" if _get_view_mode(flow_state) == VIEW_BY_CARD else "🗂️ View by Card"
     return [
+        [ButtonCallback(toggle_label, "toggle_view")],
         [ButtonCallback("💸 Mark as Paid", "mark_paid"), ButtonCallback("📢 Notify All", "notify_all")],
         NavigationButtons.close()
     ]
@@ -93,6 +123,11 @@ async def build_credit_main_keyboard(flow_state, api, user_id) -> List[List[Butt
 
 async def handle_main_buttons(data: str, flow_state, api, user_id) -> Optional[str]:
     """Handle main menu buttons."""
+    if data == "toggle_view":
+        current_mode = _get_view_mode(flow_state)
+        flow_state.set(VIEW_MODE_KEY, VIEW_BY_DEBTOR if current_mode == VIEW_BY_CARD else VIEW_BY_CARD)
+        return None
+
     if data == "notify_all":
         # Send notifications
         user = await api.conversation_manager.repo.find_user_by_id(user_id)
@@ -339,3 +374,34 @@ def create_credit_flow() -> MessageFlow:
     ))
     
     return flow
+
+# NOTE: maybe it is actually better to keep this in the conversation manager, because this is not actually message flow, but regular messages
+
+async def run_credit_flow(conv, user_id: int, api) -> bool:
+    user = await api.conversation_manager.repo.find_user_by_id(user_id)
+    if user is None:
+        await api.message_manager.send_text(
+            user_id,
+            "❌ User not found.",
+            True,
+            True,
+        )
+        return False
+
+    credits = await api.debt_manager.get_user_credits(user, include_settled=False)
+    has_outstanding_credit = any(
+        credit.total_amount - credit.paid_amount > 0
+        for credit in credits
+    )
+
+    if not has_outstanding_credit:
+        await api.message_manager.send_text(
+            user_id,
+            "✅ **No Outstanding Credits**\n\nNo one owes you money! 🎉",
+            True,
+            True,
+        )
+        return True
+
+    flow = create_credit_flow()
+    return await flow.run(conv, user_id, api, start_state="main")

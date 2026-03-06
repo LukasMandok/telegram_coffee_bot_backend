@@ -289,3 +289,39 @@ def create_debt_flow() -> MessageFlow:
     )
 
     return flow
+
+
+async def run_debt_flow(conv, user_id: int, api) -> bool:
+    user = await api.conversation_manager.repo.find_user_by_id(user_id)
+    if not user:
+        await api.message_manager.send_text(
+            user_id,
+            "❌ User not found.",
+            True,
+            True,
+        )
+        return False
+
+    api.logger.trace(
+        f"DebtFlow start: user_id={user_id}, display_name={user.display_name}, stable_id={user.stable_id}, doc_id={user.id}"
+    )
+
+    debts = await api.debt_manager.get_user_debts(user, include_settled=False)
+    api.logger.trace(f"DebtFlow precheck fetched debts={len(debts)}")
+
+    has_outstanding_debt = any(
+        debt.total_amount - debt.paid_amount > 0
+        for debt in debts
+    )
+
+    if not has_outstanding_debt:
+        await api.message_manager.send_text(
+            user_id,
+            "✅ **No Outstanding Debts**\n\nYou don't owe anyone money! 🎉",
+            True,
+            True,
+        )
+        return True
+
+    flow = create_debt_flow()
+    return await flow.run(conv, user_id, api, start_state="main")

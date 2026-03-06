@@ -20,8 +20,8 @@ from ..handlers.paypal import create_paypal_link, validate_paypal_link
 from ..dependencies.dependencies import get_repo
 from .settings_manager import SettingsManager
 from .keyboards import KeyboardManager
-from .credit_flow import create_credit_flow
-from .conversation_flows.debt_flow import create_debt_flow
+from .credit_flow import run_credit_flow
+from .conversation_flows.debt_flow import run_debt_flow
 from .conversation_flows.snapshots_flow import create_snapshots_flow
 from .message_flow_helpers import IntegerParser, MoneyParser
 
@@ -1433,45 +1433,7 @@ class ConversationManager:
     @managed_conversation("debt", 300)
     async def debt_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
         """Interactive debt conversation (MessageFlow-based)."""
-        user = await self.repo.find_user_by_id(user_id)
-        if not user:
-            await self.api.message_manager.send_text(
-                user_id,
-                "❌ User not found.",
-                True,
-                True,
-            )
-            return False
-
-        self.logger.trace(
-            f"DebtConversation start: user_id={user_id}, display_name={getattr(user, 'display_name', None)}, stable_id={getattr(user, 'stable_id', None)}, doc_id={getattr(user, 'id', None)}"
-        )
-
-        debts = await self.api.debt_manager.get_user_debts(user, include_settled=False)
-        self.logger.trace(f"DebtConversation precheck fetched debts={len(debts)}")
-
-        for debt in debts:
-            outstanding = max(0.0, debt.total_amount - debt.paid_amount)
-            self.logger.trace(
-                f"DebtConversation precheck debt: debtor={getattr(debt.debtor, 'display_name', '?') if getattr(debt, 'debtor', None) else '?'}, creditor={getattr(debt.creditor, 'display_name', '?') if getattr(debt, 'creditor', None) else '?'}, total=€{debt.total_amount:.2f}, paid=€{debt.paid_amount:.2f}, outstanding=€{outstanding:.2f}, settled={debt.is_settled}"
-            )
-
-        has_outstanding_debt = any(
-            debt.total_amount - debt.paid_amount > 0
-            for debt in debts
-        )
-        self.logger.trace(f"DebtConversation precheck has_outstanding_debt={has_outstanding_debt}")
-        if not has_outstanding_debt:
-            await self.api.message_manager.send_text(
-                user_id,
-                "✅ **No Outstanding Debts**\n\nYou don't owe anyone money! 🎉",
-                True,
-                True,
-            )
-            return True
-
-        flow = create_debt_flow()
-        return await flow.run(conv, user_id, self.api, start_state="main")
+        return await run_debt_flow(conv, user_id, self.api)
 
     @managed_conversation("credit_overview", 300)
     async def credit_overview_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
@@ -1489,8 +1451,8 @@ class ConversationManager:
         Returns:
             bool: True if conversation completed successfully, False otherwise
         """
-        flow = create_credit_flow()
-        return await flow.run(conv, user_id, self.api, start_state="main")
+        
+        return await run_credit_flow(conv, user_id, self.api)
     
     @managed_conversation("paypal_setup", 180)
     async def paypal_setup_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
