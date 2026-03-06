@@ -25,7 +25,8 @@ from .conversation_flows.snapshots_flow import create_snapshots_flow
 
 from ..services.order import place_order
 from ..services.gsheet_sync import request_gsheet_sync_after_action
-from ..exceptions.coffee_exceptions import InsufficientCoffeeError
+from ..database.snapshot_manager import SnapshotManager
+from ..exceptions.coffee_exceptions import CoffeeSessionError, InsufficientCoffeeError
 
 from ..common.log import (
     log_telegram_callback, log_conversation_started, log_conversation_step, log_unexpected_error,
@@ -954,10 +955,13 @@ class ConversationManager:
             
         if submitted:
             # Use SessionManager to complete the session
-            await self.api.session_manager.complete_session(user_id)
-            log_conversation_completed(user_id, "group_selection")
-            return True
-            
+            try:
+                await self.api.session_manager.complete_session(user_id)
+                log_conversation_completed(user_id, "group_selection")
+                return True
+            except Exception:
+                return False
+
         elif canceled:
             log_conversation_cancelled(user_id, "group_selection", "user_cancelled")
 
@@ -1049,21 +1053,26 @@ class ConversationManager:
         await self.send_or_edit_message(user_id, "⏳ Placing order...", message_confirm, remove_buttons=True)
 
         try:
-            cards = await self.api.coffee_card_manager.get_coffee_cards_for_order(quantity)
-            await place_order(
-                initiator=initiator,
-                consumer=initiator,
-                cards=cards,
-                quantity=quantity,
-                from_session=False,
-                session=None,
-                enforce_capacity=True,
-            )
+            snapshot_manager: SnapshotManager = self.api.get_snapshot_manager()
+            async with snapshot_manager.pending_snapshot(
+                reason=f"Quick Order ({initiator.display_name} x{quantity})",
+                context="quick_order",
+            ):
+                cards = await self.api.coffee_card_manager.get_coffee_cards_for_order(quantity)
+                await place_order(
+                    initiator=initiator,
+                    consumer=initiator,
+                    cards=cards,
+                    quantity=quantity,
+                    from_session=False,
+                    session=None,
+                    enforce_capacity=True,
+                )
 
-            # Refresh cached counts after mutating cards
-            await self.api.coffee_card_manager.load_from_db()
+                # Refresh cached counts after mutating cards
+                await self.api.coffee_card_manager.load_from_db()
 
-            request_gsheet_sync_after_action(reason="quick_order_completed")
+                request_gsheet_sync_after_action(reason="quick_order_completed")
 
             await self.api.message_manager.send_text(
                 user_id,
@@ -2159,6 +2168,13 @@ class ConversationManager:
                 if not success:
                     return False
 
+            elif data == "snapshots":
+                if event:
+                    await event.answer()
+                success = await self._settings_snapshots_submenu(user_id, conv, message)
+                if not success:
+                    return False
+
 
     async def _settings_gsheet_submenu(self, user_id: int, conv: Conversation, message) -> bool:
         """Handle the Google Sheets settings submenu (app-wide; admins only)."""
@@ -2185,21 +2201,7 @@ class ConversationManager:
                     await event.answer()
                 return True
 
-            if data == "toggle_periodic":
-                if event:
-                    await event.answer()
-                new_value = not bool(gsheet_settings.periodic_sync_enabled)
-                success = await self.repo.update_gsheet_settings(periodic_sync_enabled=new_value)
-                if not success:
-                    await self.api.message_manager.send_text(
-                        user_id,
-                        "❌ Failed to save settings. Please try again.",
-                        True,
-                        True,
-                    )
-                    return False
-
-            elif data == "set_period":
+            if data == "set_period":
                 if event:
                     await event.answer()
 
@@ -2227,11 +2229,27 @@ class ConversationManager:
                         True,
                     )
                     return False
+                continue
 
-            elif data == "toggle_two_way":
+            if data == "toggle_periodic":
                 if event:
                     await event.answer()
-                new_value = not bool(gsheet_settings.two_way_sync_enabled)
+                new_value = not bool(gsheet_settings.periodic_sync_enabled)
+                success = await self.repo.update_gsheet_settings(periodic_sync_enabled=new_value)
+                if not success:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ Failed to save settings. Please try again.",
+                        True,
+                        True,
+                    )
+                    return False
+                continue
+
+            if data == "toggle_two_way":
+                if event:
+                    await event.answer()
+                new_value = not bool(getattr(gsheet_settings, "two_way_sync_enabled", False))
                 success = await self.repo.update_gsheet_settings(two_way_sync_enabled=new_value)
                 if not success:
                     await self.api.message_manager.send_text(
@@ -2241,8 +2259,9 @@ class ConversationManager:
                         True,
                     )
                     return False
+                continue
 
-            elif data == "toggle_after_actions":
+            if data == "toggle_after_actions":
                 if event:
                     await event.answer()
                 current_value = bool(getattr(gsheet_settings, "sync_after_actions_enabled", True))
@@ -2256,6 +2275,163 @@ class ConversationManager:
                         True,
                     )
                     return False
+                continue
+
+            if event:
+                await event.answer()
+
+    async def _settings_snapshots_submenu(self, user_id: int, conv: Conversation, message) -> bool:
+        """Handle the snapshots settings submenu (app-wide; admins only)."""
+        while True:
+            snapshot_settings = await self.repo.get_snapshot_settings()
+            if not snapshot_settings:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ Failed to load snapshot settings. Please try again later.",
+                    True,
+                    True,
+                )
+                return False
+
+            text = self.settings_manager.get_snapshots_submenu_text(snapshot_settings)
+            keyboard = self.settings_manager.get_snapshots_submenu_keyboard(snapshot_settings)
+
+            data, message, event = await self.edit_keyboard_and_wait_response(
+                conv, user_id, text, keyboard, message, 120, return_event=True
+            )
+
+            if data is None or data == "back":
+                if event:
+                    await event.answer()
+                return True
+
+            if data == "set_keep_last":
+                if event:
+                    await event.answer()
+                current_value = int(getattr(snapshot_settings, "keep_last", 10))
+                keep_last = await self.settings_manager.get_number_input(
+                    conv=conv,
+                    user_id=user_id,
+                    message_to_edit=message,
+                    setting_name="Snapshots: Keep Last",
+                    description="How many committed snapshots are retained (older ones are pruned automatically).",
+                    current_value=current_value,
+                    min_value=1,
+                    max_value=200,
+                )
+                if keep_last is None:
+                    continue
+                success = await self.repo.update_snapshot_settings(keep_last=keep_last)
+                if not success:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ Failed to save settings. Please try again.",
+                        True,
+                        True,
+                    )
+                    return False
+                continue
+
+            if data == "creation_points":
+                if event:
+                    await event.answer()
+
+                success = await self._settings_snapshots_creation_points_submenu(user_id, conv, message)
+                if not success:
+                    return False
+                continue
+
+            if event:
+                await event.answer()
+
+
+    async def _settings_snapshots_creation_points_submenu(self, user_id: int, conv: Conversation, message) -> bool:
+        """Handle snapshot creation-point toggles (app-wide; admins only)."""
+        while True:
+            snapshot_settings = await self.repo.get_snapshot_settings()
+            if not snapshot_settings:
+                await self.api.message_manager.send_text(
+                    user_id,
+                    "❌ Failed to load snapshot settings. Please try again later.",
+                    True,
+                    True,
+                )
+                return False
+
+            text = self.settings_manager.get_snapshots_creation_points_submenu_text(snapshot_settings)
+            keyboard = self.settings_manager.get_snapshots_creation_points_submenu_keyboard(snapshot_settings)
+
+            data, message, event = await self.edit_keyboard_and_wait_response(
+                conv, user_id, text, keyboard, message, 120, return_event=True
+            )
+
+            if data is None or data == "back":
+                if event:
+                    await event.answer()
+                return True
+
+            if data == "toggle_card_closed":
+                if event:
+                    await event.answer()
+                new_value = not bool(getattr(snapshot_settings, "card_closed", True))
+                success = await self.repo.update_snapshot_settings(card_closed=new_value)
+                if not success:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ Failed to save settings. Please try again.",
+                        True,
+                        True,
+                    )
+                    return False
+                continue
+
+            if data == "toggle_session_completed":
+                if event:
+                    await event.answer()
+                new_value = not bool(getattr(snapshot_settings, "session_completed", True))
+                success = await self.repo.update_snapshot_settings(session_completed=new_value)
+                if not success:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ Failed to save settings. Please try again.",
+                        True,
+                        True,
+                    )
+                    return False
+                continue
+
+            if data == "toggle_quick_order":
+                if event:
+                    await event.answer()
+                new_value = not bool(getattr(snapshot_settings, "quick_order", False))
+                success = await self.repo.update_snapshot_settings(quick_order=new_value)
+                if not success:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ Failed to save settings. Please try again.",
+                        True,
+                        True,
+                    )
+                    return False
+                continue
+
+            if data == "toggle_card_created":
+                if event:
+                    await event.answer()
+                new_value = not bool(getattr(snapshot_settings, "card_created", True))
+                success = await self.repo.update_snapshot_settings(card_created=new_value)
+                if not success:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ Failed to save settings. Please try again.",
+                        True,
+                        True,
+                    )
+                    return False
+                continue
+
+            if event:
+                await event.answer()
 
 
     async def _settings_debts_submenu(self, user_id: int, conv: Conversation, message) -> bool:

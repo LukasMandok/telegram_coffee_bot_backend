@@ -717,6 +717,48 @@ class BeanieRepository(BaseRepository):
             log_database_error("update_gsheet_settings", str(e), {"settings": kwargs})
             return False
 
+    async def get_snapshot_settings(self) -> Optional[models.SnapshotSettings]:
+        """Get snapshot settings from AppSettings."""
+        try:
+            app_settings = await models.AppSettings.find_one()
+            if not app_settings:
+                app_settings = models.AppSettings()
+                await app_settings.insert()
+            return app_settings.snapshots
+        except Exception as e:
+            log_database_error("get_snapshot_settings", str(e))
+            return None
+
+    async def update_snapshot_settings(self, **kwargs) -> bool:
+        """Update snapshot settings in AppSettings."""
+        try:
+            settings = await models.AppSettings.find_one()
+            if not settings:
+                settings = models.AppSettings()
+                await settings.insert()
+
+            if "keep_last" in kwargs and kwargs["keep_last"] is not None:
+                settings.snapshots.keep_last = int(kwargs["keep_last"])
+
+            if "card_closed" in kwargs and kwargs["card_closed"] is not None:
+                settings.snapshots.card_closed = bool(kwargs["card_closed"])
+
+            if "session_completed" in kwargs and kwargs["session_completed"] is not None:
+                settings.snapshots.session_completed = bool(kwargs["session_completed"])
+
+            if "quick_order" in kwargs and kwargs["quick_order"] is not None:
+                settings.snapshots.quick_order = bool(kwargs["quick_order"])
+
+            if "card_created" in kwargs and kwargs["card_created"] is not None:
+                settings.snapshots.card_created = bool(kwargs["card_created"])
+
+            await settings.save()
+            self.logger.info(f"Updated snapshot settings: {kwargs}")
+            return True
+        except Exception as e:
+            log_database_error("update_snapshot_settings", str(e), {"settings": kwargs})
+            return False
+
     ### User Settings ###
 
     async def get_user_settings(self, user_id: int) -> Optional[models.UserSettings]:

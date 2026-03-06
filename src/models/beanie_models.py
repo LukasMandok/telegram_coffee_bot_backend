@@ -228,6 +228,23 @@ class GsheetSettings(BaseModel):
     )
 
 
+class SnapshotSettings(BaseModel):
+    """Snapshot settings (admin-configurable)."""
+
+    keep_last: int = Field(
+        default=10,
+        ge=1,
+        le=200,
+        description="How many committed snapshots to retain (older ones are pruned).",
+    )
+
+    # Snapshot creation points (linked to snapshot context prefixes)
+    card_closed: bool = Field(default=True, description="Create snapshot when a card is closed manually")
+    session_completed: bool = Field(default=True, description="Create snapshot when a session is completed")
+    quick_order: bool = Field(default=False, description="Create snapshot for quick-order flow")
+    card_created: bool = Field(default=True, description="Create snapshot when a card is created manually")
+
+
 class AppSettings(Document):
     """
     Global application settings organized into sections.
@@ -238,6 +255,7 @@ class AppSettings(Document):
     notifications: NotificationSettings = Field(default_factory=NotificationSettings, description="Notification configuration")
     debt: DebtSettings = Field(default_factory=DebtSettings, description="Debt calculation configuration")
     gsheet: GsheetSettings = Field(default_factory=GsheetSettings, description="Google Sheets sync settings")
+    snapshots: SnapshotSettings = Field(default_factory=SnapshotSettings, description="Snapshot settings")
     
     class Settings:
         name = "app_settings"

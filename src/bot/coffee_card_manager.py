@@ -15,7 +15,7 @@ from ..utils.beanie_utils import requires_beanie
 from src.common.log import log_coffee_card_created, Logger
 from .keyboards import KeyboardManager
 from ..services.gsheet_sync import request_gsheet_sync_after_action
-from ..database.snapshot_manager import pending_snapshot
+from ..database.snapshot_manager import get_current_pending_snapshot, pending_snapshot
 
 # Type-only imports - only needed for type annotations
 if TYPE_CHECKING:
@@ -117,7 +117,7 @@ class CoffeeCardManager:
                 await user.save()
         
 
-    @pending_snapshot("create_card_manual", reason="Create Coffee Card")
+    @pending_snapshot("card_created", reason="Coffee Card Created")
     async def create_coffee_card(
         self,
         total_coffees: int,
@@ -193,16 +193,14 @@ class CoffeeCardManager:
                                     fetch_links=True).to_list()
     
     @pending_snapshot(
-        lambda self, card, **_: f"close_card_manual:{card.name}",
+        lambda self, card, **_: f"card_closed:{str(getattr(card, 'id', 'unknown'))}",
         reason=lambda self, card, **_: f"Close Coffee Card ({card.name})",
-        enabled=lambda self, card, requesting_user_id=None, closed_by_session=False, require_confirmation=False: not closed_by_session,
     )
     async def close_card(
         self, 
         card: CoffeeCard,  
         requesting_user_id: Optional[int] = None,
         closed_by_session: bool = False,
-        require_confirmation: bool = False  # Deprecated - confirmation should be handled in conversation
     ) -> List[UserDebt]:
         """
         Mark a coffee card as completed and create debt records.
@@ -211,9 +209,7 @@ class CoffeeCardManager:
         
         Args:
             card: The coffee card to complete
-            requesting_user_id: Optional user ID who is requesting completion (for notifications)
-            require_confirmation: Deprecated - confirmation should be handled before calling this method
-            
+            requesting_user_id: Optional user ID who is requesting completion (for notifications)            
         Returns:
             List of created UserDebt documents
             
@@ -222,8 +218,7 @@ class CoffeeCardManager:
         """        
         if not card:
             raise ValueError(f"Card not provided")
-        
-        
+
         await card.fetch_link("purchaser")
         purchaser: TelegramUser = card.purchaser  # type: ignore        
         

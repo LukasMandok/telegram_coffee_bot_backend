@@ -40,6 +40,11 @@ class SessionNotActiveError(CoffeeValidationError):
         super().__init__(message)
 
 
+class CoffeeSessionError(ValueError):
+    """Base class for coffee session related errors."""
+    pass
+
+
 class CoffeeCardError(ValueError):
     """Base class for coffee card related errors."""
     pass

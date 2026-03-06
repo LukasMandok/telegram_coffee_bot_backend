@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional, Any, Dict, TYPE_CHECKING
 
-from ..models.beanie_models import DebtSettings, GsheetSettings
+from ..models.beanie_models import DebtSettings, GsheetSettings, SnapshotSettings
 
 if TYPE_CHECKING:
     from .snapshot_manager import SnapshotManager
@@ -118,5 +118,14 @@ class BaseRepository(ABC):
 
     async def update_gsheet_settings(self, **kwargs) -> bool:
         """Update Google Sheets synchronization settings."""
+        raise NotImplementedError
+
+    # App-wide snapshot settings
+    async def get_snapshot_settings(self) -> Optional[SnapshotSettings]:
+        """Get snapshot settings."""
+        raise NotImplementedError
+
+    async def update_snapshot_settings(self, **kwargs) -> bool:
+        """Update snapshot settings."""
         raise NotImplementedError
     

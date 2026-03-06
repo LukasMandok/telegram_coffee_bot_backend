@@ -13,12 +13,6 @@ from .conversations import ConversationManager
 from .keyboards import KeyboardManager
 from ..handlers import users
 from ..dependencies import dependencies as dep
-from ..exceptions.coffee_exceptions import (
-    InvalidCoffeeCountError, 
-    InsufficientCoffeeError, 
-    SessionNotActiveError,
-    UserNotFoundError
-)
 from ..common.log import (
     log_telegram_command, log_telegram_callback, log_coffee_session_started,
     log_coffee_session_cancelled, log_unexpected_error, log_user_login_success,
@@ -399,7 +393,11 @@ class CommandManager:
                 )
                 return
             
-            completed = await self.api.session_manager.complete_session(user_id)
+            try:
+                completed = await self.api.session_manager.complete_session(user_id)
+            except Exception:
+                return
+
             # Complete the session (store user_id before completing)
             if not completed:
                 await self.api.message_manager.send_text(

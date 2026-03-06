@@ -259,7 +259,67 @@ class SettingsManager:
             [Button.inline("🔔 Notifications", b"notifications")],
             [Button.inline("💳 Debts", b"debts")],
             [Button.inline("📄 Google Sheets", b"gsheet")],
+            [Button.inline("📸 Snapshots", b"snapshots")],
             [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+        ]
+
+    def get_snapshots_submenu_text(self, snapshot_settings) -> str:
+        keep_last = int(getattr(snapshot_settings, "keep_last", 10))
+
+        def _status(value: bool) -> str:
+            return "✅ On" if bool(value) else "❌ Off"
+
+        return (
+            "📸 **Snapshot Settings (App-Wide)**\n\n"
+            f"**Keep last snapshots:** {keep_last}\n\n"
+            "**Active snapshot creation points:**\n"
+            f"• **Card closed:** {_status(getattr(snapshot_settings, 'card_closed', True))}\n"
+            f"• **Session completed:** {_status(getattr(snapshot_settings, 'session_completed', True))}\n"
+            f"• **Quick order:** {_status(getattr(snapshot_settings, 'quick_order', False))}\n"
+            f"• **Card created:** {_status(getattr(snapshot_settings, 'card_created', True))}\n\n"
+            "Select a setting to adjust:"
+        )
+
+    def get_snapshots_submenu_keyboard(self, snapshot_settings) -> List[List[Button]]:
+        return [
+            [Button.inline("🔢 Set Keep Last", b"set_keep_last")],
+            [Button.inline("⚙ Snapshot Creation Points", b"creation_points")],
+            [Button.inline(f"{self.ICON_BACK} Back", b"back")],
+        ]
+
+    def get_snapshots_creation_points_submenu_text(self, snapshot_settings) -> str:
+        def _status(value: bool) -> str:
+            return "✅ On" if bool(value) else "❌ Off"
+
+        return (
+            "📸 **Snapshot Creation Points**\n\n"
+            "Toggle which actions automatically create snapshots.\n\n"
+            f"• **Card closed:** {_status(getattr(snapshot_settings, 'card_closed', True))}\n"
+            f"• **Session completed:** {_status(getattr(snapshot_settings, 'session_completed', True))}\n"
+            f"• **Quick order:** {_status(getattr(snapshot_settings, 'quick_order', False))}\n"
+            f"• **Card created:** {_status(getattr(snapshot_settings, 'card_created', True))}\n\n"
+            "Tap a button to toggle:"
+        )
+
+    def get_snapshots_creation_points_submenu_keyboard(self, snapshot_settings) -> List[List[Button]]:
+        card_closed = bool(getattr(snapshot_settings, "card_closed", True))
+        session_completed = bool(getattr(snapshot_settings, "session_completed", True))
+        quick_order = bool(getattr(snapshot_settings, "quick_order", False))
+        card_created = bool(getattr(snapshot_settings, "card_created", True))
+
+        def _state_label(on: bool, label: str) -> str:
+            return f"✅ {label}" if on else f"❌ {label}"
+
+        return [
+            [
+                Button.inline(_state_label(card_closed, "Card Closed"), b"toggle_card_closed"),
+                Button.inline(_state_label(session_completed, "Session Completed"), b"toggle_session_completed"),
+            ],
+            [
+                Button.inline(_state_label(quick_order, "Quick Order"), b"toggle_quick_order"),
+                Button.inline(_state_label(card_created, "Card Created"), b"toggle_card_created"),
+            ],
+            [Button.inline(f"{self.ICON_BACK} Back", b"back")],
         ]
 
     def get_debts_submenu_text(self, debt_settings) -> str:
