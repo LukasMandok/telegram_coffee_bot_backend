@@ -430,7 +430,7 @@ class SessionManager:
         except InsufficientCoffeeError as e:
             # Orders may have been partially created before the failure (e.g., first card got exhausted).
             # Ensure any fully depleted cards are closed so they don't remain active with 0 remaining.
-            await self._auto_complete_filled_cards(submitted_by_user_id)
+            # await self._auto_complete_filled_cards(submitted_by_user_id)
 
             # Expected: user requested more coffees than available
             self.logger.warning(
