@@ -84,7 +84,7 @@ async def test_custom_amount_input_rejects_too_large_amount():
 
 
 @pytest.mark.asyncio
-async def test_custom_amount_input_distributes_payment_oldest_first():
+async def test_custom_amount_input_distributes_payment_sequentially():
     debts = [FakeDebt(total_amount=5.0, paid_amount=0.0), FakeDebt(total_amount=4.0, paid_amount=1.0)]
     summary = {"Alice": {"total_owed": 8.0, "paypal_link": None, "debts": debts}}
     api = make_api(summary)
@@ -98,6 +98,8 @@ async def test_custom_amount_input_distributes_payment_oldest_first():
     assert next_state == "main"
     assert debts[0].paid_amount == 5.0
     assert debts[1].paid_amount == 2.0
+    debts[0].save.assert_awaited_once()
+    debts[1].save.assert_awaited_once()
     api.message_manager.send_text.assert_awaited_once()
 
 
