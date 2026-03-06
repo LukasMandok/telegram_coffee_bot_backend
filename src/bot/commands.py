@@ -568,8 +568,8 @@ class CommandManager:
         if await self._check_and_notify_active_conversation(user_id):
             return
         
-        # Start the debt overview conversation
-        await self.api.conversation_manager.debt_overview_conversation(user_id)
+        # Start the debt conversation
+        await self.api.conversation_manager.debt_conversation(user_id)
 
     @dep.verify_user
     async def handle_credit_command(self, event: events.NewMessage.Event) -> None:

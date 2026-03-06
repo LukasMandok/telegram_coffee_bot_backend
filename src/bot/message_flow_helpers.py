@@ -7,6 +7,7 @@ These helpers provide common patterns like:
 - Common input parsers and validators
 """
 
+import re
 from typing import Any, Dict, List, Optional, Callable, Awaitable, TypeVar, Generic, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -143,6 +144,8 @@ class MoneyParser:
     
     def __init__(self, currency_symbol: str = '€'):
         self.currency_symbol = currency_symbol
+        symbol = re.escape(currency_symbol)
+        self._money_pattern = re.compile(rf"^\s*{symbol}?\s*([0-9]+|[0-9]*[\.,][0-9]+)\s*{symbol}?\s*$")
     
     def parse(self, input_text: str) -> Optional[float]:
         """
@@ -154,19 +157,41 @@ class MoneyParser:
         Returns:
             float: Parsed amount or None if invalid
         """
-        # Remove spaces and currency symbol
-        cleaned = input_text.strip().replace(' ', '').replace(self.currency_symbol, '')
-        
-        # Replace comma with dot for decimal separator
-        cleaned = cleaned.replace(',', '.')
-        
-        # Handle leading dot (e.g., ".5" -> "0.5")
+        if not input_text or not input_text.strip():
+            return None
+
+        match = self._money_pattern.match(input_text)
+        if not match:
+            return None
+
+        cleaned = match.group(1).replace(',', '.')
+
         if cleaned.startswith('.'):
             cleaned = '0' + cleaned
-        
+
         try:
             amount = float(cleaned)
             return amount if amount >= 0 else None
+        except ValueError:
+            return None
+
+
+class IntegerParser:
+    """Parse integer input formats used in message flows."""
+
+    def __init__(self):
+        self._int_pattern = re.compile(r"^\s*([+-]?\d+)\s*$")
+
+    def parse(self, input_text: str) -> Optional[int]:
+        if not input_text or not input_text.strip():
+            return None
+
+        match = self._int_pattern.match(input_text)
+        if not match:
+            return None
+
+        try:
+            return int(match.group(1))
         except ValueError:
             return None
 

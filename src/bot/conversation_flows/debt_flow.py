@@ -1,11 +1,35 @@
-"""Debt overview conversation flow (MessageFlow-based)."""
+"""Debt conversation flow (MessageFlow-based)."""
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from ..message_flow import ButtonCallback, MessageDefinition, MessageFlow, StateType
-from ..message_flow_helpers import GridLayout, NavigationButtons
+from ..message_flow_helpers import GridLayout, MoneyParser, NavigationButtons
+
+
+MONEY_PARSER = MoneyParser()
+
+
+def _trace(api, message: str) -> None:
+    logger = getattr(getattr(api, "debt_manager", None), "logger", None)
+    if logger and hasattr(logger, "trace"):
+        logger.trace(message)
+
+
+def _debt_total_due(debt: Any) -> float:
+    return debt.total_amount
+
+
+def _debt_remaining(debt: Any) -> float:
+    return max(0.0, _debt_total_due(debt) - debt.paid_amount)
+
+
+def _validate_custom_paid_amount(paid_amount: float, total_owed: float) -> None:
+    if paid_amount <= 0:
+        raise ValueError("Amount must be positive")
+    if paid_amount > total_owed:
+        raise ValueError("Amount cannot exceed total owed")
 
 
 async def get_debt_user(flow_state, api, user_id):
@@ -20,11 +44,49 @@ async def get_debt_summary(flow_state, api, user_id):
     """Fetch and cache debt summary for the current user."""
     user = await get_debt_user(flow_state, api, user_id)
     if not user:
+        _trace(api, f"DebtFlow get_debt_summary: no user found for user_id={user_id}")
         return None
 
     if not flow_state.has("debt_summary"):
-        debt_summary = await api.debt_manager.get_debt_summary_by_creditor(user)
+        _trace(
+            api,
+            f"DebtFlow get_debt_summary: loading debts for user={getattr(user, 'display_name', '?')} user_id={user_id} stable_id={getattr(user, 'stable_id', None)}"
+        )
+        all_debts = await api.debt_manager.get_user_debts(user, include_settled=False)
+        debt_summary: Dict[str, Dict[str, Any]] = {}
+
+        for debt in all_debts:
+            outstanding = _debt_remaining(debt)
+            _trace(
+                api,
+                f"DebtFlow debt row: debtor={getattr(debt.debtor, 'display_name', '?') if getattr(debt, 'debtor', None) else '?'}, creditor={getattr(debt.creditor, 'display_name', '?') if getattr(debt, 'creditor', None) else '?'}, total=€{debt.total_amount:.2f}, paid=€{debt.paid_amount:.2f}, outstanding=€{outstanding:.2f}, settled={debt.is_settled}"
+            )
+            if outstanding <= 0:
+                continue
+
+            creditor = debt.creditor
+            if not creditor:
+                continue
+
+            creditor_name = getattr(creditor, "display_name", "Unknown")
+            if creditor_name not in debt_summary:
+                debt_summary[creditor_name] = {
+                    "creditor_id": getattr(creditor, "user_id", None),
+                    "creditor_name": creditor_name,
+                    "total_owed": 0.0,
+                    "paypal_link": getattr(creditor, "paypal_link", None),
+                    "debts": [],
+                }
+
+            debt_summary[creditor_name]["total_owed"] += outstanding
+            debt_summary[creditor_name]["debts"].append(debt)
+
+        _trace(
+            api,
+            f"DebtFlow get_debt_summary: grouped creditors={list(debt_summary.keys())}"
+        )
         flow_state.set("debt_summary", debt_summary)
+
     return flow_state.get("debt_summary")
 
 
@@ -67,7 +129,7 @@ async def build_main_text(flow_state, api, user_id) -> str:
 async def build_main_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
     debt_summary = await get_debt_summary(flow_state, api, user_id)
     if not debt_summary:
-        return [NavigationButtons.close()]
+        return []
 
     grid = GridLayout(items_per_row=2)
     creditor_items = [
@@ -123,7 +185,7 @@ async def build_creditor_payment_keyboard(flow_state, api, user_id) -> List[List
 
 async def _mark_full_amount(creditor_info) -> None:
     for debt in creditor_info["debts"]:
-        total_due = debt.total_amount + getattr(debt, "debt_correction", 0.0)
+        total_due = _debt_total_due(debt)
         remaining = total_due - debt.paid_amount
         if remaining > 0:
             debt.paid_amount = total_due
@@ -133,7 +195,7 @@ async def _mark_full_amount(creditor_info) -> None:
 async def _mark_custom_amount(creditor_info, paid_amount: float) -> None:
     remaining_to_pay = paid_amount
     for debt in creditor_info["debts"]:
-        total_due = debt.total_amount + getattr(debt, "debt_correction", 0.0)
+        total_due = _debt_total_due(debt)
         debt_remaining = total_due - debt.paid_amount
         if debt_remaining > 0 and remaining_to_pay > 0:
             payment_for_this_debt = min(remaining_to_pay, debt_remaining)
@@ -205,21 +267,13 @@ async def handle_custom_amount_input(input_text: str, flow_state, api, user_id) 
     total_owed = creditor_info["total_owed"]
 
     try:
-        paid_amount = float(input_text.strip())
-        if paid_amount <= 0:
-            raise ValueError("Amount must be positive")
-        if paid_amount > total_owed:
-            raise ValueError("Amount cannot exceed total owed")
+        paid_amount = MONEY_PARSER.parse(input_text)
+        if paid_amount is None:
+            raise ValueError("Please enter a valid euro amount")
+        _validate_custom_paid_amount(paid_amount, total_owed)
 
-        await _mark_custom_amount(creditor_info, paid_amount)
-        await api.message_manager.send_text(
-            user_id,
-            f"✅ Marked €{paid_amount:.2f} as paid to {creditor_name}",
-            True,
-            True,
-        )
-        invalidate_debt_summary_cache(flow_state)
-        return "main"
+        flow_state.set("pending_custom_paid_amount", paid_amount)
+        return "confirm_custom_amount"
     except ValueError as exc:
         flow_state.set("custom_amount_error", f"Invalid amount: {exc}")
         return "custom_amount"
@@ -231,7 +285,68 @@ async def handle_custom_amount_button(data: str, flow_state, api, user_id) -> Op
     return None
 
 
-def create_debt_overview_flow() -> MessageFlow:
+async def build_confirm_custom_amount_text(flow_state, api, user_id) -> str:
+    creditor_name = flow_state.get("selected_creditor_name", "Unknown")
+    paid_amount = float(flow_state.get("pending_custom_paid_amount", 0.0))
+
+    return (
+        "⚠️ **Confirm Payment**\n\n"
+        f"You are about to mark **€{paid_amount:.2f}** as paid to **{creditor_name}**.\n\n"
+        "Do you want to continue?"
+    )
+
+
+async def build_confirm_custom_amount_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
+    return [
+        [ButtonCallback("✅ Confirm", "confirm_custom")],
+        NavigationButtons.back(),
+    ]
+
+
+async def handle_confirm_custom_amount_button(data: str, flow_state, api, user_id) -> Optional[str]:
+    if data == "back":
+        return "custom_amount"
+
+    if data != "confirm_custom":
+        return None
+
+    creditor_name = flow_state.get("selected_creditor_name")
+    pending_amount = flow_state.get("pending_custom_paid_amount")
+    debt_summary = await get_debt_summary(flow_state, api, user_id)
+
+    if not debt_summary or creditor_name not in debt_summary:
+        await api.message_manager.send_text(user_id, "❌ Creditor not found.", True, True)
+        flow_state.pop("pending_custom_paid_amount", None)
+        invalidate_debt_summary_cache(flow_state)
+        return "main"
+
+    if pending_amount is None:
+        flow_state.set("custom_amount_error", "No amount to confirm")
+        return "custom_amount"
+
+    paid_amount = float(pending_amount)
+    creditor_info = debt_summary[creditor_name]
+    total_owed = creditor_info["total_owed"]
+
+    try:
+        _validate_custom_paid_amount(paid_amount, total_owed)
+    except ValueError as exc:
+        flow_state.set("custom_amount_error", f"Invalid amount: {exc}")
+        return "custom_amount"
+
+    await _mark_custom_amount(creditor_info, paid_amount)
+    await api.message_manager.send_text(
+        user_id,
+        f"✅ Marked €{paid_amount:.2f} as paid to {creditor_name}",
+        True,
+        True,
+    )
+    flow_state.pop("pending_custom_paid_amount", None)
+    invalidate_debt_summary_cache(flow_state)
+    return "main"
+
+
+def create_debt_flow() -> MessageFlow:
     flow = MessageFlow()
 
     flow.add_state(
@@ -265,6 +380,18 @@ def create_debt_overview_flow() -> MessageFlow:
             input_timeout=60,
             on_input_received=handle_custom_amount_input,
             on_button_press=handle_custom_amount_button,
+            exit_buttons=[],
+        )
+    )
+
+    flow.add_state(
+        MessageDefinition(
+            state_id="confirm_custom_amount",
+            text_builder=build_confirm_custom_amount_text,
+            keyboard_builder=build_confirm_custom_amount_keyboard,
+            timeout=120,
+            next_state_map={"back": "custom_amount"},
+            on_button_press=handle_confirm_custom_amount_button,
             exit_buttons=[],
         )
     )

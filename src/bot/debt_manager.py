@@ -482,15 +482,30 @@ class DebtManager:
         Returns:
             List of UserDebt documents with fetched links
         """
-        # Fetch linked creditor and coffee_card in one go
-        query = None 
-        
-        if include_settled:
-            query = UserDebt.find({UserDebt.debtor.id: user.id}, fetch_links=True)
-        else:
-            query = UserDebt.find({UserDebt.debtor.id: user.id, UserDebt.is_settled: False}, fetch_links=True)
-        
-        results = await query.to_list()
+        user_id_for_log = user.user_id if isinstance(user, TelegramUser) else None
+        self.logger.trace(
+            f"get_user_debts start: user={user.display_name}, user_id={user_id_for_log}, doc_id={user.id}, stable_id={user.stable_id}, include_settled={include_settled}"
+        )
+
+        # Support both user document variants that may exist for the same stable identity
+        # (PassiveUser <-> TelegramUser conversion keeps stable_id but changes document id).
+        debtor_ids: List[Any] = [user.id]
+
+        telegram_user = await TelegramUser.find_one(TelegramUser.stable_id == user.stable_id)
+        passive_user = await PassiveUser.find_one(PassiveUser.stable_id == user.stable_id)
+
+        for candidate in (telegram_user, passive_user):
+            if candidate and candidate.id not in debtor_ids:
+                debtor_ids.append(candidate.id)
+
+        self.logger.trace(f"get_user_debts resolved debtor_ids={debtor_ids}")
+
+        query_filter: Dict[str, Any] = {"debtor.$id": {"$in": debtor_ids}}
+        if not include_settled:
+            query_filter["is_settled"] = False
+
+        results = await UserDebt.find(query_filter, fetch_links=True).to_list()
+        self.logger.trace(f"get_user_debts query returned {len(results)} debts")
 
         # Fetch all linked documents
         # for debt in results:
@@ -506,6 +521,13 @@ class DebtManager:
                 debt.creditor = await TelegramUser.get(debt.creditor.ref.id)
             if isinstance(debt.coffee_card, BeanieLink):
                 debt.coffee_card = await CoffeeCard.get(debt.coffee_card.ref.id)
+
+        for debt in results:
+            debtor_name = debt.debtor.display_name if not isinstance(debt.debtor, BeanieLink) else "?"
+            creditor_name = debt.creditor.display_name if not isinstance(debt.creditor, BeanieLink) else "?"
+            self.logger.trace(
+                f"get_user_debts debt: debtor={debtor_name}, creditor={creditor_name}, total=€{debt.total_amount:.2f}, paid=€{debt.paid_amount:.2f}, correction=€{debt.debt_correction:.2f}, settled={debt.is_settled}"
+            )
         
         return results
     
