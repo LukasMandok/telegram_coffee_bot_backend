@@ -5,6 +5,8 @@ This demonstrates how the helpers reduce boilerplate significantly.
 Compare this to credit_flow_example.py - much shorter and clearer!
 """
 
+# NOTE: what is pervious_on_save? and shouldnt this be just the default behaviour. I dont really understand, where something else would be needed.
+
 from typing import Optional, List
 
 from ..models.beanie_models import TelegramUser
@@ -13,9 +15,14 @@ from .message_flow import (
     MessageAction, StateType, NotificationStyle
 )
 from .message_flow_helpers import (
-    GridLayout, StagingManager, MoneyParser,
-    ListBuilder, InputDistributor, make_state,
+    GridLayout, ListBuilder, make_state,
     NavigationButtons
+)
+from .payment_flow import (
+    build_staged_payments_keyboard,
+    get_total_staged,
+    handle_staged_payments_button,
+    handle_staged_payments_input,
 )
 
 
@@ -33,6 +40,10 @@ async def get_credits_data(flow_state, api, user_id):
         all_credits = await api.debt_manager.get_user_credits(user, include_settled=False)
         flow_state.set('credits_raw', all_credits)
     return flow_state.get('credits_raw')
+
+
+def invalidate_credit_cache(flow_state) -> None:
+    flow_state.clear('credits_raw', 'debtor_debts')
 
 async def build_credit_main_text(flow_state, api, user_id) -> str:
     """Build the main credit overview text - with automatic caching."""
@@ -196,13 +207,8 @@ async def build_debtor_debts_text(flow_state, api, user_id) -> str:
                 }
                 total_owed += outstanding
     
-    # Store for later use
     flow_state.set('debtor_debts', debtor_debts)
-    
-    # Get staging info
-    staging = StagingManager(flow_state, 'staged_payments')
-    staged = staging.get_staged()
-    total_staged = sum(staged.values())
+    total_staged = get_total_staged(flow_state)
     
     # Build text
     text = f"**Payments from {debtor_name}**\n\n"
@@ -217,142 +223,65 @@ async def build_debtor_debts_text(flow_state, api, user_id) -> str:
 
 async def build_debtor_debts_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
     """Build keyboard for debtor's debts."""
-    debtor_debts = flow_state.get('debtor_debts', {})
-    staging = StagingManager(flow_state, 'staged_payments')
-    staged = staging.get_staged()
-    
-    # Build items with remaining amounts
-    items = []
-    for debt_id, info in debtor_debts.items():
-        card_name = info['card_name']
-        original = info['amount']
-        staged_amount = staged.get(debt_id, 0)
-        remaining = original - staged_amount
-        
-        if staged_amount > 0 and remaining == 0:
-            text = f"{card_name} ✓"
-        elif staged_amount > 0:
-            text = f"{card_name} ({remaining:.2f} €)"
-        else:
-            text = f"{card_name} ({original:.2f} €)"
-        
-        items.append((text, f"pay_card:{debt_id}"))
-    
-    # Use GridLayout
-    grid = GridLayout(items_per_row=2)
-    
-    # Dynamic footer based on staging state
-    if staging.has_changes():
-        footer = [
-            [ButtonCallback("✅ Mark All as Paid", "pay_all")],
-            NavigationButtons.undo_and_save()
-        ]
-    else:
-        footer = [
-            [ButtonCallback("✅ Mark All as Paid", "pay_all")],
-            NavigationButtons.back()
-        ]
-    
-    return grid.build(items=items, footer_buttons=footer)
+    return await build_staged_payments_keyboard(
+        flow_state,
+        api,
+        user_id,
+        items_key='debtor_debts',
+        pay_all_text="✅ Mark All as Paid",
+    )
 
 
 async def handle_debtor_debts_button(data: str, flow_state, api, user_id) -> Optional[str]:
     """Handle button presses in debtor debts view."""
-    staging = StagingManager(flow_state, 'staged_payments')
-    debtor_debts = flow_state.get('debtor_debts', {})
-    
-    if data.startswith("pay_card:"):
-        debt_id = data.split(":", 1)[1]
-        if debt_id in debtor_debts:
-            staging.stage(debt_id, debtor_debts[debt_id]['amount'])
-        return None  # Stay on same state
-    
-    elif data == "pay_all":
-        for debt_id, info in debtor_debts.items():
-            staging.stage(debt_id, info['amount'])
-        return None
-    
-    elif data == "undo":
-        staging.clear()
-        return None
-    
-    elif data == "save":
-        # Commit staged payments
-        async def apply_payment(debt_id: str, amount: float):
-            if debt_id in debtor_debts:
-                debt = debtor_debts[debt_id]['debt']
-                await api.debt_manager._apply_payment_to_debt(debt, amount)
+    async def apply_payment(debt, amount: float):
+        await api.debt_manager._apply_payment_to_debt(debt, amount)
 
-        async def snapshot_before_commit() -> None:
-            snapshot_manager = api.get_snapshot_manager()
-            await snapshot_manager.create_snapshot(
-                reason="Apply Payment (credit menu)",
-                context="apply_payment_credit_menu",
-                collections=("user_debts", "payments"),
-                persist_in_background=True,
-            )
+    async def snapshot_before_commit() -> None:
+        snapshot_manager = api.get_snapshot_manager()
+        await snapshot_manager.create_snapshot(
+            reason="Apply Payment (credit menu)",
+            context="apply_payment_credit_menu",
+            collections=("user_debts", "payments"),
+            save_in_background=True,
+        )
 
-        await staging.commit(apply_payment, pre_commit=snapshot_before_commit)
-        return "debtors_list"
-    
-    elif data == "back":
-        staging.clear()
-        return "debtors_list"
-    
-    return None
+    async def after_save(_total_staged: float) -> None:
+        debtor_name = flow_state.get('selected_debtor', 'selected debtor')
+        await api.message_manager.send_text(
+            user_id,
+            f"✅ Marked {_total_staged:.2f} € as paid by {debtor_name}",
+            vanish=True,
+            conv=True,
+            delete_after=2,
+        )
+        invalidate_credit_cache(flow_state)
+
+    return await handle_staged_payments_button(
+        data,
+        flow_state,
+        api,
+        user_id,
+        items_key='debtor_debts',
+        on_apply_payment=apply_payment,
+        save_state='debtors_list',
+        back_state='debtors_list',
+        on_before_commit=snapshot_before_commit,
+        on_after_save=after_save,
+        return_previous_on_save=True,
+    )
 
 
 async def handle_debtor_debts_input(input_text: str, flow_state, api, user_id) -> Optional[str]:
     """Handle custom amount input for debtor debts."""
-    # Parse amount
-    parser = MoneyParser()
-    amount = parser.parse(input_text)
-    
-    if amount is None or amount <= 0:
-        await api.message_manager.send_text(
-            user_id, "❌ Invalid amount. Please enter a positive number.",
-            vanish=True, conv=True, delete_after=2
-        )
-        return "debtor_debts"
-    
-    # Get debts
-    debtor_debts = flow_state.get('debtor_debts', {})
-    total_owed = sum(info['amount'] for info in debtor_debts.values())
-    
-    if amount > total_owed:
-        await api.message_manager.send_text(
-            user_id, f"❌ Amount cannot exceed total owed ({total_owed:.2f} €)",
-            vanish=True, conv=True, delete_after=2
-        )
-        return "debtor_debts"
-    
-    # Distribute amount using helper
-    staging = StagingManager(flow_state, 'staged_payments')
-    distributor = InputDistributor()
-    
-    # Convert debtor_debts to simple dict for distributor
-    items = {debt_id: info['amount'] for debt_id, info in debtor_debts.items()}
-    
-    # Distribute, sorting by creation date (oldest first)
-    distributed = distributor.distribute(
-        amount=amount,
-        items=items,
-        existing=staging.get_staged(),
-        sort_key=lambda x: debtor_debts[x[0]]['debt'].created_at
-    )
-    
-    # Update staging
-    for debt_id, new_total in distributed.items():
-        staging.stage(debt_id, new_total)
-    
-    # Send confirmation
-    await api.message_manager.send_text(
+    return await handle_staged_payments_input(
+        input_text,
+        flow_state,
+        api,
         user_id,
-        f"✅ Staged {amount:.2f} € payment across {len(distributed)} card(s)",
-        vanish=True, conv=True, delete_after=2
+        items_key='debtor_debts',
+        current_state='debtor_debts',
     )
-    
-    return "debtor_debts"
 
 
 # ============================================================================
@@ -370,6 +299,7 @@ def create_credit_flow() -> MessageFlow:
         keyboard_builder=build_credit_main_keyboard,
         action=MessageAction.AUTO,
         timeout=180,
+        delete_message_on_exit=True,
         next_state_map={"mark_paid": "debtors_list"},
         exit_buttons=["close"],
         on_button_press=handle_main_buttons,

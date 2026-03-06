@@ -18,6 +18,7 @@ Coffee Cards:
 - the Card Completed (All debtors have been notified) message is not necessary at all.
 
 Sessions / Order:
+- order should show the name of the currently active card
 - in the coffee order summary, add who gave the order/completed the session to the message
 - prevent users from joning the same session multiple times (this is porbably only possible because of a bug but still)
 - sessions should timout after 10 min if it is suspended and noone joins again (probably already implemented)
@@ -45,17 +46,22 @@ Message Flow:
 -> the function for requesting a number should be implemented in the messageManager
 
 Credit overview:
-- currently the save button in the credit overview does nothing 
 - add a toggle to switch between the debt overview by card (as currently) and a list of all debts per user (split into separate cards and total)
 - if there are no outstanding credits, dont show the menu
 
-Debt overview:
-- the debt overview is not working currently
 
 General:
 - the /new_card command still wants to use the setup_paypal_link_subconversation_old (which does not exist anymore)
 - catch the Ctrl+C in the terminal, to make sure that the bot is closed properly
 
+Settings:
+- Settings for vanishing messages are currently not consistent between bot restarts. It looks like they are not correctly saved in the database or are overwritten by another place
+- make each toggle button the same, so that an activated option has a green dot and an deactivated an red dot on the toggle button (instead of showing how the stat would change if you press the button), this should also include all of the checkmark/cross icons in toggle buttons used somewhere else. This should be completely consistent in the whole message flow.
+
+Logging:
+- each logger should register with the settings manager, so that I get a full list of modules [module name], which I can separately deactivate
+- I should include the class name in the logging message.
+- Logging (also the definition) should be more consistent, I think this logger class and the implemented functions dont do anything at the moment
 
 maybe:
 - emulate other users

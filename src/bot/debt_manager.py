@@ -667,7 +667,7 @@ class DebtManager:
                 reason="Record Payment",
                 context=f"record_payment:{payer_id}->{recipient_id}",
                 collections=("user_debts", "payments"),
-                persist_in_background=True,
+                save_in_background=True,
             )
         
         payer = await repo.find_user_by_id(payer_id)
