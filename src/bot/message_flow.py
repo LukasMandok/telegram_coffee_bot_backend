@@ -237,9 +237,9 @@ class MessageDefinition(BaseModel):
         default=True,
         description="Remove buttons when exiting this state"
     )
-    delete_message_on_exit: bool = Field(
+    keep_message_on_exit: bool = Field(
         default=False,
-        description="Delete the current message when exiting this state via an exit button"
+        description="Keep the current message when exiting this state via an exit button"
     )
     
     # Terminal behavior
@@ -1038,7 +1038,7 @@ class MessageFlow:
                     )
                 
                 if flow_state.current_message:
-                    if data == "close" and current_def.delete_message_on_exit:
+                    if data == "close" and not current_def.keep_message_on_exit:
                         await flow_state.current_message.delete()
                         flow_state.current_message = None
                     elif current_def.remove_buttons_on_exit:

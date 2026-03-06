@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
+from ...models.beanie_models import TelegramUser
 from ..message_flow import ButtonCallback, MessageAction, MessageFlow
 from ..message_flow_helpers import (
     GridLayout,
@@ -61,6 +62,7 @@ async def get_creditor_summary(flow_state, api, user_id) -> Dict[str, Dict]:
             summary[creditor_name] = {
                 "total_owed": 0.0,
                 "paypal_link": debt.creditor.paypal_link,
+                "creditor": debt.creditor,
                 "debts": [],
             }
 
@@ -194,7 +196,9 @@ async def handle_creditor_debts_button(data: str, flow_state, api, user_id) -> O
         )
 
     async def after_save(total_staged: float) -> None:
+        debt_user = await get_debt_user(flow_state, api, user_id)
         creditor_name = flow_state.get("selected_creditor", "selected creditor")
+
         await api.message_manager.send_text(
             user_id,
             f"✅ Marked {total_staged:.2f} € as paid to {creditor_name}",
@@ -202,6 +206,30 @@ async def handle_creditor_debts_button(data: str, flow_state, api, user_id) -> O
             conv=True,
             delete_after=2,
         )
+
+        if debt_user:
+            creditor_summary = await get_creditor_summary(flow_state, api, user_id)
+            creditor_info = creditor_summary.get(creditor_name)
+            creditor_user = creditor_info["creditor"] if creditor_info else None
+
+            if isinstance(creditor_user, TelegramUser) and creditor_user.user_id != user_id:
+                updated_debts = await api.debt_manager.get_user_debts(debt_user, include_settled=False)
+                remaining_owed = 0.0
+                for debt in updated_debts:
+                    if debt.creditor and debt.creditor.stable_id == creditor_user.stable_id:
+                        remaining_owed += max(0.0, debt.total_amount - debt.paid_amount)
+
+                await api.message_manager.send_text(
+                    creditor_user.user_id,
+                    (
+                        f"💸 **Payment update**\n\n"
+                        f"{debt_user.display_name} marked **{total_staged:.2f} €** as paid to you.\n"
+                        f"Remaining owed by {debt_user.display_name}: **{remaining_owed:.2f} €**"
+                    ),
+                    vanish=False,
+                    conv=False,
+                )
+
         invalidate_debt_cache(flow_state)
 
     return await handle_staged_payments_button(
@@ -240,7 +268,7 @@ def create_debt_flow() -> MessageFlow:
             keyboard_builder=build_main_keyboard,
             action=MessageAction.AUTO,
             timeout=180,
-            delete_message_on_exit=True,
+            keep_message_on_exit=False,
             exit_buttons=["close"],
             on_button_press=handle_main_button,
         )

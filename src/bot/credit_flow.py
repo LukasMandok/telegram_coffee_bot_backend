@@ -299,7 +299,7 @@ def create_credit_flow() -> MessageFlow:
         keyboard_builder=build_credit_main_keyboard,
         action=MessageAction.AUTO,
         timeout=180,
-        delete_message_on_exit=True,
+        keep_message_on_exit=False,
         next_state_map={"mark_paid": "debtors_list"},
         exit_buttons=["close"],
         on_button_press=handle_main_buttons,

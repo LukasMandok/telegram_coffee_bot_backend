@@ -754,7 +754,7 @@ def make_state(
     state_type: Optional["_StateTypeHint"] = None,
     action: Optional["_MessageActionHint"] = None,
     timeout: Optional[int] = None,
-    delete_message_on_exit: Optional[bool] = None,
+    keep_message_on_exit: Optional[bool] = None,
     # Navigation
     next_state_map: Optional[Dict[str, str]] = None,
     exit_buttons: Optional[List[str]] = None,
@@ -814,7 +814,7 @@ def make_state(
         keyboard_builder=keyboard_builder,
         action=use_action,
         timeout=use_timeout,
-        delete_message_on_exit=delete_message_on_exit if delete_message_on_exit is not None else False,
+        keep_message_on_exit=keep_message_on_exit if keep_message_on_exit is not None else False,
         next_state_map=use_next_map,
         exit_buttons=use_exit,
         back_button=back_button,
