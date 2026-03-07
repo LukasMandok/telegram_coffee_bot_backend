@@ -28,7 +28,7 @@ from .message_flow_helpers import IntegerParser, MoneyParser
 from ..services.order import place_order
 from ..services.gsheet_sync import request_gsheet_sync_after_action
 from ..database.snapshot_manager import SnapshotManager
-from ..exceptions.coffee_exceptions import CoffeeSessionError, InsufficientCoffeeError
+from ..exceptions.coffee_exceptions import CoffeeSessionError, InsufficientCoffeeError, NoActiveCoffeeCardsError
 
 from ..common.log import (
     log_telegram_callback, log_conversation_started, log_conversation_step, log_unexpected_error,
@@ -971,13 +971,16 @@ class ConversationManager:
                     True, True
                 )
             
-        except ValueError as e:
+        except NoActiveCoffeeCardsError:
             await self.api.message_manager.send_text(
                 user_id,
-                f"❌ Failed to start/join session: {str(e)}",
-                True, True
+                "☕ There is currently no active coffee card.\n\n"
+                "Please create a new one first with **/new_card** and then try **/order** again.",
+                True,
+                True,
             )
             return False
+
         except Exception as e:
             await self.api.message_manager.send_text(
                 user_id,

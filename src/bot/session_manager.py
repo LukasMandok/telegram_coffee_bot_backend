@@ -10,7 +10,8 @@ from datetime import datetime
 from ..models.coffee_models import CoffeeSession, CoffeeCard, CoffeeOrder
 from ..models.beanie_models import TelegramUser
 from ..exceptions.coffee_exceptions import (
-    SessionNotActiveError, InvalidCoffeeCountError, InsufficientCoffeeError, CoffeeSessionError
+    SessionNotActiveError, InvalidCoffeeCountError, InsufficientCoffeeError, CoffeeSessionError, UserNotFoundError,
+    NoActiveCoffeeCardsError
 )
 from ..common.log import (
     log_coffee_session_started, log_coffee_session_participant_added,
@@ -194,7 +195,7 @@ class SessionManager:
     async def remove_participant( self, user_id: int ) -> bool:
         user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
         if not user:
-            raise ValueError(f"User {user_id} not found in database")
+            raise UserNotFoundError(user_id, message = "User not found in database.")
         
         if not self.session or not self.session.is_active:
             raise SessionNotActiveError()
@@ -224,7 +225,7 @@ class SessionManager:
         # Get the user from database
         user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
         if not user:
-            raise ValueError(f"User {user_id} not found in database")
+            raise UserNotFoundError(user_id, message = f"User {user_id} not found in database")
         
         
         if self.session:
@@ -237,7 +238,7 @@ class SessionManager:
             # Create new session
             active_cards = await self.api.coffee_card_manager.get_active_coffee_cards()
             if not active_cards:
-                raise ValueError("No active coffee cards available for session")
+                raise NoActiveCoffeeCardsError()
             
             group_state = await initialize_group_state_from_db()
             

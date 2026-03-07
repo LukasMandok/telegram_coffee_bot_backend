@@ -65,6 +65,13 @@ class CoffeeCardNotFoundError(CoffeeCardError):
         super().__init__(message)
 
 
+class NoActiveCoffeeCardsError(CoffeeCardError):
+    """Raised when a session cannot start because no active coffee cards exist."""
+
+    def __init__(self, message: str = "No active coffee cards available for session"):
+        super().__init__(message)
+
+
 
 
 class UserNotFoundError(ValueError):
