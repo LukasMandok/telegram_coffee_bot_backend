@@ -27,6 +27,7 @@ class FakeDebt:
 
 def make_api(debts):
     api = SimpleNamespace()
+    api.logger = SimpleNamespace(debug=lambda *args, **kwargs: None)
     api.conversation_manager = SimpleNamespace(
         repo=SimpleNamespace(find_user_by_id=AsyncMock(return_value=SimpleNamespace(user_id=1)))
     )

@@ -12,12 +12,12 @@ from ..bot.telethon_models import GroupState
 from ..exceptions.coffee_exceptions import InvalidCoffeeCountError, InsufficientCoffeeError
 from ..utils.typing_utils import Link
 
-
-class PaymentMethod(str, Enum):
-    CASH = "cash"
-    BANK_TRANSFER = "bank_transfer"
-    MANUAL = "manual"
-    PAYPAL = "paypal"
+class PaymentReason(str, Enum):
+    DIRECT_PAYMENT = "direct_payment"
+    DEBTOR_MARKED_PAID = "debtor_marked_paid"
+    CREDITOR_MARKED_PAID = "creditor_marked_paid"
+    COMPENSATION_OFFSET = "compensation_offset"
+    MANUAL_ADJUSTMENT = "manual_adjustment"
 
 
 class ConsumerStats(BaseModel):
@@ -207,10 +207,12 @@ class CoffeeSession(Document):
 class Payment(Document):
     """Represents a completed payment between users."""
     
-    payer: Link[TelegramUser] = Field(..., description="User making the payment")
-    recipient: Link[TelegramUser] = Field(..., description="User receiving the payment")
+    payer: Link[PassiveUser] = Field(..., description="User making the payment")
+    recipient: Link[PassiveUser] = Field(..., description="User receiving the payment")
     amount: float = Field(..., gt=0, description="Payment amount in EUR")
-    payment_method: PaymentMethod = Field(default=PaymentMethod.MANUAL, description="Method of payment")
+    reason: PaymentReason = Field(default=PaymentReason.DIRECT_PAYMENT, description="Why this payment entry was created")
+    target_debt: Link["UserDebt"] = Field(..., description="Debt directly affected by this payment")
+    source_pair_debt: Optional[Link["UserDebt"]] = Field(default=None, description="Optional counterpart debt used for compensation/offset")
     
     # Related orders
     related_orders: List[Link[CoffeeOrder]] = Field(default_factory=list, description="Orders this payment covers")

@@ -11,7 +11,7 @@ from datetime import datetime
 from beanie import Link as BeanieLink
 
 from ..common.log import Logger
-from ..models.coffee_models import CoffeeCard, Payment, UserDebt, PaymentMethod
+from ..models.coffee_models import CoffeeCard, Payment, UserDebt, PaymentReason
 from ..models.beanie_models import TelegramUser, PassiveUser
 from ..dependencies.dependencies import get_repo
 from ..services.gsheet_sync import request_gsheet_sync_after_action
@@ -163,7 +163,7 @@ class DebtManager:
                 existing_debt.base_amount = base_amount
                 existing_debt.debt_correction = debt_correction
                 existing_debt.updated_at = now
-                existing_debt.is_settled = existing_debt.paid_amount >= existing_debt.total_amount
+                self._update_debt_settlement_state(existing_debt, now=now)
                 # Note: Don't reset paid_amount - keep existing payments
                 await existing_debt.save()
                 processed_debts.append(existing_debt)
@@ -208,6 +208,52 @@ class DebtManager:
         settled_at: Optional[datetime]
 
     @staticmethod
+    def _update_debt_settlement_state(
+        debt: "DebtManager._DebtLike",
+        *,
+        now: datetime,
+        epsilon: float = 1e-9,
+    ) -> None:
+        unpaid = debt.total_amount - debt.paid_amount
+        if unpaid <= epsilon:
+            debt.paid_amount = debt.total_amount
+            debt.is_settled = True
+            if debt.settled_at is None:
+                debt.settled_at = now
+        else:
+            debt.is_settled = False
+            debt.settled_at = None
+
+    async def _create_payment(
+        self,
+        *,
+        debt: UserDebt,
+        amount: float,
+        reason: PaymentReason,
+        source_pair_debt: Optional[UserDebt] = None,
+        description: Optional[str] = None,
+    ) -> Payment:
+        if amount <= 0:
+            raise ValueError("Payment amount must be greater than zero")
+
+        if isinstance(debt.debtor, BeanieLink):
+            await debt.fetch_link("debtor")
+        if isinstance(debt.creditor, BeanieLink):
+            await debt.fetch_link("creditor")
+
+        payment = Payment(
+            payer=debt.debtor,  # type: ignore[arg-type]
+            recipient=debt.creditor,  # type: ignore[arg-type]
+            amount=amount,
+            reason=reason,
+            target_debt=debt,
+            source_pair_debt=source_pair_debt,
+            description=description,
+        )
+        await payment.insert()
+        return payment
+
+    @staticmethod
     def _format_debt_for_offset_log(debt: "DebtManager._DebtLike") -> str:
         debt_id = getattr(debt, "id", None)
         debt_id_str = str(debt_id) if debt_id is not None else f"mem:{id(debt)}"
@@ -237,10 +283,7 @@ class DebtManager:
         to_apply = min(amount, unpaid)
         debt.paid_amount += to_apply
 
-        if debt.paid_amount + epsilon >= debt.total_amount:
-            debt.paid_amount = debt.total_amount
-            debt.is_settled = True
-            debt.settled_at = now
+        DebtManager._update_debt_settlement_state(debt, now=now, epsilon=epsilon)
 
         debt.updated_at = now
         return amount - to_apply
@@ -253,7 +296,7 @@ class DebtManager:
         debts_ba: Sequence["DebtManager._DebtLike"],
         now: datetime,
         log_line: Optional[Callable[[str], None]] = None,
-    ) -> int:
+    ) -> List[Tuple["DebtManager._DebtLike", "DebtManager._DebtLike", float]]:
         """Offset mutual debts between two users (A->B and B->A), oldest first.
 
         The algorithm walks both debt lists (sorted by `created_at`) and applies the same
@@ -267,6 +310,7 @@ class DebtManager:
         debts_ba_sorted = sorted(debts_ba, key=lambda d: d.created_at)
 
         modified_ids = set()
+        offset_events: List[Tuple["DebtManager._DebtLike", "DebtManager._DebtLike", float]] = []
 
         idx_ab = 0
         idx_ba = 0
@@ -277,7 +321,8 @@ class DebtManager:
 
             remaining_ab = debt_ab.total_amount - debt_ab.paid_amount
             remaining_ba = debt_ba.total_amount - debt_ba.paid_amount
-
+            
+            # make sure these are not already fully paid but were not marked as settled (should not happen)
             if remaining_ab <= epsilon:
                 idx_ab += 1
                 continue
@@ -287,23 +332,24 @@ class DebtManager:
 
             offset = min(remaining_ab, remaining_ba)
 
-            before_ab = debt_ab.paid_amount
-            before_ba = debt_ba.paid_amount
+            paid_amount_before_ab = debt_ab.paid_amount
+            paid_amount_before_ba = debt_ba.paid_amount
 
             cls._apply_offset_amount(debt_ab, offset, now=now)
             cls._apply_offset_amount(debt_ba, offset, now=now)
+            offset_events.append((debt_ab, debt_ba, offset))
 
             if log_line is not None:
                 log_line(
                     "Netting offset applied: "
                     f"offset=€{offset:.2f} | "
-                    f"A->B {cls._format_debt_for_offset_log(debt_ab)} (was €{before_ab:.2f}) | "
-                    f"B->A {cls._format_debt_for_offset_log(debt_ba)} (was €{before_ba:.2f})"
+                    f"A->B {cls._format_debt_for_offset_log(debt_ab)} (was €{paid_amount_before_ab:.2f}) | "
+                    f"B->A {cls._format_debt_for_offset_log(debt_ba)} (was €{paid_amount_before_ba:.2f})"
                 )
 
-            if debt_ab.paid_amount != before_ab:
+            if debt_ab.paid_amount != paid_amount_before_ab:
                 modified_ids.add(id(debt_ab))
-            if debt_ba.paid_amount != before_ba:
+            if debt_ba.paid_amount != paid_amount_before_ba:
                 modified_ids.add(id(debt_ba))
 
             # Advance past fully settled debts
@@ -312,7 +358,10 @@ class DebtManager:
             if debt_ba.total_amount - debt_ba.paid_amount <= epsilon:
                 idx_ba += 1
 
-        return len(modified_ids)
+        if len(modified_ids) <= 0:
+            return []
+
+        return offset_events
 
     async def _offset_mutual_debts_between_users(self, *, debtor_id: Any, creditor_id: Any) -> None:
         """Offset unsettled debts between two users in both directions.
@@ -368,13 +417,13 @@ class DebtManager:
             f"count_ba={len(debts_ba)} outstanding_ba=€{outstanding_ba:.2f}"
         )
 
-        modified_count = self._offset_mutual_debts_in_memory(
+        offset_events = self._offset_mutual_debts_in_memory(
             debts_ab=debts_ab,
             debts_ba=debts_ba,
             now=now,
             log_line=_log_line,
         )
-        if modified_count <= 0:
+        if not offset_events:
             return
 
         # Persist changes
@@ -382,6 +431,26 @@ class DebtManager:
             await debt.save()
         for debt in debts_ba:
             await debt.save()
+
+        # Create auditable payment events for each offset step in both directions.
+        for debt_ab, debt_ba, offset in offset_events:
+            if offset <= 0:
+                continue
+
+            await self._create_payment(
+                debt=debt_ab,  # type: ignore[arg-type]
+                amount=offset,
+                reason=PaymentReason.COMPENSATION_OFFSET,
+                source_pair_debt=debt_ba,  # type: ignore[arg-type]
+                description="Compensatory offset against reciprocal debt",
+            )
+            await self._create_payment(
+                debt=debt_ba,  # type: ignore[arg-type]
+                amount=offset,
+                reason=PaymentReason.COMPENSATION_OFFSET,
+                source_pair_debt=debt_ab,  # type: ignore[arg-type]
+                description="Compensatory offset against reciprocal debt",
+            )
 
         # Build user-facing summary (only changed debts), grouped by direction
         changes_by_direction: Dict[str, List[Tuple[datetime, str]]] = {}
@@ -433,7 +502,7 @@ class DebtManager:
         outstanding_ab_after = sum(max(0.0, d.total_amount - d.paid_amount) for d in debts_ab)
         outstanding_ba_after = sum(max(0.0, d.total_amount - d.paid_amount) for d in debts_ba)
         _log_line(
-            f"Netting done: {debtor_name} ↔ {creditor_name} modified={modified_count} "
+            f"Netting done: {debtor_name} ↔ {creditor_name} modified={len(offset_events)} "
             f"outstanding_ab=€{outstanding_ab:.2f}->€{outstanding_ab_after:.2f} "
             f"outstanding_ba=€{outstanding_ba:.2f}->€{outstanding_ba_after:.2f}"
         )
@@ -641,10 +710,9 @@ class DebtManager:
         payer_id: int,
         recipient_id: int,
         amount: float,
-        payment_method: PaymentMethod = PaymentMethod.MANUAL,
         description: Optional[str] = None,
         specific_debt: Optional[UserDebt] = None
-    ) -> Payment:
+    ) -> List[Payment]:
         """
         Record a payment and apply it to debt(s).
         
@@ -676,22 +744,21 @@ class DebtManager:
         if not payer or not recipient:
             raise ValueError("Payer or recipient not found")
         
-        # Create payment record
-        payment = Payment(
-            payer=payer,  # type: ignore
-            recipient=recipient,  # type: ignore
-            amount=amount,
-            payment_method=payment_method,
-            description=description
-        )
-        await payment.insert()
-        
         self.logger.info(f"Payment recorded: {payer.display_name} → {recipient.display_name}: €{amount:.2f}")
+
+        payment_events: List[Payment] = []
         
         # Apply payment to debts
         if specific_debt:
             # Apply to specific debt
-            await self._apply_payment_to_debt(specific_debt, amount)
+            _, event = await self._apply_payment_to_debt(
+                specific_debt,
+                amount,
+                reason=PaymentReason.DIRECT_PAYMENT,
+                description=description,
+            )
+            if event is not None:
+                payment_events.append(event)
         else:
             # Apply to all unsettled debts from payer to recipient
             debts = await UserDebt.find({
@@ -707,13 +774,27 @@ class DebtManager:
             for debt in debts:
                 if remaining <= 0:
                     break
-                remaining = await self._apply_payment_to_debt(debt, remaining)
+                remaining, event = await self._apply_payment_to_debt(
+                    debt,
+                    remaining,
+                    reason=PaymentReason.DIRECT_PAYMENT,
+                    description=description,
+                )
+                if event is not None:
+                    payment_events.append(event)
 
         request_gsheet_sync_after_action(reason="debt_paid")
         
-        return payment
+        return payment_events
     
-    async def _apply_payment_to_debt(self, debt: UserDebt, amount: float) -> float:
+    async def _apply_payment_to_debt(
+        self,
+        debt: UserDebt,
+        amount: float,
+        *,
+        reason: PaymentReason = PaymentReason.MANUAL_ADJUSTMENT,
+        description: Optional[str] = None,
+    ) -> Tuple[float, Optional[Payment]]:
         """
         Apply a payment amount to a debt.
         
@@ -724,19 +805,20 @@ class DebtManager:
         Returns:
             Remaining amount after application
         """
+        epsilon = 1e-9
+        now = datetime.now()
         unpaid = debt.total_amount - debt.paid_amount
         
-        if unpaid <= 0:
-            return amount  # Debt already paid, return full amount
+        if unpaid <= epsilon:
+            return amount, None  # Debt already paid, return full amount
         
         # Apply as much as possible
         to_apply = min(amount, unpaid)
         debt.paid_amount += to_apply
-        
+
         # Check if debt is now fully settled
-        if debt.paid_amount >= debt.total_amount:
-            debt.is_settled = True
-            debt.settled_at = datetime.now()
+        self._update_debt_settlement_state(debt, now=now, epsilon=epsilon)
+        if debt.is_settled:
             # TODO: improve this and make it less bloated (maybe dont fetch at all)
             
             # Only fetch links if they haven't been loaded yet
@@ -748,10 +830,18 @@ class DebtManager:
                 await debt.fetch_link("coffee_card")
             
             self.logger.info(f"Debt settled: {debt.debtor.display_name} → {debt.creditor.display_name} for card '{debt.coffee_card.name}'")  # type: ignore
-        
-        debt.updated_at = datetime.now()
+
+        debt.updated_at = now
         await debt.save()
-        return amount - to_apply
+
+        payment_event = await self._create_payment(
+            debt=debt,
+            amount=to_apply,
+            reason=reason,
+            description=description,
+        )
+
+        return amount - to_apply, payment_event
     
     async def get_debt_summary(self, user: TelegramUser) -> Dict[str, Any]:
         """

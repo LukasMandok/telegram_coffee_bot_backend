@@ -11,7 +11,7 @@ from datetime import datetime
 # Runtime imports - actually used in code
 from ..models.coffee_models import (
     CoffeeCard, CoffeeOrder, Payment, UserDebt, 
-    CoffeeSession, PaymentMethod, ConsumerStats
+    CoffeeSession, ConsumerStats, PaymentReason
 )
 
 from ..dependencies.dependencies import repo
@@ -117,7 +117,8 @@ async def create_payment(
     payer_id: int,
     recipient_id: int,
     amount: float,
-    payment_method: PaymentMethod = PaymentMethod.MANUAL,
+    target_debt_id: str,
+    reason: PaymentReason = PaymentReason.DIRECT_PAYMENT,
     related_order_ids: Optional[List[str]] = None,
     description: Optional[str] = None
 ) -> Payment:
@@ -128,6 +129,10 @@ async def create_payment(
 
     if not payer or not recipient:
         raise ValueError("Payer or recipient not found")
+
+    target_debt = await UserDebt.get(target_debt_id)
+    if not target_debt:
+        raise ValueError("Target debt not found")
 
     related_orders = []
     if related_order_ids:
@@ -140,7 +145,8 @@ async def create_payment(
         payer=payer,
         recipient=recipient,
         amount=amount,
-        payment_method=payment_method,
+        reason=reason,
+        target_debt=target_debt,
         related_orders=related_orders,
         description=description
     )

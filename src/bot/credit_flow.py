@@ -24,6 +24,7 @@ from .payment_flow import (
     handle_staged_payments_button,
     handle_staged_payments_input,
 )
+from ..models.coffee_models import PaymentReason
 
 
 VIEW_MODE_KEY = "credit_overview_view_mode"
@@ -275,7 +276,11 @@ async def build_debtor_debts_keyboard(flow_state, api, user_id) -> List[List[But
 async def handle_debtor_debts_button(data: str, flow_state, api, user_id) -> Optional[str]:
     """Handle button presses in debtor debts view."""
     async def apply_payment(debt, amount: float):
-        await api.debt_manager._apply_payment_to_debt(debt, amount)
+        await api.debt_manager._apply_payment_to_debt(
+            debt,
+            amount,
+            reason=PaymentReason.CREDITOR_MARKED_PAID,
+        )
 
     async def snapshot_before_commit() -> None:
         snapshot_manager = api.get_snapshot_manager()

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 from ...models.beanie_models import TelegramUser
+from ...models.coffee_models import PaymentReason
 from ..message_flow import ButtonCallback, MessageAction, MessageFlow
 from ..message_flow_helpers import (
     GridLayout,
@@ -184,7 +185,11 @@ async def build_creditor_debts_keyboard(flow_state, api, user_id) -> List[List[B
 
 async def handle_creditor_debts_button(data: str, flow_state, api, user_id) -> Optional[str]:
     async def apply_payment(debt, amount: float):
-        await api.debt_manager._apply_payment_to_debt(debt, amount)
+        await api.debt_manager._apply_payment_to_debt(
+            debt,
+            amount,
+            reason=PaymentReason.DEBTOR_MARKED_PAID,
+        )
 
     async def snapshot_before_commit() -> None:
         snapshot_manager = api.get_snapshot_manager()
