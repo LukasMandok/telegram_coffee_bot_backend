@@ -997,7 +997,7 @@ class MessageFlow:
                 )
                 flow_state.current_message = message
             else:
-                data, message = await api.conversation_manager.edit_keyboard_and_wait_response(
+                data, message, _ = await api.conversation_manager.edit_keyboard_and_wait_response(
                     conv, user_id, text, keyboard, flow_state.current_message, current_def.timeout
                 )
                 flow_state.current_message = message
