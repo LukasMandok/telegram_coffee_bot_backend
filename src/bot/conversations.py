@@ -534,8 +534,16 @@ class ConversationManager:
                    (None, message_object) if button response failed but message was edited
         """
         try:
-            # Edit the message with new text and keyboard
-            await self.api.message_manager.edit_message(message_to_edit, message_text, buttons=keyboard)
+            # Edit the message with new text and keyboard.
+            # Some flows send an empty list when there are no buttons which
+            # Telegram treats as invalid markup; in that case omit the
+            # `buttons` parameter entirely (which leaves the existing
+            # keyboard untouched) or explicitly clear it by passing None.
+            if not keyboard:
+                # either [] or None -> remove buttons
+                await self.api.message_manager.edit_message(message_to_edit, message_text, buttons=None)
+            else:
+                await self.api.message_manager.edit_message(message_to_edit, message_text, buttons=keyboard)
 
             # Wait for button response
             if return_event:
