@@ -509,39 +509,46 @@ class Logger:
             parts.append(f"[{extra_tag}]")
         parts.append(message)
         return " ".join(parts)
+
+    @staticmethod
+    def _attach_exception(formatted_msg: str, exc: Optional[Exception], kwargs: Dict[str, Any]) -> str:
+        if exc:
+            formatted_msg += f" - {type(exc).__name__}: {str(exc)}"
+            kwargs['exc_info'] = True
+        return formatted_msg
     
-    def trace(self, message: str, extra_tag: Optional[str] = None, **kwargs):
+    def trace(self, message: str, extra_tag: Optional[str] = None, exc: Optional[Exception] = None, **kwargs):
         """Log TRACE level message."""
         formatted_msg = self._format_message(message, extra_tag)
+        formatted_msg = self._attach_exception(formatted_msg, exc, kwargs)
         self._logger.log(TRACE_LEVEL, formatted_msg, **kwargs)
     
-    def debug(self, message: str, extra_tag: Optional[str] = None, **kwargs):
+    def debug(self, message: str, extra_tag: Optional[str] = None, exc: Optional[Exception] = None, **kwargs):
         """Log DEBUG level message."""
         formatted_msg = self._format_message(message, extra_tag)
+        formatted_msg = self._attach_exception(formatted_msg, exc, kwargs)
         self._logger.debug(formatted_msg, **kwargs)
     
-    def info(self, message: str, extra_tag: Optional[str] = None, **kwargs):
+    def info(self, message: str, extra_tag: Optional[str] = None, exc: Optional[Exception] = None, **kwargs):
         """Log INFO level message."""
         formatted_msg = self._format_message(message, extra_tag)
+        formatted_msg = self._attach_exception(formatted_msg, exc, kwargs)
         self._logger.info(formatted_msg, **kwargs)
     
-    def warning(self, message: str, extra_tag: Optional[str] = None, **kwargs):
+    def warning(self, message: str, extra_tag: Optional[str] = None, exc: Optional[Exception] = None, **kwargs):
         """Log WARNING level message."""
         formatted_msg = self._format_message(message, extra_tag)
+        formatted_msg = self._attach_exception(formatted_msg, exc, kwargs)
         self._logger.warning(formatted_msg, **kwargs)
     
     def error(self, message: str, extra_tag: Optional[str] = None, exc: Optional[Exception] = None, **kwargs):
         """Log ERROR level message with optional exception info."""
         formatted_msg = self._format_message(message, extra_tag)
-        if exc:
-            formatted_msg += f" - {type(exc).__name__}: {str(exc)}"
-            kwargs['exc_info'] = True
+        formatted_msg = self._attach_exception(formatted_msg, exc, kwargs)
         self._logger.error(formatted_msg, **kwargs)
     
     def critical(self, message: str, extra_tag: Optional[str] = None, exc: Optional[Exception] = None, **kwargs):
         """Log CRITICAL level message with optional exception info."""
         formatted_msg = self._format_message(message, extra_tag)
-        if exc:
-            formatted_msg += f" - {type(exc).__name__}: {str(exc)}"
-            kwargs['exc_info'] = True
+        formatted_msg = self._attach_exception(formatted_msg, exc, kwargs)
         self._logger.critical(formatted_msg, **kwargs)

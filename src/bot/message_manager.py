@@ -5,6 +5,7 @@ This module handles message operations including sending, editing, deleting,
 and managing message lifecycle for the coffee ordering bot.
 """
 
+from enum import Enum
 from typing import Any, Optional, List, Union, TYPE_CHECKING
 from pydantic import BaseModel
 
@@ -13,6 +14,13 @@ from ..common.log import log_telegram_message_sent, log_telegram_keyboard_sent, 
 
 if TYPE_CHECKING:
     from telethon import TelegramClient, types
+
+
+class NotificationStyle(str, Enum):
+    POPUP_BRIEF = "popup_brief"
+    POPUP_ALERT = "popup_alert"
+    MESSAGE_TEMP = "message_temp"
+    MESSAGE_PERM = "message_perm"
 
 class MessageManager:
     """
@@ -421,3 +429,85 @@ class MessageManager:
         except Exception as e:
             log_telegram_api_error("send_popup_notification", str(e), None)
             return False
+
+    async def send_notification(
+        self,
+        user_id: int,
+        text: str,
+        style: NotificationStyle,
+        auto_delete: int = 8,
+        button_event: Any | None = None,
+    ) -> None:
+        if style == NotificationStyle.POPUP_BRIEF:
+            await self.send_popup_brief(
+                user_id=user_id,
+                text=text,
+                button_event=button_event,
+                auto_delete=auto_delete,
+            )
+            return
+
+        if style == NotificationStyle.POPUP_ALERT:
+            await self.send_popup_alert(
+                user_id=user_id,
+                text=text,
+                button_event=button_event,
+            )
+            return
+
+        if style == NotificationStyle.MESSAGE_TEMP:
+            await self.send_temp_notification(user_id=user_id, text=text, auto_delete=auto_delete)
+            return
+
+        if style == NotificationStyle.MESSAGE_PERM:
+            await self.send_perm_notification(user_id=user_id, text=text)
+
+    async def send_temp_notification(self, user_id: int, text: str, auto_delete: int = 8) -> None:
+        await self.send_text(
+            user_id,
+            text,
+            vanish=False,
+            conv=False,
+            delete_after=auto_delete,
+        )
+
+    async def send_perm_notification(self, user_id: int, text: str, silent: bool = False) -> None:
+        await self.send_text(
+            user_id,
+            text,
+            vanish=False,
+            conv=False,
+            silent=silent,
+        )
+
+    async def send_popup_brief(
+        self,
+        *,
+        user_id: int,
+        text: str,
+        button_event: Any | None = None,
+        auto_delete: int = 3,
+    ) -> None:
+        if button_event is not None:
+            await self.send_popup_notification(button_event, text, show_alert=False)
+            return
+
+        await self.send_temp_notification(
+            user_id=user_id,
+            text=text,
+            auto_delete=max(1, int(auto_delete) or 3),
+        )
+
+    async def send_popup_alert(
+        self,
+        *,
+        user_id: int,
+        text: str,
+        button_event: Any | None = None,
+    ) -> None:
+        if button_event is not None:
+            await self.send_popup_notification(button_event, text, show_alert=True)
+            return
+
+        await self.send_perm_notification(user_id=user_id, text=text, silent=False)
+

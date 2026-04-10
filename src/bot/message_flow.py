@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from dataclasses import dataclass
 from enum import Enum
 from ..common.log import Logger
+from .message_manager import NotificationStyle
 
 if TYPE_CHECKING:
     from telethon.tl.custom.conversation import Conversation
@@ -26,14 +27,6 @@ class MessageAction(str, Enum):
     SEND = "send"  # Send a new message
     EDIT = "edit"  # Edit the existing message
     AUTO = "auto"  # Auto-detect: edit if message exists, send if not
-
-
-class NotificationStyle(str, Enum):
-    """Style of notification to display."""
-    POPUP_BRIEF = "popup_brief"  # Brief notification at top of chat
-    POPUP_ALERT = "popup_alert"  # Alert popup (user must dismiss)
-    MESSAGE_TEMP = "message_temp"  # Temporary message that auto-deletes
-    MESSAGE_PERM = "message_perm"  # Permanent message
 
 
 class StateType(str, Enum):
@@ -977,7 +970,7 @@ class MessageFlow:
                 self.logger.trace(
                     f"EXIT STATE DETECTED: state_id={current_def.state_id}, legacy={is_legacy_exit}, explicit={is_explicit_exit}, timeout={current_def.timeout}, has_message={flow_state.current_message is not None}"
                 )
-                if flow_state.current_message:
+                if flow_state.current_message and text.strip():
                     await api.conversation_manager.send_or_edit_message(
                         user_id, text, flow_state.current_message, remove_buttons=True
                     )
@@ -1132,13 +1125,10 @@ class MessageFlow:
         auto_delete: int
     ) -> None:
         """Show a notification based on style."""
-        if style == NotificationStyle.MESSAGE_TEMP:
-            await api.message_manager.send_text(
-                user_id, text, vanish=False, conv=False,
-                delete_after=auto_delete
-            )
-        elif style == NotificationStyle.MESSAGE_PERM:
-            await api.message_manager.send_text(
-                user_id, text, vanish=True, conv=True
-            )
+        await api.message_manager.send_notification(
+            user_id=user_id,
+            text=text,
+            style=style,
+            auto_delete=auto_delete,
+        )
         # POPUP styles would need button_event, handled separately
