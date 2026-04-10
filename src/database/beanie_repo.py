@@ -99,7 +99,7 @@ class BeanieRepository(BaseRepository):
         
         # Create Config with Link to password
         new_config = models.Config(
-            password = password_doc,  # Beanie should auto-create the Link
+            password = password_doc,  # type: ignore[arg-type]  # Beanie accepts Document instances for Link fields
             admins   = [int(app_config.DEFAULT_ADMIN)]  # Convert to int
         )
         
@@ -127,6 +127,8 @@ class BeanieRepository(BaseRepository):
 
 
     async def get_collection(self, collection_name):
+        if self.db is None:
+            raise RuntimeError("Database not connected; call connect() first")
         return self.db.get_collection(collection_name)
 
     # ---------------------------
@@ -495,6 +497,36 @@ class BeanieRepository(BaseRepository):
             return []
         except Exception as e:
             log_database_error("get_admins", str(e))
+            return []
+
+
+
+    async def get_admin_users(self):
+        """Get TelegramUser documents for all configured admins."""
+        try:
+            admin_ids = await self.get_admins()
+            if not admin_ids:
+                return []
+
+            admin_id_set = set(int(admin_id) for admin_id in admin_ids)
+            telegram_users = await self.find_all_telegram_users(
+                exclude_archived=False,
+                exclude_disabled=False,
+            ) or []
+            return [user for user in telegram_users if int(user.user_id) in admin_id_set]
+        except Exception as e:
+            log_database_error("get_admin_users", str(e))
+            return []
+
+    async def get_registered_admins(self) -> list[int]:
+        """Get admin user IDs that are registered Telegram users."""
+        try:
+            admin_users = await self.get_admin_users()
+            if not admin_users:
+                return []
+            return [int(admin.user_id) for admin in admin_users if admin.user_id is not None]
+        except Exception as e:
+            log_database_error("get_registered_admins", str(e))
             return []
 
     async def add_admin(self, user_id: int) -> bool:

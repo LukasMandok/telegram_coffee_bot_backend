@@ -74,6 +74,12 @@ class BaseRepository(ABC):
     @abstractmethod
     async def get_admins(self) -> Optional[List[int]]:
         pass
+
+    async def get_registered_admins(self) -> List[int]:
+        admins = await self.get_admins()
+        if not admins:
+            return []
+        return [int(admin_id) for admin_id in admins]
     
     @abstractmethod
     async def add_admin(self, user_id: int) -> bool:
