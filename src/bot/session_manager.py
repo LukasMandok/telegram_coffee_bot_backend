@@ -369,6 +369,7 @@ class SessionManager:
     @pending_snapshot(
         lambda self, submitted_by_user_id, **_: f"session_completed:{str(self.session.id) if self.session else 'unknown'}",
         reason="Submit Session",
+        collections=("coffee_sessions", "coffee_orders", "coffee_cards", "user_debts", "payments"),
     )
     async def complete_session(self, submitted_by_user_id: int) -> bool:
         """

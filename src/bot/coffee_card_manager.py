@@ -117,7 +117,11 @@ class CoffeeCardManager:
                 await user.save()
         
 
-    @pending_snapshot("card_created", reason="Coffee Card Created")
+    @pending_snapshot(
+        "card_created",
+        reason="Coffee Card Created",
+        collections=("coffee_cards",),
+    )
     async def create_coffee_card(
         self,
         total_coffees: int,
@@ -195,6 +199,7 @@ class CoffeeCardManager:
     @pending_snapshot(
         lambda self, card, **_: f"card_closed:{str(getattr(card, 'id', 'unknown'))}",
         reason=lambda self, card, **_: f"Close Coffee Card ({card.name})",
+        collections=("coffee_cards", "user_debts", "payments"),
     )
     async def close_card(
         self, 

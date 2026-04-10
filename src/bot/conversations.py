@@ -575,6 +575,10 @@ class ConversationManager:
             message_to_edit: The existing message object to edit (if available)
             remove_buttons: Whether to remove buttons when editing (set buttons=None)
         """
+        if not text.strip():
+            self.logger.trace("Skipping send_or_edit_message due to empty text", extra_tag="Telegram")
+            return
+
         if message_to_edit:
             try:
                 if remove_buttons:
@@ -1158,6 +1162,7 @@ class ConversationManager:
             async with snapshot_manager.pending_snapshot(
                 reason=f"Quick Order ({initiator.display_name} x{quantity})",
                 context="quick_order",
+                collections=("coffee_cards", "coffee_orders"),
             ):
                 cards = await self.api.coffee_card_manager.get_coffee_cards_for_order(quantity)
                 await place_order(

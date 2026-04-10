@@ -9,8 +9,9 @@ This is intentionally minimal: a single menu + a paginated restore list.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, List, Optional
 
 from ..message_flow import (
     ButtonCallback,
@@ -21,9 +22,17 @@ from ..message_flow import (
 )
 from ..message_flow_helpers import NavigationButtons
 from ...services.gsheet_sync import request_gsheet_sync_after_action
+from ...models import beanie_models as models
 
 
 SNAPSHOT_REASON_MANUAL = "Manual snapshot"
+
+
+@dataclass(frozen=True)
+class SnapshotListItem:
+    meta: models.SnapshotMeta
+    is_latest_loaded: bool
+    is_previously_loaded: bool
 
 
 def _format_date(value: Any) -> str:
@@ -32,13 +41,8 @@ def _format_date(value: Any) -> str:
     return str(value)
 
 
-def _display_reason(meta: Mapping[str, Any]) -> str:
-    reasons = meta.get("reasons")
-    if isinstance(reasons, list) and reasons:
-        return ", ".join(str(r) for r in reasons if r is not None)
-
-    reason = meta.get("reason")
-    return str(reason) if reason else ""
+def _display_reason(meta: models.SnapshotMeta) -> str:
+    return ", ".join(meta.reasons).strip()
 
 
 def _short_id(snapshot_id: str) -> str:
@@ -54,7 +58,7 @@ async def create_manual_snapshot(flow_state, api, user_id) -> Optional[str]:
         save_in_background=False,
     )
 
-    meta = await snapshot_manager.get_snapshot_meta(snapshot_id)
+    meta = await snapshot_manager.get_snapshot_meta(snapshot_id) if snapshot_id else None
     flow_state.set("created_snapshot_id", snapshot_id)
     flow_state.set("created_snapshot_meta", meta)
 
@@ -68,13 +72,12 @@ async def restore_selected(flow_state, api, user_id) -> None:
         return
 
     snapshot_manager = api.get_snapshot_manager()
-    try:
-        await snapshot_manager.restore_snapshot(str(snapshot_id))
 
-        try:
-            await snapshot_manager.mark_snapshot_loaded(str(snapshot_id), loaded_by_user_id=int(user_id))
-        except Exception:
-            pass
+    try:
+        await snapshot_manager.restore_snapshot(
+            str(snapshot_id),
+            loaded_by_user_id=int(user_id),
+        )
 
         # Restore rewrites Mongo collections, but some managers keep in-memory caches.
         # Refresh them so bot behavior matches the restored DB without restart.
@@ -101,8 +104,24 @@ async def build_main_keyboard(flow_state, api, user_id) -> List[List[ButtonCallb
     return [
         [ButtonCallback("📸 Create manual snapshot", "create", callback_handler=create_manual_snapshot)],
         [ButtonCallback("↩️ Restore snapshot", "restore")],
-        [ButtonCallback("🗑️ Clear all snapshots", "clear_all")],
+        [ButtonCallback("🧹 Cleanup", "cleanup")],
         NavigationButtons.close(),
+    ]
+
+
+async def build_cleanup_text(flow_state, api, user_id) -> str:
+    return (
+        "🧹 **Cleanup**\n\n"
+        "Delete snapshots to free up space.\n\n"
+        "What would you like to delete?"
+    )
+
+
+async def build_cleanup_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
+    return [
+        [ButtonCallback("🗑️ Delete ALL snapshots", "clear_all")],
+        [ButtonCallback("🚫 Delete obsolete snapshots", "clear_obsolete")],
+        [ButtonCallback("◁ Back", "back")],
     ]
 
 
@@ -119,14 +138,25 @@ async def clear_all_snapshots(flow_state, api, user_id) -> None:
         flow_state.set("clear_all_error", f"{type(exc).__name__}: {exc}")
 
 
+async def clear_obsolete_snapshots(flow_state, api, user_id) -> None:
+    snapshot_manager = api.get_snapshot_manager()
+    try:
+        result = await snapshot_manager.clear_obsolete_snapshots()
+        flow_state.set("clear_obsolete_result", result)
+        flow_state.set("clear_obsolete_error", None)
+        # Ensure pagination cache doesn't show stale items when user goes back.
+        flow_state.pagination_state.pop("restore_list", None)
+    except Exception as exc:  # pragma: no cover
+        flow_state.set("clear_obsolete_result", None)
+        flow_state.set("clear_obsolete_error", f"{type(exc).__name__}: {exc}")
+
+
 async def build_create_result_text(flow_state, api, user_id) -> str:
     snapshot_id = flow_state.get("created_snapshot_id", "")
-    meta = flow_state.get("created_snapshot_meta")
+    meta: models.SnapshotMeta | None = flow_state.get("created_snapshot_meta")
 
-    created_at = _format_date(meta.get("created_at")) if isinstance(meta, Mapping) else "(unknown)"
-    reason = (
-        _display_reason(meta) if isinstance(meta, Mapping) else SNAPSHOT_REASON_MANUAL
-    )
+    created_at = _format_date(meta.created_at) if meta is not None else "(unknown)"
+    reason = _display_reason(meta) if meta is not None else SNAPSHOT_REASON_MANUAL
     short_id = _short_id(str(snapshot_id))
 
     return (
@@ -138,65 +168,75 @@ async def build_create_result_text(flow_state, api, user_id) -> str:
     )
 
 
-async def list_snapshots(flow_state, api, user_id) -> List[Dict[str, Any]]:
+async def list_snapshots(flow_state, api, user_id) -> List[SnapshotListItem]:
     snapshot_manager = api.get_snapshot_manager()
     snapshots = await snapshot_manager.list_snapshots(include_pending=False, limit=50)
 
-    latest_loaded_id: str | None = None
-    try:
-        loaded_meta = await snapshot_manager.get_last_loaded_snapshot_meta()
-        if isinstance(loaded_meta, Mapping) and loaded_meta.get("snapshot_id"):
-            latest_loaded_id = str(loaded_meta.get("snapshot_id"))
-    except Exception:
-        latest_loaded_id = None
+    loaded_meta = await snapshot_manager.get_last_loaded_snapshot_meta()
+    latest_loaded_id = loaded_meta.snapshot_id if loaded_meta is not None else None
 
-    for item in snapshots:
-        try:
-            item_id = str(item.get("snapshot_id"))
-            if latest_loaded_id and item_id == latest_loaded_id:
-                item["_snapshot_loaded_latest"] = True
-                continue
-            if item.get("loaded_at") is not None:
-                item["_snapshot_loaded_before"] = True
-        except Exception:
-            pass
+    items: List[SnapshotListItem] = []
+    for meta in snapshots:
+        is_latest_loaded = latest_loaded_id is not None and meta.snapshot_id == latest_loaded_id
+        is_previously_loaded = meta.loaded_at is not None and not is_latest_loaded
+        items.append(
+            SnapshotListItem(
+                meta=meta,
+                is_latest_loaded=is_latest_loaded,
+                is_previously_loaded=is_previously_loaded,
+            )
+        )
 
     # Clear existing pagination cache so list stays fresh if user returns.
     flow_state.pagination_state.pop("restore_list", None)
-    return snapshots
+    return items
 
 
-def format_snapshot_line(item: Dict[str, Any], idx: int) -> str:
-    reason = _display_reason(item)
-    created_at = _format_date(item.get("created_at"))
+def format_snapshot_line(item: SnapshotListItem, idx: int) -> str:
+    meta = item.meta
+    reason = _display_reason(meta)
+    created_at = _format_date(meta.created_at)
 
-    is_obsolete = bool(item.get("obsolete"))
-    is_latest_loaded = bool(item.get("_snapshot_loaded_latest"))
-    is_previously_loaded = bool(item.get("_snapshot_loaded_before"))
+    number_text = str(meta.snapshot_number)
 
-    if is_obsolete:
-        return f"{idx + 1}. 🚫 **{reason}** - {created_at}"
+    is_obsolete = meta.obsolete
+    is_latest_loaded = item.is_latest_loaded
+    is_previously_loaded = item.is_previously_loaded
+    
+    text = f"**{number_text}.**"
+    
+    text += f"\u2003{created_at}\u2003"
+
     if is_latest_loaded:
-        return f"{idx + 1}. ↩️ **{reason}** - {created_at}"
-    if is_previously_loaded:
-        return f"{idx + 1}. ⬅ **{reason}** - {created_at}"
+        text += f" ↩️"
+    elif is_previously_loaded:
+        text += f" ⬅"
+    
+    if is_obsolete:
+        text += f" 🚫"
+        text += f"\n\u2003 **~~{reason}~~**"
+    else:
+        text += f"\n\u2003 **{reason}**"
 
-    return f"{idx + 1}. **{reason}** - {created_at}"
+    return text
 
 
-def build_restore_button(item: Dict[str, Any], idx: int) -> ButtonCallback:
-    snapshot_id = str(item.get("snapshot_id", ""))
-    created_at = item.get("created_at")
+def build_restore_button(item: SnapshotListItem, idx: int) -> ButtonCallback:
+    meta = item.meta
+    snapshot_id = meta.snapshot_id
+
+    snapshot_number = meta.snapshot_number
+    number_text = str(snapshot_number)
 
     # Button label requirements:
     # - no icon
     # - no 'restore' text
-    # - show number and date/time (no seconds)
-    label = f"{idx + 1}. {_format_date(created_at)}"
+    # - show only the snapshot number
+    label = number_text
 
     async def select_and_confirm(flow_state, api, user_id) -> Optional[str]:
         flow_state.set("restore_snapshot_id", snapshot_id)
-        flow_state.set("restore_snapshot_index", idx + 1)
+        flow_state.set("restore_snapshot_number", snapshot_number)
         flow_state.set("restore_error", None)
         return "restore_confirm"
 
@@ -205,35 +245,33 @@ def build_restore_button(item: Dict[str, Any], idx: int) -> ButtonCallback:
 
 async def build_restore_confirmation(flow_state, api, user_id) -> str:
     snapshot_id = flow_state.get("restore_snapshot_id", "")
-    snapshot_index = flow_state.get("restore_snapshot_index")
+    snapshot_number = flow_state.get("restore_snapshot_number")
     if not snapshot_id:
         return "No snapshot selected."
 
     snapshot_manager = api.get_snapshot_manager()
     meta = await snapshot_manager.get_snapshot_meta(str(snapshot_id))
-    created_at = _format_date(meta.get("created_at")) if isinstance(meta, Mapping) else "(unknown)"
-    reason = (
-        _display_reason(meta) if isinstance(meta, Mapping) else "(unknown)"
-    )
+    created_at = _format_date(meta.created_at) if meta is not None else "(unknown)"
+    reason = _display_reason(meta) if meta is not None else "(unknown)"
 
-    cards_count: str = "?"
-    if isinstance(meta, Mapping):
-        collections = meta.get("collections")
-        if isinstance(collections, Mapping):
-            coffee_cards = collections.get("coffee_cards")
-            if isinstance(coffee_cards, Mapping):
-                doc_count = coffee_cards.get("document_count")
-                if doc_count is not None:
-                    cards_count = str(doc_count)
+    cards_info = "(unknown)"
+    if meta is not None:
+        coffee_cards = meta.collections.get("coffee_cards")
+        if coffee_cards is not None:
+            cards_info = str(coffee_cards.document_count)
+        elif meta.collections:
+            cards_info = ", ".join(sorted(meta.collections.keys()))
+        else:
+            cards_info = "(empty)"
 
-    prefix = f"Snapshot #{snapshot_index}\n\n" if snapshot_index else ""
+    prefix = f"Snapshot #{snapshot_number}\n\n" if snapshot_number else ""
 
     return (
         f"{prefix}"
         "Restore the database to this snapshot?\n\n"
         f"Created: {created_at}\n"
         f"Reason: {reason}\n"
-        f"Cards in snapshot: {cards_count}"
+        f"Collections: {cards_info}"
     )
 
 
@@ -241,7 +279,7 @@ async def build_restore_list_text(flow_state, api, user_id) -> str:
     return (
         "**Select a snapshot**\n\n"
         "Choose a snapshot number to restore.\n\n"
-        "↩️: loaded   🚫: obsolete   \n⬅: previously loaded"
+        "↩️: loaded   ~~obsolete~~   \n⬅: previously loaded"
     )
 
 
@@ -257,8 +295,7 @@ async def build_restore_result_text(flow_state, api, user_id) -> str:
         )
 
     return (
-        "✅ **Restore completed**\n\n"
-        f"Restored to snapshot: `{snapshot_id}`"
+        "✅ **Snapshot restored**"
     )
 
 
@@ -269,14 +306,28 @@ async def build_clear_all_result_text(flow_state, api, user_id) -> str:
     if err:
         return "❌ **Clear failed**\n\n" f"Error: {err}"
 
-    deleted_meta = "?"
-    deleted_data = "?"
-    if isinstance(result, Mapping):
-        deleted_meta = str(result.get("deleted_meta", "?"))
-        deleted_data = str(result.get("deleted_data", "?"))
+    deleted_meta = str(result["deleted_meta"]) if result else "?"
+    deleted_data = str(result["deleted_data"]) if result else "?"
 
     return (
         "✅ **All snapshots cleared**\n\n"
+        f"Deleted meta docs: {deleted_meta}\n"
+        f"Deleted data docs: {deleted_data}"
+    )
+
+
+async def build_clear_obsolete_result_text(flow_state, api, user_id) -> str:
+    err = flow_state.get("clear_obsolete_error")
+    result = flow_state.get("clear_obsolete_result")
+
+    if err:
+        return "❌ **Cleanup failed**\n\n" f"Error: {err}"
+
+    deleted_meta = str(result["deleted_meta"]) if result else "?"
+    deleted_data = str(result["deleted_data"]) if result else "?"
+
+    return (
+        "✅ **Obsolete snapshots deleted**\n\n"
         f"Deleted meta docs: {deleted_meta}\n"
         f"Deleted data docs: {deleted_data}"
     )
@@ -296,6 +347,15 @@ def create_snapshots_flow() -> MessageFlow:
 
     flow.add_state(
         MessageDefinition(
+            state_id="cleanup_menu",
+            state_type=StateType.BUTTON,
+            text_builder=build_cleanup_text,
+            keyboard_builder=build_cleanup_keyboard,
+        )
+    )
+
+    flow.add_state(
+        MessageDefinition(
             state_id="create_result",
             state_type=StateType.BUTTON,
             text_builder=build_create_result_text,
@@ -309,8 +369,8 @@ def create_snapshots_flow() -> MessageFlow:
             state_id="restore_list",
             state_type=StateType.BUTTON,
             text_builder=build_restore_list_text,
-            # 2-column grid, 5 rows per page => 10 items.
-            pagination_config=PaginationConfig(page_size=10, items_per_row=2, close_button_text="◁ Back"),
+            # 4-column grid, 3 rows per page => 12 items.
+            pagination_config=PaginationConfig(page_size=12, items_per_row=4, close_button_text="◁ Back"),
             pagination_items_builder=list_snapshots,
             pagination_item_formatter=format_snapshot_line,
             pagination_item_button_builder=build_restore_button,
@@ -326,7 +386,7 @@ def create_snapshots_flow() -> MessageFlow:
             "This will permanently delete all snapshot history."
         ),
         on_confirm_state="clear_all_confirm_2",
-        on_cancel_state="main",
+        on_cancel_state="cleanup_menu",
         confirm_text="Continue",
         cancel_text="◁ Back",
         warning="This cannot be undone.",
@@ -339,7 +399,7 @@ def create_snapshots_flow() -> MessageFlow:
             "Really delete ALL snapshots?"
         ),
         on_confirm_state="clear_all_result",
-        on_cancel_state="main",
+        on_cancel_state="cleanup_menu",
         confirm_text="✅ Yes, delete all",
         cancel_text="◁ Back",
         warning="This cannot be undone.",
@@ -353,6 +413,30 @@ def create_snapshots_flow() -> MessageFlow:
             buttons=None,
             auto_exit_after_render=True,
             on_enter=clear_all_snapshots,
+        )
+    )
+
+    flow.add_confirmation(
+        state_id="clear_obsolete_confirm",
+        question=(
+            "Delete all **obsolete** snapshots?\n\n"
+            "This deletes snapshots marked as obsolete and removes them from history."
+        ),
+        on_confirm_state="clear_obsolete_result",
+        on_cancel_state="cleanup_menu",
+        confirm_text="✅ Yes, delete obsolete",
+        cancel_text="◁ Back",
+        warning="This cannot be undone.",
+    )
+
+    flow.add_state(
+        MessageDefinition(
+            state_id="clear_obsolete_result",
+            state_type=StateType.BUTTON,
+            text_builder=build_clear_obsolete_result_text,
+            buttons=None,
+            auto_exit_after_render=True,
+            on_enter=clear_obsolete_snapshots,
         )
     )
 
@@ -378,6 +462,13 @@ def create_snapshots_flow() -> MessageFlow:
     )
 
     # Simple transitions
-    flow.states["main"].next_state_map.update({"restore": "restore_list", "clear_all": "clear_all_confirm_1"})
+    flow.states["main"].next_state_map.update({"restore": "restore_list", "cleanup": "cleanup_menu"})
+    flow.states["cleanup_menu"].next_state_map.update(
+        {
+            "back": "main",
+            "clear_all": "clear_all_confirm_1",
+            "clear_obsolete": "clear_obsolete_confirm",
+        }
+    )
 
     return flow

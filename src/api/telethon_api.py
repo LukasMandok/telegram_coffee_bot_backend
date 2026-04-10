@@ -185,6 +185,8 @@ class TelethonAPI:
         This method starts background tasks and keeps the bot running
         until manually disconnected or an error occurs.
         """
+        self.get_snapshot_manager().set_api(self)
+
         # Telethon's type stubs don't always mark `start()` as awaitable,
         # but at runtime it must be awaited in an async app.
         await cast(Any, self.bot).start(bot_token=self.config.bot_token)

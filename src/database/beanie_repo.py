@@ -58,6 +58,9 @@ class BeanieRepository(BaseRepository):
                 models.Config,
                 models.AppSettings,
                 models.UserSettings,
+                models.SnapshotMeta,
+                models.SnapshotHistory,
+                models.SnapshotDataChunk,
                 # Coffee models
                 CoffeeCard,
                 CoffeeOrder,

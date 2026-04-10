@@ -1,9 +1,10 @@
-from typing import Annotated, Optional, List, Dict, TYPE_CHECKING
+from typing import Annotated, Optional, List, Dict, TYPE_CHECKING, Any
 import uuid
 
 from beanie import Document, Indexed, Link, before_event, Insert, Replace, Save
 from pymongo import IndexModel, ASCENDING
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
+from bson import ObjectId
 
 from datetime import datetime
 
@@ -259,6 +260,84 @@ class AppSettings(Document):
     
     class Settings:
         name = "app_settings"
+
+
+class SnapshotCollectionChunkInfo(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    chunk_ids: List[ObjectId] = Field(default_factory=list)
+    document_count: int = Field(default=0, ge=0)
+
+
+class SnapshotMeta(Document):
+    """Snapshot metadata.
+
+    Stored separately from snapshot data chunks (see `snapshots_data` collection).
+    """
+
+    snapshot_number: Annotated[int, Indexed(unique=True)]
+    snapshot_id: Annotated[str, Indexed(unique=True)]
+
+    created_at: datetime = Field(default_factory=datetime.now)
+    committed_at: Optional[datetime] = None
+
+    reasons: List[str] = Field(default_factory=list)
+    contexts: List[str] = Field(default_factory=list)
+
+    status: str = Field(default="committed")
+
+    # Permanent snapshots are excluded from retention pruning (keep_last).
+    permanent: bool = Field(default=False)
+
+    collections: Dict[str, SnapshotCollectionChunkInfo] = Field(default_factory=dict)
+    total_documents: int = Field(default=0, ge=0)
+
+    loaded_at: Optional[datetime] = None
+    loaded_by_user_id: Optional[int] = None
+
+    obsolete: bool = Field(default=False)
+    obsoleted_at: Optional[datetime] = None
+    obsoleted_by_snapshot_number: Optional[int] = None
+
+    pre_restore_for_snapshot_number: Optional[int] = None
+
+    class Settings:
+        name = "snapshots_meta"
+        use_cache = False
+
+
+class SnapshotHistory(Document):
+    """Tracks snapshot numbers used for the history-based restore algorithm."""
+
+    key: Annotated[str, Indexed(unique=True)] = Field(default="default")
+    snapshot_numbers: List[int] = Field(default_factory=list)
+    last_snapshot_number: int = Field(default=0, ge=0)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+    class Settings:
+        name = "snapshot_history"
+        use_cache = False
+
+
+class SnapshotDataChunk(Document):
+    """Chunked snapshot payload documents.
+
+    This backs the `snapshots_data` collection and is referenced by `SnapshotMeta.collections[*].chunk_ids`.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    snapshot_id: Annotated[str, Indexed()]
+    source_collection: Annotated[str, Indexed()]
+    chunk_index: int
+
+    created_at: datetime = Field(default_factory=datetime.now)
+    document_count: int = Field(default=0, ge=0)
+    documents: List[Dict[str, Any]] = Field(default_factory=list)
+
+    class Settings:
+        name = "snapshots_data"
+        use_cache = False
 
 
 class Config(base.Config, Document):
