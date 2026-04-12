@@ -126,7 +126,7 @@ class SnapshotManager:
 
     async def _get_snapshot_history(self) -> List[int]:
         doc = await models.SnapshotHistory.find_one(models.SnapshotHistory.key == "default")
-        return doc.snapshot_numbers if doc is not None else []
+        return list(doc.snapshot_numbers or []) if doc is not None else []
 
     async def _get_snapshot_settings(self) -> models.SnapshotSettings:
         """Return snapshot settings (with model defaults if AppSettings is missing)."""
@@ -167,20 +167,27 @@ class SnapshotManager:
             return [current]
 
         history_numbers = set(history)
+
         if current not in history_numbers:
             raise ValueError(f"Current snapshot number {current} not present in snapshot history")
         if target not in history_numbers:
             raise ValueError(f"Target snapshot number {target} not present in snapshot history")
 
+        # Full snapshots are encoded as consecutive duplicates in the history:
+        full_snapshot_set: set[int] = set()
+        
         # jump_points[current] -> list of snapshot numbers you may jump to from `current`
         jump_points: Dict[int, List[int]] = {}
+        
         for prev, nxt in zip(history, history[1:]):
+            # Full snapshots are encoded as the same number twice
+            if prev == nxt:
+                full_snapshot_set.add(int(prev))
             # Restore points append [restore_point, target] => prev > nxt.
-            if nxt < prev:
+            elif nxt < prev:
                 jump_points.setdefault(nxt, []).append(prev)
-                continue
             # New snapshots created after a restore can create a big step => nxt > prev + 1.
-            if nxt > prev + 1:
+            elif nxt > prev + 1:
                 jump_points.setdefault(nxt, []).append(prev)
 
         for key, values in jump_points.items():
@@ -190,12 +197,17 @@ class SnapshotManager:
             options: List[int] = []
 
             down = current_number - 1
-            if down >= target and down in history_numbers:
+            if down in history_numbers and down >= target:
                 options.append(down)
 
             for jump in jump_points.get(current_number, []):
                 if jump >= target and jump in history_numbers:
                     options.append(jump)
+
+            # Full snapshots are explicit navigation anchors: if the target is a full snapshot,
+            # allow jumping to it from any current snapshot.
+            if target in full_snapshot_set:
+                options.append(target)
 
             options = sorted(set(options))
             if not options:
@@ -220,17 +232,22 @@ class SnapshotManager:
 
         return path
 
-    async def _append_snapshot_history_numbers(self, snapshot_numbers: Sequence[int]) -> None:
+    async def _append_snapshot_history_numbers(
+        self,
+        snapshot_numbers: Sequence[int],
+    ) -> None:
         if not snapshot_numbers:
             return
 
+        update: Dict[str, Any] = {
+            "$setOnInsert": {"key": "default"},
+            "$push": {"snapshot_numbers": {"$each": list(snapshot_numbers)}},
+            "$set": {"updated_at": datetime.now()},
+        }
+
         await self._snapshot_history_collection().find_one_and_update(
             {"key": "default"},
-            {
-                "$setOnInsert": {"key": "default"},
-                "$push": {"snapshot_numbers": {"$each": list(snapshot_numbers)}},
-                "$set": {"updated_at": datetime.now()},
-            },
+            update,
             upsert=True,
             return_document=ReturnDocument.AFTER,
         )
@@ -292,7 +309,9 @@ class SnapshotManager:
             {"key": "default"},
             {
                 "$setOnInsert": {"key": "default"},
-                "$pull": {"snapshot_numbers": {"$in": list(snapshot_numbers)}},
+                "$pull": {
+                    "snapshot_numbers": {"$in": list(snapshot_numbers)},
+                },
                 "$set": {"updated_at": datetime.now()},
             },
             upsert=True,
@@ -513,6 +532,7 @@ class SnapshotManager:
         save_in_background: bool = True,
         add_to_history: bool = True,
         permanent: bool = False,
+        full_snapshot: bool = False,
     ) -> str:
         current = _append_to_pending_snapshot(reason=reason, context=context)
         if current is not None:
@@ -533,6 +553,7 @@ class SnapshotManager:
             save_in_background=save_in_background,
             add_to_history=bool(add_to_history),
             permanent=bool(permanent),
+            full_snapshot=bool(full_snapshot),
         )
         return snapshot_id
 
@@ -559,6 +580,7 @@ class SnapshotManager:
         save_in_background: bool,
         add_to_history: bool = True,
         permanent: bool = False,
+        full_snapshot: bool = False,
     ) -> None:
         """Saves a captured snapshot and prune old snapshots based on current settings."""
 
@@ -583,6 +605,7 @@ class SnapshotManager:
                     contexts=list(snapshot.contexts),
                     status="writing",
                     permanent=bool(permanent),
+                    full_snapshot=bool(full_snapshot),
                     obsolete=False,
                     collections={},
                     total_documents=0,
@@ -613,7 +636,8 @@ class SnapshotManager:
                 await meta_doc.save()
 
                 if add_to_history:
-                    await self._append_snapshot_history_numbers([snapshot_number])
+                    history_append = [snapshot_number, snapshot_number] if full_snapshot else [snapshot_number]
+                    await self._append_snapshot_history_numbers(history_append)
 
                 reason_text = ", ".join(snapshot.reasons).strip() or "(no reason)"
                 self.logger.info(
@@ -921,8 +945,13 @@ class SnapshotManager:
         history_append: List[int] = []
         if pre_restore_snapshot_number is not None:
             history_append.append(pre_restore_snapshot_number)
-        history_append.append(snapshot_number)
-        await self._append_snapshot_history_numbers(history_append)
+        # Avoid creating consecutive duplicates by accident.
+        # Duplicates in history are reserved to encode "full snapshots".
+        if not snapshot_history or snapshot_history[-1] != snapshot_number:
+            history_append.append(snapshot_number)
+
+        if history_append:
+            await self._append_snapshot_history_numbers(history_append)
 
         history_after = await self._get_snapshot_history()
         self.logger.debug(

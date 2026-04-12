@@ -56,6 +56,8 @@ async def create_manual_snapshot(flow_state, api, user_id) -> Optional[str]:
         reason=SNAPSHOT_REASON_MANUAL,
         context="manual_snapshot",
         save_in_background=False,
+        permanent=True,
+        full_snapshot=True,
     )
 
     meta = await snapshot_manager.get_snapshot_meta(snapshot_id) if snapshot_id else None

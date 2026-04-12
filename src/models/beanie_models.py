@@ -289,6 +289,10 @@ class SnapshotMeta(Document):
     # Permanent snapshots are excluded from retention pruning (keep_last).
     permanent: bool = Field(default=False)
 
+    # Full snapshots are intended as navigation anchors (jump points) for restores.
+    # Weekly snapshots and manual snapshots should be marked as full.
+    full_snapshot: bool = Field(default=False)
+
     collections: Dict[str, SnapshotCollectionChunkInfo] = Field(default_factory=dict)
     total_documents: int = Field(default=0, ge=0)
 

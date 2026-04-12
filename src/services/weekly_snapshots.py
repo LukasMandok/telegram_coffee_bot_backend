@@ -59,6 +59,7 @@ async def run_periodic_weekly_full_snapshots(
                     context=WEEKLY_FULL_SNAPSHOT_CONTEXT,
                     save_in_background=False,
                     permanent=True,
+                    full_snapshot=True,
                 )
                 continue
 
