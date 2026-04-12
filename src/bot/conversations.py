@@ -22,8 +22,9 @@ from .settings_manager import SettingsManager
 from .keyboards import KeyboardManager
 from .credit_flow import run_credit_flow
 from .conversation_flows.debt_flow import run_debt_flow
+from .conversation_flows.card_flow import create_card_menu_flow, create_close_card_flow, create_new_card_flow
 from .conversation_flows.snapshots_flow import create_snapshots_flow
-from .message_flow_helpers import IntegerParser, MoneyParser
+from .message_flow_helpers import CommonFlowKeys, IntegerParser, MoneyParser
 
 from ..services.order import place_order
 from ..services.gsheet_sync import request_gsheet_sync_after_action
@@ -1267,130 +1268,9 @@ class ConversationManager:
 
     @managed_conversation("create_coffee_card", 120)
     async def create_coffee_card_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
-        """Conversation to create a new coffee card with PayPal link setup."""
-        
-    # Get the user (must be a registered TelegramUser to create coffee cards)
-        user = await self.repo.find_user_by_id(user_id)
-        if not user or not hasattr(user, 'display_name'):
-            await self.api.message_manager.send_text(
-                user_id, "❌ Only registered users with display names can create coffee cards.", True, True
-            )
-            return False
-        
-        # Check if user has PayPal link, if not, set it up
-        if not user.paypal_link:
-            from .settings_flow import create_paypal_flow
-
-            paypal_flow = create_paypal_flow()
-            paypal_setup_success = await paypal_flow.run(conv, user_id, self.api, start_state="main")
-            if not paypal_setup_success:
-                return False
-
-            user = await self.repo.find_user_by_id(user_id)
-            if not user or not user.paypal_link:
-                await self.api.message_manager.send_text(
-                    user_id,
-                    "❌ PayPal setup was not completed. Coffee card creation cancelled.",
-                    True,
-                    True,
-                )
-                return False
-        
-        # Initialize default values
-        int_parser = IntegerParser()
-        money_parser = MoneyParser()
-        state.data.update({
-            'total_coffees': 200,
-            'cost_per_coffee': 0.8
-        })
-        
-        # Show initial overview and get confirmation
-        while True:
-            total_cost = state.data['total_coffees'] * state.data['cost_per_coffee']
-            
-            overview_text = (
-                f"☕ **Create New Coffee Card**\n\n"
-                f"**Total Coffees:** {state.data['total_coffees']}\n"
-                f"**Cost per Coffee:** {state.data['cost_per_coffee']:.2f} €\n"
-                f"**Total Cost:** {total_cost:.2f} €\n\n"
-                f"**PayPal Link:** {user.paypal_link}\n\n"
-                f"Confirm creation?"
-            )
-            
-            keyboard = [
-                [Button.inline("✅ Yes, Create Card", b"confirm_create")],
-                [Button.inline("📝 Adjust Coffees", b"adjust_coffees"), Button.inline("💰 Adjust Price", b"adjust_price")],
-                [Button.inline("❌ Cancel", b"cancel")]
-            ]
-            
-            data, message = await self.send_keyboard_and_wait_response(
-                conv, user_id, overview_text, keyboard, 60
-            )
-            
-            if data is None or data == "cancel":
-                await self.send_or_edit_message(user_id, "❌ Coffee card creation cancelled.", message, remove_buttons=True)
-                return False
-            
-            if data == "confirm_create":
-                break
-            
-            elif data == "adjust_coffees":
-                await self.send_or_edit_message(user_id, "Enter new number of coffees:", message, remove_buttons=True)
-                
-                coffees_event = await self.receive_message(conv, user_id, 60)
-                try:
-                    new_coffees = int_parser.parse(coffees_event.message.message)
-                    if new_coffees is None:
-                        raise ValueError("Must be a whole number")
-                    if new_coffees <= 0:
-                        raise ValueError("Must be positive")
-                    state.data['total_coffees'] = new_coffees
-                except ValueError:
-                    await self.api.message_manager.send_text(
-                        user_id, "❌ Invalid number. Using previous value.", True, True
-                    )
-            
-            elif data == "adjust_price":
-                await self.send_or_edit_message(user_id, "Enter new price per coffee in €:", message, remove_buttons=True)
-                
-                price_event = await self.receive_message(conv, user_id, 60)
-                try:
-                    new_price = money_parser.parse(price_event.message.message)
-                    if new_price is None:
-                        raise ValueError("Must be a valid euro amount")
-                    if new_price <= 0:
-                        raise ValueError("Must be positive")
-                    state.data['cost_per_coffee'] = new_price
-                except ValueError:
-                    await self.api.message_manager.send_text(
-                        user_id, "❌ Invalid price. Using previous value.", True, True
-                    )
-        
-        # Create the coffee card
-        try:            
-            card = await self.api.coffee_card_manager.create_coffee_card(
-                total_coffees=state.data['total_coffees'],
-                cost_per_coffee=state.data['cost_per_coffee'],
-                purchaser_id=user_id
-            )
-            
-            final_message = (
-                f"✅ **Coffee Card Created!**\n\n"
-                f"**Total Coffees:** {card.total_coffees}\n"
-                f"**Cost per Coffee:** {card.cost_per_coffee:.2f} €\n"
-                f"**Total Cost:** {card.total_cost:.2f} €\n\n"
-                f"💳 **Payment:** {user.paypal_link}\n\n"
-                f"Your coffee card is now active and ready to use!"
-            )
-            
-            await self.send_or_edit_message(user_id, final_message, message, remove_buttons=True)
-            return True
-            
-        except Exception as e:
-            await self.send_or_edit_message(
-                user_id, f"❌ Failed to create coffee card: {str(e)}", message, remove_buttons=True
-            )
-            return False
+        """Create a new coffee card (MessageFlow-based)."""
+        flow = create_new_card_flow()
+        return await flow.run(conv, user_id, self.api, start_state="create_main")
 
     @managed_conversation("debt", 300)
     async def debt_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
@@ -1449,63 +1329,31 @@ class ConversationManager:
         user_id: int, 
         conv: Conversation, 
         state: ConversationState,
-        card,  # CoffeeCard object
     ) -> bool:
-        """
-        Handle the conversation flow for completing a coffee card with confirmation.
-        
-        Args:
-            user_id: The user requesting completion
-            conv: The active conversation
-            state: The conversation state
-            card: The CoffeeCard object to complete
-            
-        Returns:
-            True if card was completed, False if cancelled
-        """
-        from ..models.coffee_models import CoffeeCard
-        
-        # Check if confirmation is needed (card has remaining coffees)
-        if card.remaining_coffees > 0:
-            confirmation_text = (
-                f"⚠️ Card **{card.name}** has {card.remaining_coffees} coffees left.\n\n"
-                f"Complete it anyway?"
-            )
-            
-            # Use existing confirmation keyboard and wait for response
-            data, message = await self.send_keyboard_and_wait_response(
-                conv,
+        """Close an existing coffee card (MessageFlow-based)."""
+        oldest_card = await self.api.coffee_card_manager.get_oldest_active_coffee_card()
+        if not oldest_card:
+            await self.api.message_manager.send_text(
                 user_id,
-                confirmation_text,
-                KeyboardManager.get_confirmation_keyboard(),
-                60
+                "❌ No active coffee cards found.",
+                True,
+                True,
             )
-            
-            if data != "Yes":
-                # User declined or timeout
-                await self.send_or_edit_message(
-                    user_id,
-                    "❌ Cancelled.",
-                    message,
-                    remove_buttons=True
-                )
-                return False
-            
-            # User confirmed - continue with completion
-            await self.send_or_edit_message(
-                user_id,
-                "✅ Completing...",
-                message,
-                remove_buttons=True
-            )
-        
-        # Now complete the card (without confirmation since we already handled it)
-        debts = await self.api.coffee_card_manager.close_card(
-            card,
-            requesting_user_id=user_id,
+            return False
+        flow = create_close_card_flow()
+        return await flow.run(
+            conv,
+            user_id,
+            self.api,
+            start_state="close_confirm",
+            initial_data={},
         )
-        
-        return len(debts) > 0  # True if debts were created, False otherwise
+
+    @managed_conversation("card_menu", 180)
+    async def card_menu_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
+        """Main coffee card menu (`/cards`) (MessageFlow-based)."""
+        flow = create_card_menu_flow()
+        return await flow.run(conv, user_id, self.api, start_state="menu")
 
     @managed_conversation("settings", 180)
     async def settings_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:

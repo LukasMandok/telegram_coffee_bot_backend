@@ -281,6 +281,18 @@ class CommandManager:
         await self.api.conversation_manager.create_coffee_card_conversation(user_id)
 
     @dep.verify_user
+    async def handle_card_command(self, event: events.NewMessage.Event) -> None:
+        """Handle the /cards command to show the coffee card menu."""
+        user_id = event.sender_id
+        log_telegram_command(user_id, "/cards", getattr(event, 'chat_id', None))
+
+        # Check if user already has an active conversation
+        if await self._check_and_notify_active_conversation(user_id):
+            return
+
+        await self.api.conversation_manager.card_menu_conversation(user_id)
+
+    @dep.verify_user
     async def handle_paypal_command(self, event: events.NewMessage.Event) -> None:
         """
         Handle the /paypal command to set up or change PayPal link.
@@ -507,31 +519,8 @@ class CommandManager:
             return
         
         try:
-            # Get all active coffee cards from the manager (already loaded)
-            cards = self.api.coffee_card_manager.cards
-            self.logger.trace(f"Active cards: {len(cards)}")
-            
-            
-            if not cards:
-                oldest_card = None
-            else:
-                # Sort by created_at to get oldest first
-                sorted_cards = sorted(cards, key=lambda c: c.created_at)
-                oldest_card = sorted_cards[0]
-            
-            if not oldest_card:
-                await self.api.message_manager.send_text(
-                    user_id,
-                    "❌ No active coffee cards found.",
-                    True, True
-                )
-                return
-            
             # Start the completion conversation (handles confirmation if needed)
-            success = await self.api.conversation_manager.close_card_conversation(
-                user_id,
-                card=oldest_card
-            )
+            success = await self.api.conversation_manager.close_card_conversation(user_id)
             
             if not success:
                 # User cancelled - conversation already handled the message
@@ -627,7 +616,7 @@ class CommandManager:
             "• `send a number` - Quick order for yourself (e.g. send `2` → confirm)\n"
 
             "**Coffee Cards:**\n"
-            "• `/card` - Show status and manage all coffee cards\n"
+            "• `/cards` - Show status and manage all coffee cards\n"
             "• `/new_card` - Create a new coffee card that you paid for\n"
             "• `/close_card` - Close the last active coffee card\n\n"
             

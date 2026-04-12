@@ -8,6 +8,7 @@ These helpers provide common patterns like:
 """
 
 import re
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Callable, Awaitable, TypeVar, Generic, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -17,6 +18,13 @@ else:
     from .message_flow import MessageFlowState, ButtonCallback
 
 T = TypeVar('T')
+
+
+def format_date(value: Any, *, fmt: str = "%d.%m.%Y %H:%M") -> str:
+    """Format a datetime-like value for message flows."""
+    if isinstance(value, datetime):
+        return value.strftime(fmt)
+    return str(value)
 
 
 class GridLayout:
@@ -511,6 +519,39 @@ class NavigationButtons:
             ButtonCallback(save_text, save_callback),
             ButtonCallback(cancel_text, cancel_callback)
         ]
+
+
+class CommonCallbacks:
+    """Common callback_data constants used across message flows."""
+
+    CANCEL = "cancel"
+    CLOSE = "close"
+    DONE = "done"
+    BACK = "back"
+
+    CONFIRM = "confirm"
+    YES = "yes"
+    NO = "no"
+
+    PAGE_NEXT = "page_next"
+    PAGE_PREV = "page_prev"
+    PAGE_INFO = "page_info"
+
+
+class CommonFlowKeys:
+    """Common flow_state.flow_data keys used across message flows."""
+
+    AFTER_CANCEL = "after_cancel"
+    SELECTED_CARD_ID = "selected_card_id"
+
+
+class CommonStateIds:
+    """Common state_id constants used across message flows."""
+
+    MENU = "menu"
+    CLOSE_CONFIRM = "close_confirm"
+    CLOSE_EXECUTE = "close_execute"
+    EXIT_CANCELLED = "exit_cancelled"
 
 
 class DynamicListFlow:

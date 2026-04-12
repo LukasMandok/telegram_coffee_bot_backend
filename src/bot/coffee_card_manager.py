@@ -36,7 +36,7 @@ class CoffeeCardManager:
     @requires_beanie(CoffeeCard)
     async def load_from_db(self):
         """Load active coffee cards from database."""
-        self.cards = await CoffeeCard.find(CoffeeCard.is_active == True).to_list()
+        self.cards = await CoffeeCard.find(CoffeeCard.is_active == True).sort("created_at").to_list()  # type: ignore[comparison-overlap]
         await self._update_available()
         self.logger.info(f"Loaded {len(self.cards)} active coffee cards from database")
 
@@ -57,11 +57,27 @@ class CoffeeCardManager:
         card.completed_at = datetime.now()
         await card.save()
 
-        if card in self.cards:
-            self.cards.remove(card)
-            await self._update_available()
+        removed_from_cache = False
+        if card.id is not None:
+            for existing in list(self.cards):
+                if existing.id == card.id:
+                    self.cards.remove(existing)
+                    removed_from_cache = True
+                    break
         else:
-            raise ValueError("Card not found in manager")
+            # Shouldn't happen in practice, but keep a safe fallback.
+            if card in self.cards:
+                self.cards.remove(card)
+                removed_from_cache = True
+
+        if not removed_from_cache:
+            # IMPORTANT: do not raise here. The DB update already happened; raising would
+            # incorrectly report a failure and abort snapshot creation.
+            self.logger.debug(
+                f"Card deactivated but not found in manager cache (likely different document instance). name='{card.name}'"
+            )
+
+        await self._update_available()
     
     async def _update_inactive_counters(self, card: CoffeeCard) -> None:
         """
@@ -186,6 +202,12 @@ class CoffeeCardManager:
     async def get_active_coffee_cards(self) -> List[CoffeeCard]:
         """Get all active coffee cards."""
         return self.cards
+
+    async def get_oldest_active_coffee_card(self) -> Optional[CoffeeCard]:
+        """Get the oldest active coffee card from the manager cache."""
+        if not self.cards:
+            return None
+        return min(self.cards, key=lambda card: card.created_at)
     
     # TODO: implement correctly 
     async def get_user_coffee_cards(self, user_id: int) -> List[CoffeeCard]:
@@ -197,7 +219,7 @@ class CoffeeCardManager:
                                     fetch_links=True).to_list()
     
     @pending_snapshot(
-        lambda self, card, **_: f"card_closed:{str(getattr(card, 'id', 'unknown'))}",
+        lambda self, card, **_: f"card_closed:{str(card.id or 'unknown')}",
         reason=lambda self, card, **_: f"Close Coffee Card ({card.name})",
         collections=("coffee_cards", "user_debts", "payments"),
     )
@@ -224,6 +246,23 @@ class CoffeeCardManager:
         if not card:
             raise ValueError(f"Card not provided")
 
+        if card.id is not None:
+            for existing in self.cards:
+                if existing.id == card.id:
+                    card = existing
+                    break
+
+        pending = get_current_pending_snapshot()
+        if pending is not None:
+            context_key = pending.context.split(":", 1)[0] if pending.context else "(none)"
+            self.logger.debug(
+                f"Pending snapshot active for close_card: context_key={context_key}, collections={list(pending.collections)}"
+            )
+
+        self.logger.debug(
+            f"Closing coffee card requested: name='{card.name}', requesting_user_id={requesting_user_id}, closed_by_session={closed_by_session}"
+        )
+
         await card.fetch_link("purchaser")
         purchaser: TelegramUser = card.purchaser  # type: ignore        
         
@@ -231,11 +270,23 @@ class CoffeeCardManager:
         if not card.is_active:
             raise ValueError(f"Card '{card.name}' is already completed")
         
-        debts = await self.api.debt_manager.create_or_update_debts_for_card(card)
-        await self._update_inactive_counters(card)
-        await self._deactivate_coffee_card(card)
-        request_gsheet_sync_after_action(reason="card_closed")
-        self.logger.info(f"Card '{card.name}' marked as completed")
+        try:
+            debts = await self.api.debt_manager.create_or_update_debts_for_card(card)
+            self.logger.info(
+                f"Debts created/updated for card close. name='{card.name}', debts={len(debts)}"
+            )
+
+            await self._update_inactive_counters(card)
+            await self._deactivate_coffee_card(card)
+
+            request_gsheet_sync_after_action(reason="card_closed")
+            self.logger.info(f"Card '{card.name}' marked as completed")
+        except Exception as exc:
+            self.logger.error(
+                f"Failed while closing coffee card. name='{card.name}'",
+                exc=exc,
+            )
+            raise
         
         # Build debt summary message for purchaser
         if debts:
@@ -317,8 +368,7 @@ class CoffeeCardManager:
                 f"✅ **Card Completed!**\n\n"
                 f"📋 Card: **{card.name}**\n"
                 f"👤 Purchaser: {purchaser.display_name}\n"
-                f"💰 Total Debts: €{total_debt:.2f}\n\n"
-                f"All debtors have been notified.",
+                f"💰 Total Debts: €{total_debt:.2f}",
                 vanish=False,
                 conv=False,
                 silent=False

@@ -203,6 +203,13 @@ class MessageDefinition(BaseModel):
         default=None,
         description="Configuration for pagination"
     )
+    pagination_reset_on_enter: bool = Field(
+        default=False,
+        description=(
+            "If True, clears cached pagination state when this state is entered. "
+            "This resets to page 1 and refetches items next render."
+        )
+    )
     pagination_items_builder: Optional[Callable[..., Awaitable[List[Any]]]] = Field(
         default=None,
         description="Function that returns all items to paginate"
@@ -282,6 +289,13 @@ class MessageDefinition(BaseModel):
     )
     
     # Lifecycle hooks
+    defaults: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Default flow_data values to set on entry into this state (only if missing). "
+            "Applied before on_enter."
+        ),
+    )
     on_enter: Optional[Callable[..., Awaitable[None]]] = Field(
         default=None,
         description="Async function called when entering this state"
@@ -293,6 +307,20 @@ class MessageDefinition(BaseModel):
     on_button_press: Optional[Callable[..., Awaitable[Optional[str]]]] = Field(
         default=None,
         description="Async function called on any button press, can override next state"
+    )
+
+    route_callback_to_state_id: bool = Field(
+        default=False,
+        description=(
+            "If True and a button callback_data matches a state_id, navigate there automatically. "
+            "Useful when callback_data is set to the target state_id.")
+    )
+    route_callback_allowlist: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Optional allowlist of callback_data strings that may be routed as state_ids when "
+            "route_callback_to_state_id is enabled. If None, any existing state_id is allowed."
+        )
     )
     
     def __init__(self, **data):
@@ -379,6 +407,9 @@ class MessageFlowState(BaseModel):
     state_history: List[str] = Field(default_factory=list)
     flow_data: Dict[str, Any] = Field(default_factory=dict)
     current_message: Optional[Any] = None  # The message object being edited
+
+    # Tracks whether the current_state is being entered or re-rendered.
+    last_rendered_state_id: Optional[str] = None
     
     # Pagination state
     pagination_state: Dict[str, Any] = Field(
@@ -490,6 +521,22 @@ class MessageFlow:
         self.states: Dict[str, MessageDefinition] = {}
         self.logger = Logger("MessageFlow")
 
+    def extend(self, other: "MessageFlow", *, overwrite: bool = False, skip_existing: bool = False) -> None:
+        """Merge states from another flow.
+
+        Args:
+            other: The other MessageFlow whose states will be added.
+            overwrite: If True, overwrite states with the same state_id.
+            skip_existing: If True, skip states that already exist (no overwrite).
+        """
+        for state_id, message_def in other.states.items():
+            if state_id in self.states:
+                if skip_existing:
+                    continue
+                if not overwrite:
+                    raise ValueError(f"State '{state_id}' already exists in flow")
+            self.states[state_id] = message_def
+
     async def _wait_filtered_callback(
         self,
         conv: "Conversation",
@@ -583,7 +630,7 @@ class MessageFlow:
         
         # Build item buttons (optionally grouped into a grid)
         buttons: List[List[ButtonCallback]] = []
-        items_per_row = max(1, int(getattr(config, "items_per_row", 1)))
+        items_per_row = max(1, int(config.items_per_row))
         current_row: List[ButtonCallback] = []
         for idx, item in enumerate(page_items, start=start_idx):
             if not current_def.pagination_item_button_builder:
@@ -790,6 +837,12 @@ class MessageFlow:
                             # Otherwise check next_state_map
                             if button_data in current_def.next_state_map:
                                 return current_def.next_state_map[button_data]
+
+                            # Optional routing: callback_data == state_id
+                            if current_def.route_callback_to_state_id:
+                                allowlist = current_def.route_callback_allowlist
+                                if (allowlist is None or button_data in allowlist) and button_data in self.states:
+                                    return button_data
                             
                             # Handler returned None - stay in current state (re-render)
                             return current_def.state_id
@@ -885,17 +938,31 @@ class MessageFlow:
         
         while True:
             current_def = self.states[flow_state.current_state_id]
+
+            is_state_entry = flow_state.last_rendered_state_id != flow_state.current_state_id
+            flow_state.last_rendered_state_id = flow_state.current_state_id
+
+            if is_state_entry:
+                # Optional pagination reset when entering a state.
+                if current_def.pagination_config and current_def.pagination_reset_on_enter:
+                    flow_state.pagination_state.pop(current_def.state_id, None)
+
+                # Apply per-state defaults (only if missing).
+                if current_def.defaults:
+                    for key, value in current_def.defaults.items():
+                        if not flow_state.has(key):
+                            flow_state.set(key, value)
             
-            # Call on_enter hook
-            if current_def.on_enter:
-                await current_def.on_enter(flow_state, api, user_id)
-            
-            # Show on_enter notification
-            if current_def.on_enter_notification:
-                await self._show_notification(
-                    api, user_id, current_def.on_enter_notification,
-                    current_def.notification_style, current_def.notification_auto_delete
-                )
+                # Call on_enter hook (only on true entry, not on rerenders).
+                if current_def.on_enter:
+                    await current_def.on_enter(flow_state, api, user_id)
+
+                # Show on_enter notification (only on true entry).
+                if current_def.on_enter_notification:
+                    await self._show_notification(
+                        api, user_id, current_def.on_enter_notification,
+                        current_def.notification_style, current_def.notification_auto_delete
+                    )
             
             # Build text (dynamic or static)
             if current_def.text_builder:
@@ -1081,6 +1148,12 @@ class MessageFlow:
                         self.logger.trace(f"Checking next_state_map: {current_def.next_state_map}")
                         next_state_id = current_def.next_state_map.get(data)
                         self.logger.trace(f"next_state_map returned: {next_state_id}")
+
+                    # Optional routing: callback_data == state_id
+                    if next_state_id is None and current_def.route_callback_to_state_id:
+                        allowlist = current_def.route_callback_allowlist
+                        if (allowlist is None or data in allowlist) and data in self.states:
+                            next_state_id = data
                     
                     # If still None, check if we should stay in same state or use default
                     if next_state_id is None:

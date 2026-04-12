@@ -122,6 +122,7 @@ class TelethonAPI:
         self.add_handler(lambda event: self.command_manager.handle_user_verification_command(event), "/user")
         self.add_handler(lambda event: self.command_manager.handle_admin_verification_command(event), "/admin")
         self.add_handler(lambda event: self.command_manager.handle_add_passive_user_command(event), "/add_user")
+        self.add_handler(lambda event: self.command_manager.handle_card_command(event), "/cards")
         self.add_handler(lambda event: self.command_manager.handle_new_card_command(event), "/new_card")
         self.add_handler(lambda event: self.command_manager.handle_close_card_command(event), "/close_card")
         self.add_handler(lambda event: self.command_manager.handle_paypal_command(event), "/paypal")
@@ -160,7 +161,7 @@ class TelethonAPI:
             BotCommand(command="settings", description="Adjust your personal preferences"),
             BotCommand(command="sync", description="(Admin) Export current state to Google Sheets"),
             BotCommand(command="snapshots", description="(Admin) Create and restore snapshots"),
-            BotCommand(command="card", description="Show the current status and manage all coffee cards"),
+            BotCommand(command="cards", description="Show the current status and manage all coffee cards"),
             BotCommand(command="new_card", description="Create a new coffee card that you paid for"),
             BotCommand(command="close_card", description="Close the last active coffee card"),
             BotCommand(command="paypal", description="Setup your paypal.me link"),
