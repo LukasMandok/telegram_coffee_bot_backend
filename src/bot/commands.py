@@ -1,22 +1,20 @@
-"""
-Telegram bot commands and Telegram-specific business logic.
+"""Telegram bot commands and Telegram-specific business logic."""
 
-This module contains command handlers and orchestration functions that combine
-Telegram-specific operations with domain business logic.
-"""
+import difflib
+import traceback
+from typing import TYPE_CHECKING
 
-from typing import Dict, Any, List, TYPE_CHECKING
 from telethon import events
-from ..models.beanie_models import TelegramUser
-from ..models.coffee_models import CoffeeCard
-from .conversations import ConversationManager
+
+from .command_catalog import BOT_COMMANDS, get_all_commands, get_user_commands
 from .keyboards import KeyboardManager
 from ..handlers import users
 from ..dependencies import dependencies as dep
 from ..common.log import (
-    log_telegram_command, log_telegram_callback, log_coffee_session_started,
-    log_coffee_session_cancelled, log_unexpected_error, log_user_login_success,
-    log_user_login_failed, Logger
+    log_telegram_command,
+    log_user_login_success,
+    log_user_login_failed,
+    Logger,
 )
 
 from ..services.gsheet_sync import sync_all_cards_once
@@ -167,52 +165,6 @@ class CommandManager:
         except Exception as e:
             log_user_login_failed(user_id, f"password_not_provided: {str(e)}")
 
-    @dep.verify_user
-    async def handle_user_verification_command(self, event: events.NewMessage.Event) -> None:
-        """
-        Handler to verify if a user is registered.
-        
-        Args:
-            event: The NewMessage event from user verification test
-        """
-        user_id = event.sender_id
-        await self.api.message_manager.send_text(user_id, "You are a registered user.", True, True)
-
-    @dep.verify_admin    
-    async def handle_admin_verification_command(self, event: events.NewMessage.Event) -> None:
-        """
-        Handler to verify if a user is an admin.
-        
-        Args:
-            event: The NewMessage event from admin verification test
-        """
-        user_id = event.sender_id
-        await self.api.message_manager.send_text(user_id, "You are a registered admin.", True, True)
-
-    @dep.verify_admin
-    async def handle_add_passive_user_command(self, event: events.NewMessage.Event) -> None:
-        """
-        Admin-only command to add a new passive user.
-        
-        Args:
-            event: The NewMessage event containing /add_user command
-        """
-        user_id = event.sender_id
-        log_telegram_command(user_id, "/add_user", getattr(event, 'chat_id', None))
-        
-        # # Check if user already has an active conversation
-        # if self.api.conversation_manager.has_active_conversation(user_id):
-        #     await self.api.message_manager.send_text(
-        #         user_id,
-        #         "❌ You already have an active conversation. Please finish it first or use /cancel.",
-        #         True,
-        #         True
-        #     )
-        #     return
-        
-        # Start the conversation for adding passive users
-        await self.api.conversation_manager.add_passive_user_conversation(user_id)
-
     @dep.verify_admin
     async def handle_sync_command(self, event: events.NewMessage.Event) -> None:
         """Admin command to trigger a one-shot export to Google Sheets."""
@@ -355,106 +307,126 @@ class CommandManager:
         await self.api.conversation_manager.quick_order_conversation(user_id, quantity)
 
     async def handle_unknown_command(self, event: events.NewMessage.Event) -> None:
-        """
-        Handle unknown commands sent to the bot.
-        
-        Only processes messages that clearly look like commands (start with /).
-        This prevents interference with password inputs and other conversation flows.
-        
-        Args:
-            event: The NewMessage event containing an unknown command
+        """Handle unknown commands and suggest close matches.
+
+        - If the user writes /something, suggest similar commands.
+        - If the user writes a single word like order (no leading /), treat it like /order.
+        - Avoid reacting to normal chat: multi-word messages without / are ignored.
         """
         sender_id = event.sender_id
-        message = event.message.message.strip()
-        
-        # Only process messages that start with / (actual commands)
-        # This prevents interference with passwords and conversation inputs
-        if not message.startswith('/'):
-            return  # Not a command, don't process
-        
+        message = (event.message.message or "").strip()
+
+        if not message:
+            return
+
         if self.api.conversation_manager.has_active_conversation(sender_id):
-            self.logger.debug(f"Command ignored due to active conversation: {message}")
             return
 
         if message == "/":
             await self.handle_help_command(event)
             return
-        
-        self.logger.debug(f"Processing unknown command: {message}")
-        active_conversations = self.api.conversation_manager.get_active_conversations()
-        self.logger.debug(f"Active conversation: {active_conversations}")
-        
-        await self.api.message_manager.send_text(sender_id, f"**{message}** is an unknown command.", True, True)
+
+        token = message.split(maxsplit=1)[0]
+        has_slash = token.startswith("/")
+
+        # If the user forgot the leading '/', only handle single-word inputs.
+        if not has_slash and len(message.split()) != 1:
+            return
+
+        candidate = (token[1:] if has_slash else token).split("@", maxsplit=1)[0].lower()
+        if not candidate:
+            return
+
+        is_admin_user = await users.is_admin(sender_id)
+        commands = get_all_commands() if is_admin_user else get_user_commands()
+        descriptions = dict(commands)
+        visible_commands = [cmd for cmd, _ in commands]
+
+        # If the user didn't use '/', only respond when it looks like a command attempt.
+        if not has_slash and candidate not in visible_commands:
+            rough = difflib.get_close_matches(candidate, visible_commands, n=1, cutoff=0.60)
+            if not rough:
+                return
+
+        suggestions = difflib.get_close_matches(candidate, visible_commands, n=3, cutoff=0.45)
+
+        if candidate in visible_commands and candidate not in suggestions:
+            suggestions = [candidate] + suggestions
+
+        if suggestions:
+            suggestion_lines = "\n".join(
+                f"• /{cmd} - {descriptions.get(cmd, '')}" for cmd in suggestions
+            )
+            prefix = "ℹ️ Commands start with '/'.\n\n" if not has_slash else ""
+            text = (
+                f"{prefix}❓ {token} is an unknown command.\n\n"
+                "Did you mean:\n"
+                f"{suggestion_lines}\n\n"
+                "Use /help to see all commands."
+            )
+        else:
+            text = (
+                f"❓ {token} is an unknown command.\n\n"
+                "Use /help to see all commands."
+            )
+
+        await self.api.message_manager.send_text(sender_id, text, True, True)
 
     @dep.verify_user
     async def handle_complete_session_command(self, event: events.NewMessage.Event) -> None:
-        """
-        Handle the /complete_session command to finalize a coffee session.
-        
-        Args:
-            event: The NewMessage event containing /complete_session command
-        """
+        """Handle the /complete_session command to finalize a coffee session."""
         user_id = event.sender_id
-        log_telegram_command(user_id, "/complete_session", getattr(event, 'chat_id', None))
-        
+        log_telegram_command(user_id, "/complete_session", getattr(event, "chat_id", None))
+
         try:
-            # session = await get_user_active_session(user_id)
             session = await self.api.session_manager.get_active_session()
-            
+
             if session is None:
                 await self.api.message_manager.send_text(
                     user_id,
                     "❌ You don't have an active coffee session.",
-                    True, True
+                    True,
+                    True,
                 )
                 return
-            
+
             try:
                 completed = await self.api.session_manager.complete_session(user_id)
             except Exception:
                 return
 
-            # Complete the session (store user_id before completing)
             if not completed:
                 await self.api.message_manager.send_text(
                     user_id,
                     "❌ No active session to complete.",
-                    True, True
+                    True,
+                    True,
                 )
                 return
-                        
-            # Notify all participants who have made orders
-            for name, group_member in session.group_state.members.items():
-                # todo: also check, that they were not part of the session (as a participant)
-                if group_member.coffee_count > 0:
-                    # Skip PassiveUsers (who don't have user_id)
-                    if group_member.user_id is None:
-                        continue
-                    
-                    await session.fetch_link("initiator")
-                    initiator_display_name = session.initiator.display_name # type: ignore
-                    
-                    await self.api.message_manager.send_text(
-                        group_member.user_id,
-                        f"{initiator_display_name} has ordered {group_member.coffee_count} coffees for you.\n",
-                        True, True
-                    )
-            
-            # # Also notify the initiator if they haven't made an order
-            # if initiator_user_id not in notified_users:
-            #     await self.api.message_manager.send_text(
-            #         initiator_user_id,
-            #         f"✅ **Session Completed!**\n"
-            #         f"Total: {total_coffees} coffees\n"
-            #         f"Session ID: `{completed_session.id}`",
-            #         True, True
-            #     )
-                
+
+            for _, group_member in session.group_state.members.items():
+                if group_member.coffee_count <= 0:
+                    continue
+
+                if group_member.user_id is None:
+                    continue
+
+                await session.fetch_link("initiator")
+                initiator_display_name = session.initiator.display_name  # type: ignore
+
+                await self.api.message_manager.send_text(
+                    group_member.user_id,
+                    f"{initiator_display_name} has ordered {group_member.coffee_count} coffees for you.\n",
+                    True,
+                    True,
+                )
+
         except Exception as e:
             await self.api.message_manager.send_text(
                 user_id,
                 f"❌ Failed to complete session: {str(e)}",
-                True, True
+                True,
+                True,
             )
 
     @dep.verify_user
@@ -537,7 +509,6 @@ class CommandManager:
                 True, True
             )
         except Exception as e:
-            import traceback
             self.logger.error(f"Unexpected error in handle_close_card_command for user {user_id}", exc=e)
             self.logger.debug(f"Full traceback:\n{traceback.format_exc()}")
             await self.api.message_manager.send_text(

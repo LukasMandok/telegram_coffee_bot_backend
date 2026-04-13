@@ -55,6 +55,7 @@ from ..bot.group_keyboard_manager import GroupKeyboardManager
 from ..bot.session_manager import SessionManager
 from ..bot.coffee_card_manager import CoffeeCardManager
 from ..bot.debt_manager import DebtManager
+from ..bot.command_catalog import BOT_COMMANDS
 from ..database.snapshot_manager import SnapshotManager
 from ..database.base_repo import BaseRepository
 
@@ -62,39 +63,7 @@ from ..database.base_repo import BaseRepository
 if TYPE_CHECKING:
     pass
 
-# --- Pydantic Models for Type Safety and Data Validation ---
-# Models have been moved to bot/telethon_models.py for better organization
-
-
-BOT_COMMANDS: list[tuple[str, str, bool]] = [
-    # (command, description, show_for_normal_users)
-    ("order", "Create or join a session to place an order", True),
-    ("debt", "Show and manage your debts", True),
-    ("credit", "Manage the debts others owe to you", True),
-    ("cards", "Show the current status and manage all coffee cards", True),
-    ("new_card", "Create a new coffee card that you paid for", False),
-    ("close_card", "Close the last active coffee card", False),
-    ("settings", "Adjust your personal preferences", True),
-    ("paypal", "Setup your paypal.me link", False),
-    ("sync", "(Admin) Export current state to Google Sheets", False),
-    ("snapshots", "(Admin) Create and restore snapshots", False),
-    ("help", "Show help and available commands", True),
-]
-
-"""
-# BotFather copy/paste format:
-order - Create or join a session to place an order
-debt - Show and manage your debts
-credit - Manage the debts others owe to you
-cards - Show the current status and manage all coffee cards
-new_card - Create a new coffee card that you paid for
-close_card - Close the last active coffee card
-settings - Adjust your personal preferences
-paypal - Setup your paypal.me link
-sync - (Admin) Export current state to Google Sheets
-snapshots - (Admin) Create and restore snapshots
-help - Show help and available commands
-"""
+"""Command list is defined in bot.command_catalog.BOT_COMMANDS."""
 
 
 
@@ -164,9 +133,6 @@ class TelethonAPI:
         self.add_handler(lambda event: self.command_manager.handle_start_command(event), '/start')
         self.add_handler(lambda event: self.command_manager.handle_order_command(event), '/order')
         self.add_handler(lambda event: self.command_manager.handle_password_command(event), '/password')
-        self.add_handler(lambda event: self.command_manager.handle_user_verification_command(event), "/user")
-        self.add_handler(lambda event: self.command_manager.handle_admin_verification_command(event), "/admin")
-        self.add_handler(lambda event: self.command_manager.handle_add_passive_user_command(event), "/add_user")
         self.add_handler(lambda event: self.command_manager.handle_card_command(event), "/cards")
         self.add_handler(lambda event: self.command_manager.handle_new_card_command(event), "/new_card")
         self.add_handler(lambda event: self.command_manager.handle_close_card_command(event), "/close_card")
