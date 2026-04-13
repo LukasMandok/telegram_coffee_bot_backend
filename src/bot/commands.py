@@ -369,11 +369,15 @@ class CommandManager:
         
         # Only process messages that start with / (actual commands)
         # This prevents interference with passwords and conversation inputs
-        # if not message.startswith('/'):
-        #     return  # Not a command, don't process
+        if not message.startswith('/'):
+            return  # Not a command, don't process
         
         if self.api.conversation_manager.has_active_conversation(sender_id):
             self.logger.debug(f"Command ignored due to active conversation: {message}")
+            return
+
+        if message == "/":
+            await self.handle_help_command(event)
             return
         
         self.logger.debug(f"Processing unknown command: {message}")

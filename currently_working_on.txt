@@ -5,16 +5,13 @@ done:
 - debt (payment)
 - paypal
 - settings
-remaining:
 - card
+remaining:
 - signup
 - passive user
 
 
 Coffee Cards:
-- coffee prices with 1,2 (comma) are not valid anymore (but they should be)
-- add a /card command, that gives the current status of all active cards and also provides buttons to create new cards or close current cards
-- improve the coffee card (and other) creation, when entering a number -> should be done as in the settings
 - the Card Completed (All debtors have been notified) message is not necessary at all.
 
 - Royalty system (adjustable in the settings). either an adjustable amount of free coffee for the creditor or that he doesn't have to contribute to missing coffees. 
@@ -49,6 +46,7 @@ Credit menu:
 - I want an option to allow to notify each user separately from the credit overview menu. There should be a notify user buttons in the main menu which brings you to a new submenu, there you should get a list with all the outstanding payments on the top for the users and a list buttons of users to notify each one separely or a button to notify all (like the existing one)
 
 Message Flow:
+- implement the general flow states into the other flows
 - add an option to message flows, which allow actions on initiation, submit and cancel -> so I can so gsheet synchronizations on sumbit and start backups on initiation save them on submit and delete them on cancel 
 -> the function for requesting a number should be implemented in the messageManager
 
@@ -68,6 +66,10 @@ Logging:
 - I should include the class name in the logging message.
 - Logging (also the definition) should be more consistent, I think this logger class and the implemented functions dont do anything at the moment
 - transfer a lot INFO logging to DEBUG or even trace and keep this cleaner.
+
+User:
+- create a user managment system to archive and unarchive users.
+- allow adding passive users
 
 maybe:
 - emulate other users

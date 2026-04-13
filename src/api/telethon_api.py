@@ -26,6 +26,18 @@ from typing import Callable, Optional, Dict, Union, Any, TYPE_CHECKING, cast
 
 # Runtime imports - actually used at runtime
 from telethon import TelegramClient, events, errors
+from telethon.tl.functions.bots import SetBotCommandsRequest, SetBotMenuButtonRequest
+from telethon.tl.types import (
+    BotCommand,
+    BotCommandScopeDefault,
+    BotCommandScopeUsers,
+    BotCommandScopeChats,
+    BotCommandScopePeerUser,
+    BotMenuButtonCommands,
+    InputUserEmpty,
+    InputPeerUser,
+    InputUser,
+)
 
 from ..handlers import exceptions, users
 from ..bot.telethon_models import ( MessageModel, BotConfiguration )
@@ -52,6 +64,39 @@ if TYPE_CHECKING:
 
 # --- Pydantic Models for Type Safety and Data Validation ---
 # Models have been moved to bot/telethon_models.py for better organization
+
+
+BOT_COMMANDS: list[tuple[str, str, bool]] = [
+    # (command, description, show_for_normal_users)
+    ("order", "Create or join a session to place an order", True),
+    ("debt", "Show and manage your debts", True),
+    ("credit", "Manage the debts others owe to you", True),
+    ("cards", "Show the current status and manage all coffee cards", True),
+    ("new_card", "Create a new coffee card that you paid for", False),
+    ("close_card", "Close the last active coffee card", False),
+    ("settings", "Adjust your personal preferences", True),
+    ("paypal", "Setup your paypal.me link", False),
+    ("sync", "(Admin) Export current state to Google Sheets", False),
+    ("snapshots", "(Admin) Create and restore snapshots", False),
+    ("help", "Show help and available commands", True),
+]
+
+"""
+# BotFather copy/paste format:
+order - Create or join a session to place an order
+debt - Show and manage your debts
+credit - Manage the debts others owe to you
+cards - Show the current status and manage all coffee cards
+new_card - Create a new coffee card that you paid for
+close_card - Close the last active coffee card
+settings - Adjust your personal preferences
+paypal - Setup your paypal.me link
+sync - (Admin) Export current state to Google Sheets
+snapshots - (Admin) Create and restore snapshots
+help - Show help and available commands
+"""
+
+
 
 ### API Handler
 
@@ -151,31 +196,71 @@ class TelethonAPI:
         This configures the commands that appear in the Telegram UI when users
         type '/' in the chat with the bot.
         """
-        from telethon.tl.functions.bots import SetBotCommandsRequest
-        from telethon.tl.types import BotCommand, BotCommandScopeDefault
-        
-        commands = [
-            BotCommand(command="order", description="Create or join a session to place an order"),
-            BotCommand(command="debt", description="Show and manage your debts"),
-            BotCommand(command="credit", description="Manage the debts others owe to you"),
-            BotCommand(command="settings", description="Adjust your personal preferences"),
-            BotCommand(command="sync", description="(Admin) Export current state to Google Sheets"),
-            BotCommand(command="snapshots", description="(Admin) Create and restore snapshots"),
-            BotCommand(command="cards", description="Show the current status and manage all coffee cards"),
-            BotCommand(command="new_card", description="Create a new coffee card that you paid for"),
-            BotCommand(command="close_card", description="Close the last active coffee card"),
-            BotCommand(command="paypal", description="Setup your paypal.me link"),
-            BotCommand(command="help", description="Show help and available commands"),
+        admin_commands = [BotCommand(command=cmd, description=desc) for cmd, desc, _ in BOT_COMMANDS]
+        user_commands = [
+            BotCommand(command=cmd, description=desc)
+            for cmd, desc, show_for_normal_users in BOT_COMMANDS
+            if show_for_normal_users
         ]
-        
+            
+        scopes = [
+            BotCommandScopeDefault(),
+            BotCommandScopeUsers(),
+            BotCommandScopeChats(),
+        ]
+
+        # Telegram chooses commands by (scope, lang_code). To avoid stale BotFather WebApp
+        # commands sticking around, we set a few common language codes too.
+        lang_codes = ["", "en", "de"]
+
         try:
-            # Set commands for all users (default scope)
-            await self.bot(SetBotCommandsRequest(
-                scope=BotCommandScopeDefault(),
-                lang_code="",  # Empty = all languages
-                commands=commands
-            ))
-            print("[BOT] Bot commands configured successfully")
+            # 1) Default commands for normal users (applies to everyone)
+            for scope in scopes:
+                for lang_code in lang_codes:
+                    await self.bot(
+                        SetBotCommandsRequest(
+                            scope=scope,
+                            lang_code=lang_code,
+                            commands=user_commands,
+                        )
+                    )
+
+            # 2) Override commands for admins (user-specific)
+            admin_user_ids = await self.repo.get_registered_admins()
+            for admin_user_id in admin_user_ids:
+                try:
+                    peer = await self.bot.get_input_entity(admin_user_id)
+                    if not isinstance(peer, InputPeerUser):
+                        continue
+                    input_user = InputUser(user_id=peer.user_id, access_hash=peer.access_hash)
+                    admin_scope = BotCommandScopePeerUser(peer=peer, user_id=input_user)
+                    for lang_code in lang_codes:
+                        await self.bot(
+                            SetBotCommandsRequest(
+                                scope=admin_scope,
+                                lang_code=lang_code,
+                                commands=admin_commands,
+                            )
+                        )
+                except Exception:
+                    continue
+
+            # Try to reset the menu button to Telegram's default.
+            # Telegram docs: BotMenuButtonDefault has no effect for "all users" scope.
+            # Use BotMenuButtonCommands to force-enable the commands menu button.
+            try:
+                await self.bot(
+                    SetBotMenuButtonRequest(
+                        user_id=InputUserEmpty(),
+                        button=BotMenuButtonCommands(),
+                    )
+                )
+            except Exception:
+                pass
+
+            print(
+                f"[BOT] Bot commands configured successfully (user_commands={len(user_commands)}, admin_commands={len(admin_commands)}, admins={len(admin_user_ids)})"
+            )
         except Exception as e:
             print(f"[BOT] Error setting bot commands: {e}")
     
