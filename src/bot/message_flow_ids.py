@@ -43,3 +43,15 @@ class CommonStateIds:
 
     EXIT_CANCELLED = "exit_cancelled"
     EXIT_SUCCESS = "exit_success"
+
+
+class DebtQuickConfirmCallbacks:
+    """Callback IDs for debtor-side 'already paid?' confirmation messages."""
+
+    PREFIX = "debt_quick_confirm:"
+    YES_PREFIX = "debt_quick_confirm:yes:"
+    NO_PREFIX = "debt_quick_confirm:no:"
+
+    QUESTION_TEXT = "Did you already pay?"
+    YES_TEXT = "Yes"
+    NO_TEXT = "No"

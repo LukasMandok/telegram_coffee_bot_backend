@@ -14,6 +14,8 @@ from ..utils.beanie_utils import requires_beanie
 
 from src.common.log import log_coffee_card_created, Logger
 from .keyboards import KeyboardManager
+from .message_flow import ButtonCallback
+from .message_flow_ids import DebtQuickConfirmCallbacks
 from ..services.gsheet_sync import request_gsheet_sync_after_action
 from ..database.snapshot_manager import get_current_pending_snapshot, pending_snapshot
 
@@ -388,6 +390,23 @@ class CoffeeCardManager:
             await self.api.message_manager.send_user_notification(
                 debtor.user_id,
                 debtor_message,
+            )
+
+            await self.api.message_manager.send_user_notification_keyboard(
+                debtor.user_id,
+                DebtQuickConfirmCallbacks.QUESTION_TEXT,
+                buttons=[
+                    [
+                        ButtonCallback(
+                            DebtQuickConfirmCallbacks.YES_TEXT,
+                            f"{DebtQuickConfirmCallbacks.YES_PREFIX}{debt.id}",
+                        ),
+                        ButtonCallback(
+                            DebtQuickConfirmCallbacks.NO_TEXT,
+                            f"{DebtQuickConfirmCallbacks.NO_PREFIX}{debt.id}",
+                        ),
+                    ]
+                ],
             )
         
         # If someone else completed it manually, notify them too

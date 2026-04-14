@@ -11,6 +11,8 @@ from enum import Enum
 from typing import Any, Optional, List, Union, TYPE_CHECKING
 from pydantic import BaseModel
 
+from telethon import Button
+
 from .telethon_models import MessageModel
 from ..dependencies.dependencies import get_repo
 from ..common.log import log_telegram_message_sent, log_telegram_keyboard_sent, log_telegram_api_error, log_telegram_message_deleted, Logger
@@ -185,6 +187,8 @@ class MessageManager:
         force_silent: bool = False,
         link_preview: bool = False,
         delete_after: int = 0,
+        vanish: bool = False,
+        conv: bool = False,
     ) -> Optional["MessageModel"]:
         """Send a *notification* message to a single user.
 
@@ -207,10 +211,53 @@ class MessageManager:
             auto_delete=auto_delete,
             background=True,
             force_silent=force_silent,
-            vanish=False,
-            conv=False,
+            vanish=vanish,
+            conv=conv,
             link_preview=link_preview,
         )
+
+    async def send_user_notification_keyboard(
+        self,
+        user_id: int,
+        text: str,
+        buttons: List[List[Any]],
+        *,
+        force_silent: bool = False,
+        link_preview: bool = False,
+    ) -> Optional["MessageModel"]:
+        """Send a *notification* message with inline buttons to a single user.
+
+        This is like `send_user_notification()`, but supports inline keyboards.
+        It still enforces effective notification policy (app/user enabled + silent).
+        """
+
+        repo = get_repo()
+        policy = await repo.get_effective_notification_settings(
+            user_id,
+            force_silent=force_silent,
+        )
+        if not policy.can_send:
+            return None
+
+        keyboard_layout = [
+            [Button.inline(btn.text, btn.callback_data) for btn in row]
+            for row in (buttons or [])
+        ]
+
+        try:
+            telegram_message = await self.send_message(
+                user_id,
+                text,
+                buttons=keyboard_layout,
+                silent=policy.silent,
+                link_preview=link_preview,
+            )
+            message_model = MessageModel.from_telegram_message(telegram_message)
+            log_telegram_keyboard_sent(user_id, "inline_keyboard", len(keyboard_layout))
+            return message_model
+        except Exception as e:
+            log_telegram_api_error("send_user_notification_keyboard", str(e), user_id)
+            return None
     
     def add_latest_message(
         self, 

@@ -11,8 +11,8 @@ from typing import Optional, List
 
 from ..models.beanie_models import TelegramUser
 from .message_flow import (
-    MessageFlow, MessageDefinition, ButtonCallback, 
-    MessageAction, StateType, NotificationStyle
+    MessageFlow, ButtonCallback,
+    MessageAction,
 )
 from .message_flow_helpers import (
     GridLayout, ListBuilder, make_state,
@@ -26,16 +26,26 @@ from .payment_flow import (
     handle_staged_payments_input,
 )
 from ..models.coffee_models import PaymentReason
+from .message_flow_ids import DebtQuickConfirmCallbacks
+
+
+EPS = 1e-9
 
 
 STATE_MAIN = "main"
 STATE_NOTIFICATION_SENT = "notification_sent"
+STATE_NOTIFY_MENU = "notify_menu"
+STATE_NOTIFY_USERS = "notify_users"
 STATE_DEBTORS_LIST = "debtors_list"
 STATE_DEBTOR_DEBTS = "debtor_debts"
 
 CB_TOGGLE_VIEW = "toggle_view"
+CB_NOTIFY_MENU = "notify_menu"
 CB_NOTIFY_ALL = "notify_all"
+CB_NOTIFY_USERS = "notify_users"
 CB_MARK_PAID = "mark_paid"
+
+CB_NOTIFY_USER_PREFIX = "notify_user:"
 
 CB_DEBTOR_PREFIX = "debtor:"
 
@@ -45,6 +55,7 @@ VIEW_BY_DEBTOR = "by_debtor"
 
 KEY_CREDITS_RAW = "credits_raw"
 KEY_CREDITOR_NAME = "creditor_name"
+KEY_CREDITOR_PAYPAL_LINK = "creditor_paypal_link"
 KEY_DEBTOR_DEBTS = "debtor_debts"
 KEY_SELECTED_DEBTOR = "selected_debtor"
 KEY_SELECTED_DEBTOR_TELEGRAM_USER_ID = "selected_debtor_telegram_user_id"
@@ -52,6 +63,7 @@ KEY_SELECTED_DEBTOR_TOTAL_OWED = "selected_debtor_total_owed"
 KEY_NOTIFICATION_RESULT = "notification_result"
 KEY_STAGED_PAYMENTS = "staged_payments"
 KEY_CUSTOM_AMOUNT_INPUT = "custom_amount_input"
+KEY_NOTIFIED_USER_IDS = "notified_user_ids"
 
 
 def _get_view_mode(flow_state) -> str:
@@ -75,6 +87,7 @@ async def get_credits_data(flow_state, api, user_id):
         all_credits = await api.debt_manager.get_user_credits(user, include_settled=False)
         flow_state.set(KEY_CREDITS_RAW, all_credits)
         flow_state.set(KEY_CREDITOR_NAME, user.display_name or str(user_id))
+        flow_state.set(KEY_CREDITOR_PAYPAL_LINK, user.paypal_link)
     return flow_state.get(KEY_CREDITS_RAW)
 
 
@@ -145,7 +158,7 @@ async def build_credit_main_keyboard(flow_state, api, user_id) -> List[List[Butt
     toggle_label = "👥 View by User" if _get_view_mode(flow_state) == VIEW_BY_CARD else "🗂️ View by Card"
     return [
         [ButtonCallback(toggle_label, CB_TOGGLE_VIEW)],
-        [ButtonCallback("💸 Mark as Paid", CB_MARK_PAID), ButtonCallback("📢 Notify All", CB_NOTIFY_ALL)],
+        [ButtonCallback("💸 Mark as Paid", CB_MARK_PAID), ButtonCallback("📢 Notify", CB_NOTIFY_MENU)],
         NavigationButtons.close()
     ]
 
@@ -161,39 +174,174 @@ async def handle_main_buttons(data: str, flow_state, api, user_id) -> Optional[s
             credit_overview_view_mode=new_mode,
         )
         return None
-
-    if data == CB_NOTIFY_ALL:
-        # Send notifications
-        user = await api.conversation_manager.repo.find_user_by_id(user_id)
-        all_credits = await get_credits_data(flow_state, api, user_id)
-        
-        notified = 0
-        for debt in all_credits:
-            if isinstance(debt.debtor, TelegramUser):
-                outstanding = debt.total_amount - debt.paid_amount
-                card_name = debt.coffee_card.name if debt.coffee_card else "Unknown Card"
-                
-                notify_text = (
-                    f"💳 **Payment Reminder**\n\n"
-                    f"You owe **{outstanding:.2f} €** to {user.display_name}\n"
-                    f"from coffee card: **{card_name}**"
-                )
-                
-                if user.paypal_link:
-                    notify_text += f"\n\n💳 Pay now: {user.paypal_link}/{outstanding:.2f}EUR"
-                
-                try:
-                    if await api.message_manager.send_user_notification(
-                        debt.debtor.user_id,
-                        notify_text,
-                    ):
-                        notified += 1
-                except Exception:
-                    pass
-        
-        flow_state.flow_data[KEY_NOTIFICATION_RESULT] = f"✅ Sent {notified} payment reminder(s)"
-        return STATE_NOTIFICATION_SENT
     
+    return None
+
+
+async def _send_debt_reminder_with_quick_confirm(
+    api,
+    *,
+    debtor_user_id: int,
+    creditor_name: str,
+    creditor_paypal_link: str | None,
+    debt,
+) -> bool:
+    outstanding = debt.total_amount - debt.paid_amount
+    if outstanding <= EPS:
+        return False
+
+    card_name = debt.coffee_card.name if debt.coffee_card else "Unknown Card"
+    notify_text = (
+        "💳 **Payment Reminder**\n\n"
+        f"You owe **{outstanding:.2f} €** to {creditor_name}\n"
+        f"from coffee card: **{card_name}**"
+    )
+    if creditor_paypal_link:
+        notify_text += f"\n\n💳 Pay now: {creditor_paypal_link}/{outstanding:.2f} €"
+
+    reminder = await api.message_manager.send_user_notification(
+        debtor_user_id,
+        notify_text,
+    )
+    if reminder is None:
+        return False
+
+    await api.message_manager.send_user_notification_keyboard(
+        debtor_user_id,
+        DebtQuickConfirmCallbacks.QUESTION_TEXT,
+        buttons=[
+            [
+                ButtonCallback(
+                    DebtQuickConfirmCallbacks.YES_TEXT,
+                    f"{DebtQuickConfirmCallbacks.YES_PREFIX}{debt.id}",
+                ),
+                ButtonCallback(
+                    DebtQuickConfirmCallbacks.NO_TEXT,
+                    f"{DebtQuickConfirmCallbacks.NO_PREFIX}{debt.id}",
+                ),
+            ]
+        ],
+    )
+
+    return True
+
+
+async def build_notify_menu_text(flow_state, api, user_id) -> str:
+    return "📢 **Notify**\n\nChoose who to notify:"
+
+
+async def build_notify_menu_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
+    return [
+        [ButtonCallback("📢 Notify All", CB_NOTIFY_ALL), ButtonCallback("👤 Notify Users", CB_NOTIFY_USERS)],
+        NavigationButtons.back(),
+    ]
+
+
+async def handle_notify_menu_buttons(data: str, flow_state, api, user_id) -> Optional[str]:
+    if data == CB_NOTIFY_USERS:
+        return STATE_NOTIFY_USERS
+
+    if data != CB_NOTIFY_ALL:
+        return None
+
+    all_credits = await get_credits_data(flow_state, api, user_id)
+    creditor_name = flow_state.get(KEY_CREDITOR_NAME, str(user_id))
+    creditor_paypal_link = flow_state.get(KEY_CREDITOR_PAYPAL_LINK)
+
+    notified = 0
+    for debt in all_credits:
+        if not isinstance(debt.debtor, TelegramUser):
+            continue
+        try:
+            sent = await _send_debt_reminder_with_quick_confirm(
+                api,
+                debtor_user_id=debt.debtor.user_id,
+                creditor_name=creditor_name,
+                creditor_paypal_link=creditor_paypal_link,
+                debt=debt,
+            )
+            if sent:
+                notified += 1
+        except Exception:
+            pass
+
+    flow_state.flow_data[KEY_NOTIFICATION_RESULT] = f"✅ Sent {notified} payment reminder(s)"
+    return STATE_NOTIFICATION_SENT
+
+
+async def build_notify_users_text(flow_state, api, user_id) -> str:
+    return "Select users to notify (tap to send):"
+
+
+async def build_notify_users_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
+    all_credits = await get_credits_data(flow_state, api, user_id)
+
+    totals: dict[int, tuple[str, float]] = {}
+    for debt in all_credits:
+        if not isinstance(debt.debtor, TelegramUser):
+            continue
+        outstanding = debt.total_amount - debt.paid_amount
+        if outstanding <= EPS:
+            continue
+
+        debtor_id = debt.debtor.user_id
+        debtor_name = debt.debtor.display_name or str(debtor_id)
+        prev_name, prev_total = totals.get(debtor_id, (debtor_name, 0.0))
+        totals[debtor_id] = (prev_name, prev_total + float(outstanding))
+
+    notified_ids = set(flow_state.get(KEY_NOTIFIED_USER_IDS, []))
+    items = [
+        (
+            f"{'✅ ' if debtor_id in notified_ids else ''}{name} ({total:.2f} €)",
+            f"{CB_NOTIFY_USER_PREFIX}{debtor_id}",
+        )
+        for debtor_id, (name, total) in sorted(totals.items(), key=lambda it: it[1][0].lower())
+    ]
+
+    grid = GridLayout(items_per_row=2)
+    return grid.build(items=items, footer_buttons=[NavigationButtons.back()])
+
+
+async def handle_notify_users_buttons(data: str, flow_state, api, user_id) -> Optional[str]:
+    if not data.startswith(CB_NOTIFY_USER_PREFIX):
+        return None
+
+    debtor_id_str = data.split(":", 1)[1]
+    try:
+        debtor_id = int(debtor_id_str)
+    except ValueError:
+        return None
+
+    notified_list = list(flow_state.get(KEY_NOTIFIED_USER_IDS, []))
+    if debtor_id in notified_list:
+        return None
+
+    all_credits = await get_credits_data(flow_state, api, user_id)
+    creditor_name = flow_state.get(KEY_CREDITOR_NAME, str(user_id))
+    creditor_paypal_link = flow_state.get(KEY_CREDITOR_PAYPAL_LINK)
+
+    sent_any = False
+    for debt in all_credits:
+        if not isinstance(debt.debtor, TelegramUser):
+            continue
+        if debt.debtor.user_id != debtor_id:
+            continue
+        try:
+            sent = await _send_debt_reminder_with_quick_confirm(
+                api,
+                debtor_user_id=debtor_id,
+                creditor_name=creditor_name,
+                creditor_paypal_link=creditor_paypal_link,
+                debt=debt,
+            )
+            if sent:
+                sent_any = True
+        except Exception:
+            pass
+
+    if sent_any:
+        notified_list.append(debtor_id)
+        flow_state.set(KEY_NOTIFIED_USER_IDS, notified_list)
     return None
 
 
@@ -326,7 +474,7 @@ async def notify_debtors(
 
     remaining_line = (
         f"✅ You don't owe any more money to {creditor_name}."
-        if remaining_owed <= 1e-9
+        if remaining_owed <= EPS
         else f"You still owe **{remaining_owed:.2f} €** to {creditor_name}."
     )
 
@@ -427,6 +575,10 @@ def create_credit_flow() -> MessageFlow:
         KEY_VIEW_MODE: VIEW_BY_CARD,
     }
 
+    notify_users_defaults = {
+        KEY_NOTIFIED_USER_IDS: [],
+    }
+
     debtor_debts_defaults = {
         KEY_DEBTOR_DEBTS: {},
         KEY_STAGED_PAYMENTS: {},
@@ -441,9 +593,30 @@ def create_credit_flow() -> MessageFlow:
         timeout=180,
         keep_message_on_exit=False,
         defaults=main_defaults,
-        next_state_map={CB_MARK_PAID: STATE_DEBTORS_LIST},
+        next_state_map={CB_MARK_PAID: STATE_DEBTORS_LIST, CB_NOTIFY_MENU: STATE_NOTIFY_MENU},
         exit_buttons=[CommonCallbacks.CLOSE],
         on_button_press=handle_main_buttons,
+    ))
+
+    flow.add_state(make_state(
+        STATE_NOTIFY_MENU,
+        text_builder=build_notify_menu_text,
+        keyboard_builder=build_notify_menu_keyboard,
+        action=MessageAction.EDIT,
+        timeout=120,
+        next_state_map={CommonCallbacks.BACK: STATE_MAIN},
+        on_button_press=handle_notify_menu_buttons,
+    ))
+
+    flow.add_state(make_state(
+        STATE_NOTIFY_USERS,
+        text_builder=build_notify_users_text,
+        keyboard_builder=build_notify_users_keyboard,
+        action=MessageAction.EDIT,
+        timeout=180,
+        defaults=notify_users_defaults,
+        next_state_map={CommonCallbacks.BACK: STATE_NOTIFY_MENU},
+        on_button_press=handle_notify_users_buttons,
     ))
     
     flow.add_state(make_state(

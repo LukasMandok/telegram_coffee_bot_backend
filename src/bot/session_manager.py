@@ -506,7 +506,8 @@ class SessionManager:
                 await self.api.message_manager.send_user_notification(
                     participant_user_id,
                     f"🔒 **Session Completed by Another User**\n",
-                    delete_after=15,
+                    vanish=True,
+                    conv = True
                 )
 
         # Remove conversation state for all participants so they are unblocked

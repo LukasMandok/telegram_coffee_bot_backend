@@ -19,6 +19,10 @@ from ..common.log import (
 
 from ..services.gsheet_sync import sync_all_cards_once
 
+from ..models.coffee_models import UserDebt, PaymentReason, CoffeeCard
+from ..models.beanie_models import TelegramUser, PassiveUser
+from .message_flow_ids import DebtQuickConfirmCallbacks
+
 if TYPE_CHECKING:
     from ..api.telethon_api import TelethonAPI
 
@@ -138,6 +142,146 @@ class CommandManager:
             await self.handle_order_command(event)
         elif button_text == "Show Debts":
             await self.handle_debt_command(event)
+
+    async def handle_debt_quick_confirm_callback(self, event: events.CallbackQuery.Event) -> None:
+        """Handle callback buttons for the debtor 'Did you already pay?' message."""
+        auto_delete_seconds = 5
+        eps = 1e-9
+
+        sender_id = event.sender_id
+        if not isinstance(sender_id, int):
+            self.logger.warning(f"Debt quick-confirm: invalid sender_id={sender_id!r}")
+            return
+        data = (event.data or b"").decode("utf-8", errors="ignore")
+        if not data.startswith(DebtQuickConfirmCallbacks.PREFIX):
+            return
+
+        try:
+            await event.answer()
+        except Exception:
+            pass
+
+        try:
+            await event.delete()
+        except Exception:
+            pass
+
+        if data.startswith(DebtQuickConfirmCallbacks.NO_PREFIX):
+            await self.api.message_manager.send_temp_notification(
+                sender_id,
+                "You can view and mark your debts as paid later using /debt",
+                auto_delete=auto_delete_seconds,
+                silent=True,
+                vanish=False,
+                conv=False,
+            )
+            raise events.StopPropagation
+
+        if not data.startswith(DebtQuickConfirmCallbacks.YES_PREFIX):
+            return
+
+        debt_id = data[len(DebtQuickConfirmCallbacks.YES_PREFIX) :]
+        card_name = "this card"
+        paid_amount = 0.0
+
+        try:
+            debt = await UserDebt.get(debt_id)
+            if debt is None:
+                self.logger.warning(f"Debt quick-confirm: debt not found (debt_id={debt_id})")
+            else:
+                for link_name in ("coffee_card", "creditor", "debtor"):
+                    try:
+                        await debt.fetch_link(link_name)
+                    except Exception:
+                        pass
+
+                if isinstance(debt.coffee_card, CoffeeCard):
+                    card_name = debt.coffee_card.name
+
+                outstanding = max(0.0, float(debt.total_amount) - float(debt.paid_amount))
+                if outstanding > eps:
+                    paid_amount = outstanding
+                    snapshot_manager = self.api.get_snapshot_manager()
+                    await snapshot_manager.create_snapshot(
+                        reason="Apply Payment (debtor quick confirm)",
+                        context="apply_payment_debtor_quick_confirm",
+                        collections=("user_debts", "payments"),
+                        save_in_background=True,
+                    )
+
+                    await self.api.debt_manager._apply_payment_to_debt(
+                        debt,
+                        outstanding,
+                        reason=PaymentReason.DEBTOR_MARKED_PAID,
+                    )
+
+                    await self._notify_creditor_debt_quick_confirm(
+                        debt=debt,
+                        paid_amount=paid_amount,
+                        card_name=card_name,
+                    )
+        except Exception as exc:
+            self.logger.warning("Debt quick-confirm failed", exc=exc)
+
+        await self.api.message_manager.send_temp_notification(
+            sender_id,
+            f"✅ Your debts for {card_name} are marked as paid.",
+            auto_delete=auto_delete_seconds,
+            silent=True,
+            vanish=False,
+            conv=False,
+        )
+
+        raise events.StopPropagation
+
+
+    async def _notify_creditor_debt_quick_confirm(
+        self,
+        *,
+        debt: UserDebt,
+        paid_amount: float,
+        card_name: str,
+    ) -> None:
+        if paid_amount <= 1e-9:
+            return
+
+        if not isinstance(debt.creditor, TelegramUser):
+            return
+        if not isinstance(debt.debtor, PassiveUser):
+            return
+
+        creditor_user_id = debt.creditor.user_id
+        debtor_name = debt.debtor.display_name or "This user"
+
+        try:
+            debtor_debts = await self.api.debt_manager.get_user_debts(
+                debt.debtor,
+                include_settled=False,
+            )
+
+            remaining_total = sum(
+                max(0.0, float(d.total_amount) - float(d.paid_amount))
+                for d in debtor_debts
+                if isinstance(d.creditor, TelegramUser) and d.creditor.user_id == creditor_user_id
+            )
+
+            remaining_line = (
+                f"✅ {debtor_name} doesn't owe you any more money."
+                if remaining_total <= 1e-9
+                else f"💰 Remaining total owed by {debtor_name}: **{remaining_total:.2f} €**."
+            )
+
+            await self.api.message_manager.send_user_notification(
+                creditor_user_id,
+                (
+                    "💸 **Payment update**\n\n"
+                    f"{debtor_name} marked **{paid_amount:.2f} €** as paid.\n"
+                    f"Card: **{card_name}**\n\n"
+                    f"{remaining_line}"
+                ),
+            )
+        except Exception as exc:
+            self.logger.warning("Debt quick-confirm: creditor notify failed", exc=exc)
 
 
     async def handle_password_command(self, event: events.NewMessage.Event) -> None:

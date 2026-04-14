@@ -154,6 +154,12 @@ class TelethonAPI:
         # Only trigger on messages that are purely a number (quick-order shortcut)
         self.add_handler(lambda event: self.command_manager.handle_digits_command(event), events.NewMessage(incoming=True, pattern=re.compile(r'^\d+$')))
         self.add_handler(lambda event: self.command_manager.handle_unknown_command(event))
+
+        # Callback-query handlers (registered directly; do NOT use add_handler wrapper).
+        self.bot.add_event_handler(
+            self.exception_handler(self.command_manager.handle_debt_quick_confirm_callback),
+            events.CallbackQuery(func=lambda e: (e.data or b"").startswith(b"debt_quick_confirm:")),
+        )
     
     async def setup_bot_commands(self) -> None:
         """
