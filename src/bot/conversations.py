@@ -1484,6 +1484,32 @@ class ConversationManager:
                     await event.answer()
                 return True
             
+            if data == "toggle_user_notifications":
+                new_value = not user_settings.notifications_enabled
+                updated_settings = await self.repo.update_user_settings(user_id, notifications_enabled=new_value)
+
+                if event:
+                    await event.answer()
+
+                if updated_settings:
+                    user_settings = updated_settings
+                    status = "enabled" if new_value else "disabled"
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        f"✅ **Notifications {status}!**",
+                        vanish=False,
+                        conv=False,
+                        delete_after=2,
+                    )
+                else:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ **Failed to update settings**",
+                        vanish=False,
+                        conv=False,
+                        delete_after=3,
+                    )
+
             if data == "toggle_user_silent":
                 # Toggle user's silent mode preference
                 new_value = not user_settings.notifications_silent
@@ -2445,12 +2471,9 @@ class ConversationManager:
                     True, True
                 )
                 return False
-            
-            # Get user settings to show their preference
-            user_settings = await self.repo.get_user_settings(user_id)
-            
+
             # Use SettingsManager to generate notifications submenu
-            notifications_text = self.settings_manager.get_notifications_submenu_text(notification_settings, user_settings)
+            notifications_text = self.settings_manager.get_notifications_submenu_text(notification_settings)
             keyboard = self.settings_manager.get_notifications_submenu_keyboard(notification_settings)
             
             # Edit the existing message and get button event

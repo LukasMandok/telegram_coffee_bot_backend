@@ -312,6 +312,7 @@ class CoffeeCardManager:
             purchaser_message += f"**Who Owes You:**\n{debt_summary}\n\n"
             
             # Add payment link if available
+            # TODO: not sure if this paypal_link makes sense here
             if purchaser.paypal_link:
                 purchaser_message += f"💳 Your Payment Link:\n{purchaser.paypal_link}\n\n"
                 purchaser_message += "Share this link with people who owe you money!"
@@ -320,13 +321,22 @@ class CoffeeCardManager:
         else:
             purchaser_message += "No one owes you money for this card. ☕"
         
-        await self.api.message_manager.send_text(
-            purchaser.user_id,
-            purchaser_message,
-            vanish=False,
-            conv=False,
-            silent=False
-        )
+        # Purchaser message is a direct reply only when the purchaser initiated the completion.
+        if requesting_user_id == purchaser.user_id and not closed_by_session:
+            await self.api.message_manager.send_text(
+                purchaser.user_id,
+                purchaser_message,
+                vanish=False,
+                conv=False,
+                silent=False,
+            )
+        else:
+            await self.api.message_manager.send_user_notification(
+                purchaser.user_id,
+                purchaser_message,
+                vanish=False,
+                conv=False,
+            )
         
         # Notify all consumers who have debts
         for debt in debts:
@@ -353,12 +363,11 @@ class CoffeeCardManager:
             else:
                 debtor_message += f"\n💡 Contact {purchaser.display_name} for payment details."
             
-            await self.api.message_manager.send_text(
+            await self.api.message_manager.send_user_notification(
                 debtor.user_id,
                 debtor_message,
                 vanish=False,
                 conv=False,
-                silent=False
             )
         
         # If someone else completed it manually, notify them too

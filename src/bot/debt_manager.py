@@ -524,9 +524,19 @@ class DebtManager:
 
             try:
                 if isinstance(debtor_user, TelegramUser):
-                    await self.api.message_manager.send_text(debtor_user.user_id, notification_text, True, True)
-                if creditor_user is not None:
-                    await self.api.message_manager.send_text(creditor_user.user_id, notification_text, True, True)
+                    await self.api.message_manager.send_user_notification(
+                        debtor_user.user_id,
+                        notification_text,
+                        vanish=True,
+                        conv=True,
+                    )
+                if isinstance(creditor_user, TelegramUser):
+                    await self.api.message_manager.send_user_notification(
+                        creditor_user.user_id,
+                        notification_text,
+                        vanish=True,
+                        conv=True,
+                    )
             except Exception as e:
                 self.logger.warning(
                     f"Failed to notify users about debt offset: {debtor_name} ↔ {creditor_name}",

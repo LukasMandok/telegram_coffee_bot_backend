@@ -151,13 +151,11 @@ class SessionManager:
                 if initiator_user_id is not None and member.user_id == initiator_user_id:
                     continue
                 
-                # send silently and persist until session end (vanish=False)
-                msg = await self.api.message_manager.send_text(
+                msg = await self.api.message_manager.send_user_notification(
                     member.user_id,
                     f"{initiator_display_name} started a new coffee session and is entering coffees. You can join with /order.",
                     vanish=False,
                     conv=False,
-                    silent=True
                 )
                 if session_key and msg is not None:
                     self.session_notifications[session_key].append(msg)
@@ -417,10 +415,11 @@ class SessionManager:
 
                 # Use singular/plural correctly and make key info bold
                 coffee_word = "coffee" if group_member_data.coffee_count == 1 else "coffees"
-                await self.api.message_manager.send_text(
+                await self.api.message_manager.send_user_notification(
                     group_member_data.user_id,
                     f"**{initiator_display_name}** has ordered **{group_member_data.coffee_count}** {coffee_word} for you.\n",
-                    True, True
+                    vanish=True,
+                    conv=True,
                 )
 
         # Close all keyboards immediately for this session so UI is consistent
@@ -508,12 +507,11 @@ class SessionManager:
                     silent=False
                 )
             else:
-                await self.api.message_manager.send_text(
+                await self.api.message_manager.send_user_notification(
                     participant_user_id,
                     f"🔒 **Session Completed by Another User**\n",
                     vanish=True,
                     conv=False,
-                    silent=True
                 )
 
         # Remove conversation state for all participants so they are unblocked
@@ -537,19 +535,14 @@ class SessionManager:
         # Build summary using central helper and send to all TelegramUsers
         try:
             summary_text = await self.get_session_summary()
-            full_users = await TelegramUser.find().to_list()
-            for user in full_users:
-                user_id_to_notify = user.user_id
-                try:
-                    await self.api.message_manager.send_text(
-                        user_id_to_notify,
-                        summary_text,
-                        vanish=False,
-                        conv=False,
-                        silent=True
-                    )
-                except Exception as e:
-                    self.logger.error(f"Failed to send session summary to TelegramUser {user_id_to_notify}", exc=e)
+            await self.api.message_manager.send_notification_to_all_users(
+                text=summary_text,
+                silent=True,
+                link_preview=False,
+                exclude_user_ids=None,
+                exclude_archived=True,
+                exclude_disabled=True,
+            )
         except Exception as e:
             log_unexpected_error(
                 operation="build_or_send_session_summary",
@@ -578,13 +571,12 @@ class SessionManager:
         session_id = str(self.session.id)
         if session_id in self.api.group_keyboard_manager.active_keyboards:
             for participant_user_id in self.api.group_keyboard_manager.active_keyboards[session_id].keys():
-                await self.api.message_manager.send_text(
+                await self.api.message_manager.send_user_notification(
                     participant_user_id,
                     f"❌ **Session Cancelled**\n"
                     f"The coffee session has been cancelled.\n",
                     vanish=True,
                     conv=False,
-                    silent=True
                 )
 
         # Delete persisted initial session notifications on cancel as well

@@ -17,6 +17,9 @@ from ..common.log import log_settings
 logger = logging.getLogger(__name__)
 
 
+InlineKeyboard = List[List[Any]]
+
+
 class SettingsManager:
     """
     Manages user settings UI generation and common input workflows.
@@ -88,9 +91,9 @@ class SettingsManager:
             "Select a category to adjust:"
         )
     
-    def get_main_menu_keyboard(self, *, include_admin: bool = True) -> List[List[Button]]:
+    def get_main_menu_keyboard(self, *, include_admin: bool = True) -> InlineKeyboard:
         """Generate the main settings menu keyboard."""
-        keyboard: List[List[Button]] = [
+        keyboard: InlineKeyboard = [
             [Button.inline("📋 Ordering Settings", b"ordering")],
             [Button.inline("💬 Vanishing Messages", b"vanishing")],
             [Button.inline("🔔 Notifications", b"user_notifications")],
@@ -119,7 +122,7 @@ class SettingsManager:
             "Select a setting to adjust:"
         )
     
-    def get_ordering_submenu_keyboard(self) -> List[List[Button]]:
+    def get_ordering_submenu_keyboard(self) -> InlineKeyboard:
         """Generate the ordering settings submenu keyboard."""
         return [
             [Button.inline("📄 Group Page Size", b"page_size")],
@@ -147,7 +150,7 @@ class SettingsManager:
             "Select a setting to adjust:"
         )
     
-    def get_vanishing_submenu_keyboard(self) -> List[List[Button]]:
+    def get_vanishing_submenu_keyboard(self) -> InlineKeyboard:
         """Generate the vanishing messages submenu keyboard."""
         return [
             [Button.inline("🔄 Toggle On/Off", b"toggle")],
@@ -166,42 +169,52 @@ class SettingsManager:
         Returns:
             Formatted text for the user notifications submenu
         """
-        app_enabled = notification_settings.get("notifications_enabled", True)
-        app_silent = notification_settings.get("notifications_silent", False)
-        user_silent = user_settings.notifications_silent
-        
-        user_silent_status = "✅ On" if user_silent else "❌ Off"
-        
-        text = (
-            "🔔 **My Notification Preferences**\n\n"
-            f"**Silent Mode:** {user_silent_status}\n\n"
-        )
-        
+        app_enabled = bool(notification_settings.get("notifications_enabled", True))
+        app_silent = bool(notification_settings.get("notifications_silent", False))
+
+        user_enabled = bool(user_settings.notifications_enabled)
+        user_silent = bool(user_settings.notifications_silent)
+
+        def _status(on: bool) -> str:
+            return "✅ On" if on else "❌ Off"
+
+        effective_enabled = app_enabled and user_enabled
+        effective_silent = app_silent or user_silent
+
+        silent_effective_label = _status(effective_silent) if effective_enabled else "⏸ N/A"
+
+        # Keep this menu compact: show current state + only the relevant override hint.
+        lines = [
+            "🔔 **Notifications**",
+            "",
+            "**Global (admin):**",
+            f"• **Enabled:** {_status(app_enabled)}",
+            f"• **Silent:** {_status(app_silent)}",
+            "",
+            "**You:**",
+            f"• **Enabled:** {_status(user_enabled)}",
+            f"• **Silent:** {_status(user_silent)}",
+            "",
+            "**Effective for you:**",
+            f"• **Enabled:** {_status(effective_enabled)}",
+            f"• **Silent:** {silent_effective_label}",
+            "",
+        ]
+
         if not app_enabled:
-            text += (
-                "⚠️ **Notifications are currently disabled globally by an admin.**\n"
-                "You won't receive any notifications regardless of your preference.\n\n"
-            )
+            lines.append("⚠️ Global notifications are OFF → your **Enabled** toggle has no effect.")
+        elif not user_enabled:
+            lines.append("ℹ️ Notifications are OFF for you → silent mode doesn’t matter.")
         elif app_silent:
-            text += (
-                "ℹ️ **Global silent mode is ON (set by admin).**\n"
-                "All notifications are sent silently regardless of your preference.\n"
-                "Your setting will take effect if the admin changes this.\n\n"
-            )
-        else:
-            text += (
-                "✅ **Your preference is active!**\n"
-                "• **Silent Mode OFF:** You'll receive notifications with sound\n"
-                "• **Silent Mode ON:** You'll receive notifications silently\n\n"
-            )
-        
-        text += "Toggle your preference below:"
-        
-        return text
+            lines.append("ℹ️ Global silent is ON → your **Silent** toggle has no effect.")
+
+        lines.append("\nToggle below:")
+        return "\n".join(lines)
     
-    def get_user_notifications_submenu_keyboard(self) -> List[List[Button]]:
+    def get_user_notifications_submenu_keyboard(self) -> InlineKeyboard:
         """Generate the user notification preference submenu keyboard."""
         return [
+            [Button.inline("🔔 Toggle Notifications", b"toggle_user_notifications")],
             [Button.inline("🔇 Toggle Silent Mode", b"toggle_user_silent")],
             [Button.inline(f"{self.ICON_BACK} Back", b"back")]
         ]
@@ -226,7 +239,7 @@ class SettingsManager:
             "Choose your preferred sorting:"
         )
     
-    def get_sorting_options_keyboard(self) -> List[List[Button]]:
+    def get_sorting_options_keyboard(self) -> InlineKeyboard:
         """Generate the sorting options keyboard."""
         return [
             [Button.inline("🔤 Alphabetical", b"alphabetical")],
@@ -234,7 +247,7 @@ class SettingsManager:
             [Button.inline(f"{self.ICON_BACK} Back", b"back")]
         ]
     
-    def get_cancel_keyboard(self) -> List[List[Button]]:
+    def get_cancel_keyboard(self) -> InlineKeyboard:
         """Generate a simple back button keyboard."""
         return [
             [Button.inline(f"{self.ICON_BACK} Back", b"back")]
@@ -252,7 +265,7 @@ class SettingsManager:
             "Select a category to configure:"
         )
     
-    def get_admin_submenu_keyboard(self) -> List[List[Button]]:
+    def get_admin_submenu_keyboard(self) -> InlineKeyboard:
         """Generate the admin settings submenu keyboard."""
         return [
             [Button.inline("📊 Logging", b"logging")],
@@ -280,7 +293,7 @@ class SettingsManager:
             "Select a setting to adjust:"
         )
 
-    def get_snapshots_submenu_keyboard(self, snapshot_settings) -> List[List[Button]]:
+    def get_snapshots_submenu_keyboard(self, snapshot_settings) -> InlineKeyboard:
         return [
             [Button.inline("🔢 Set Keep Last", b"set_keep_last")],
             [Button.inline("⚙ Snapshot Creation Points", b"creation_points")],
@@ -301,7 +314,7 @@ class SettingsManager:
             "Tap a button to toggle:"
         )
 
-    def get_snapshots_creation_points_submenu_keyboard(self, snapshot_settings) -> List[List[Button]]:
+    def get_snapshots_creation_points_submenu_keyboard(self, snapshot_settings) -> InlineKeyboard:
         card_closed = bool(getattr(snapshot_settings, "card_closed", True))
         session_completed = bool(getattr(snapshot_settings, "session_completed", True))
         quick_order = bool(getattr(snapshot_settings, "quick_order", False))
@@ -337,7 +350,7 @@ class SettingsManager:
             "Select a setting to adjust:"
         )
 
-    def get_debts_submenu_keyboard(self) -> List[List[Button]]:
+    def get_debts_submenu_keyboard(self) -> InlineKeyboard:
         """Generate the debts settings submenu keyboard."""
         return [
             [Button.inline("🧮 Correction Method", b"debt_method")],
@@ -360,7 +373,7 @@ class SettingsManager:
             "Select a setting to adjust:"
         )
 
-    def get_gsheet_submenu_keyboard(self, gsheet_settings) -> List[List[Button]]:
+    def get_gsheet_submenu_keyboard(self, gsheet_settings) -> InlineKeyboard:
         enabled_label = "🔴 Disable Periodic Sync" if gsheet_settings.periodic_sync_enabled else "🟢 Enable Periodic Sync"
         two_way_label = "🔁 Disable Two-Way Sync" if gsheet_settings.two_way_sync_enabled else "🔁 Enable Two-Way Sync"
         after_actions_enabled = getattr(gsheet_settings, "sync_after_actions_enabled", True)
@@ -411,7 +424,7 @@ class SettingsManager:
             "Select a setting to adjust:"
         )
     
-    def get_logging_submenu_keyboard(self) -> List[List[Button]]:
+    def get_logging_submenu_keyboard(self) -> InlineKeyboard:
         """Generate the logging settings submenu keyboard."""
         return [
             [Button.inline("📊 Logging Level", b"log_level")],
@@ -425,68 +438,54 @@ class SettingsManager:
         
         Args:
             notification_settings: Dictionary with notifications_enabled, notifications_silent from app settings
-            user_settings: Optional UserSettings object for user preference display
+            user_settings: Unused (kept for call-site compatibility)
             
         Returns:
             Formatted text for the notifications submenu
         """
-        app_enabled = notification_settings.get("notifications_enabled", True)
-        app_silent = notification_settings.get("notifications_silent", False)
-        
-        app_enabled_status = "✅ On" if app_enabled else "❌ Off"
-        app_silent_status = "✅ On" if app_silent else "❌ Off"
-        
-        text = (
-            "🔔 **Notification Settings (App-Wide)**\n\n"
-            f"**Notifications Enabled:** {app_enabled_status}\n"
-        )
-        
-        if app_enabled:
-            text += (
-                f"**Silent Mode (Global):** {app_silent_status}\n\n"
-                "**⚙️ How it works:**\n"
-                "• If enabled, all notifications are sent to users\n"
-                "• If silent mode is ON, all users receive silent notifications (overrides user preference)\n"
-                "• If silent mode is OFF, users can choose their own preference\n\n"
-            )
-        else:
-            text += "\n⚠️ **Notifications are disabled globally. No users will receive notifications.**\n\n"
-        
-        # Show user preference section if provided
-        if user_settings:
-            user_silent = user_settings.notifications_silent
-            user_silent_status = "✅ On" if user_silent else "❌ Off"
-            
-            text += (
-                f"**─────────────────**\n"
-                f"**Your Personal Preference:** {user_silent_status}\n"
-            )
-            
-            if app_silent:
-                text += "ℹ️ *Currently has no effect because global silent mode is ON*\n\n"
-            elif not app_enabled:
-                text += "ℹ️ *Currently has no effect because notifications are disabled*\n\n"
-            else:
-                text += "✅ *Your preference is active*\n\n"
-        
-        text += "Select a setting to adjust:"
-        
-        return text
-    
-    def get_notifications_submenu_keyboard(self, notification_settings: Dict) -> List[List[Button]]:
-        """Generate the notifications settings submenu keyboard."""
-        app_enabled = notification_settings.get("notifications_enabled", True)
-        
-        buttons = [
-            [Button.inline("🔄 Toggle Notifications", b"toggle_notifications")]
+        app_enabled = bool(notification_settings.get("notifications_enabled", True))
+        app_silent = bool(notification_settings.get("notifications_silent", False))
+
+        def _status(on: bool) -> str:
+            return "✅ On" if on else "❌ Off"
+
+        silent_label = _status(app_silent) if app_enabled else "⏸ N/A"
+
+        lines = [
+            "🔔 **Notifications (Global)**",
+            "",
+            "**Admin:**",
+            f"• **Enabled:** {_status(app_enabled)}",
+            f"• **Silent:** {silent_label}",
+            "",
         ]
-        
-        # Only show silent mode toggle if notifications are enabled
-        if app_enabled:
-            buttons.append([Button.inline("🔇 Toggle Silent Mode (Global)", b"toggle_silent")])
-        
-        buttons.append([Button.inline(f"{self.ICON_BACK} Back", b"back")])
-        return buttons
+
+        if not app_enabled:
+            lines.append("⚠️ Global notifications are OFF → nobody receives notifications.")
+            lines.append("ℹ️ Silent mode is irrelevant while notifications are OFF.")
+        elif app_silent:
+            lines.append("ℹ️ Global silent is ON → all notifications are silent (overrides user silent).")
+        else:
+            lines.append("ℹ️ Users can choose silent mode for themselves.")
+
+        lines.append("ℹ️ Users can still disable notifications for themselves.")
+        lines.append("\nToggle below:")
+        return "\n".join(lines)
+    
+    def get_notifications_submenu_keyboard(self, notification_settings: Dict) -> InlineKeyboard:
+        """Generate the notifications settings submenu keyboard."""
+        app_enabled = bool(notification_settings.get("notifications_enabled", True))
+        app_silent = bool(notification_settings.get("notifications_silent", False))
+
+        enabled_label = "✅ On" if app_enabled else "❌ Off"
+        silent_label = "✅ On" if app_silent else "❌ Off"
+        silent_button_label = f"🔇 Silent: {silent_label}" if app_enabled else "⏸ Silent: N/A"
+
+        return [
+            [Button.inline(f"🔔 Notifications: {enabled_label}", b"toggle_notifications")],
+            [Button.inline(silent_button_label, b"toggle_silent")],
+            [Button.inline(f"{self.ICON_BACK} Back", b"back")],
+        ]
     
     def get_logging_format_text(self, log_settings: Dict) -> str:
         """
@@ -522,7 +521,7 @@ class SettingsManager:
             "Click the buttons below to toggle each component:"
         )
     
-    def get_logging_format_keyboard(self, log_settings: Dict) -> List[List[Button]]:
+    def get_logging_format_keyboard(self, log_settings: Dict) -> InlineKeyboard:
         """
         Generate the logging format keyboard with toggle buttons.
         
@@ -569,7 +568,7 @@ class SettingsManager:
             "Choose your preferred log level:"
         )
     
-    def get_log_level_options_keyboard(self) -> List[List[Button]]:
+    def get_log_level_options_keyboard(self) -> InlineKeyboard:
         """Generate the log level options keyboard."""
         return [
             [Button.inline("TRACE", b"TRACE"), Button.inline("DEBUG", b"DEBUG")],

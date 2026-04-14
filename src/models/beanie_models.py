@@ -378,6 +378,10 @@ class UserSettings(Document):
     vanishing_threshold: int = Field(default=2, ge=1, le=10, description="Number of messages/conversations before message vanishes (1-10)")
     
     # Notification settings (user preference)
+    notifications_enabled: bool = Field(
+        default=True,
+        description="Whether you want to receive notifications initiated by other users (can be overridden by app settings)",
+    )
     notifications_silent: bool = Field(default=False, description="Whether notifications should be sent silently (user preference, can be overridden by app settings)")
 
     # Credit overview settings

@@ -170,13 +170,18 @@ async def handle_main_buttons(data: str, flow_state, api, user_id) -> Optional[s
                     f"from coffee card: **{card_name}**"
                 )
                 
-                if getattr(user, 'paypal_link', None):
+                if user.paypal_link:
                     notify_text += f"\n\n💳 Pay now: {user.paypal_link}/{outstanding:.2f}EUR"
                 
                 try:
-                    await api.message_manager.send_text(debt.debtor.user_id, notify_text, vanish=False, conv=False)
-                    notified += 1
-                except:
+                    if await api.message_manager.send_user_notification(
+                        debt.debtor.user_id,
+                        notify_text,
+                        vanish=False,
+                        conv=False,
+                    ):
+                        notified += 1
+                except Exception:
                     pass
         
         flow_state.flow_data[KEY_NOTIFICATION_RESULT] = f"✅ Sent {notified} payment reminder(s)"
