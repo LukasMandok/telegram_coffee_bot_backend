@@ -8,6 +8,7 @@ from ...models.beanie_models import TelegramUser
 from ...models.coffee_models import PaymentReason
 from ..message_flow import ButtonCallback, MessageAction, MessageFlow
 from ..message_flow_helpers import (
+    CommonCallbacks,
     GridLayout,
     ListBuilder,
     NavigationButtons,
@@ -22,30 +23,45 @@ from ..payment_flow import (
 )
 
 
+STATE_MAIN = "main"
+STATE_CREDITOR_DEBTS = "creditor_debts"
+
+CB_CREDITOR_PREFIX = "creditor:"
+
+KEY_DEBT_USER = "debt_user"
+KEY_DEBTS_RAW = "debts_raw"
+KEY_CREDITOR_SUMMARY = "creditor_summary"
+KEY_CREDITOR_DEBTS = "creditor_debts"
+KEY_SELECTED_CREDITOR = "selected_creditor"
+
+KEY_STAGED_PAYMENTS = "staged_payments"
+KEY_CUSTOM_AMOUNT_INPUT = "custom_amount_input"
+
+
 def invalidate_debt_cache(flow_state) -> None:
-    flow_state.clear("debt_user", "debts_raw", "creditor_summary", "creditor_debts")
+    flow_state.clear(KEY_DEBT_USER, KEY_DEBTS_RAW, KEY_CREDITOR_SUMMARY, KEY_CREDITOR_DEBTS)
 
 
 async def get_debt_user(flow_state, api, user_id):
-    if not flow_state.has("debt_user"):
+    if not flow_state.has(KEY_DEBT_USER):
         user = await api.conversation_manager.repo.find_user_by_id(user_id)
-        flow_state.set("debt_user", user)
-    return flow_state.get("debt_user")
+        flow_state.set(KEY_DEBT_USER, user)
+    return flow_state.get(KEY_DEBT_USER)
 
 
 async def get_debts_data(flow_state, api, user_id):
-    if not flow_state.has("debts_raw"):
+    if not flow_state.has(KEY_DEBTS_RAW):
         user = await get_debt_user(flow_state, api, user_id)
         if not user:
             return []
         debts = await api.debt_manager.get_user_debts(user, include_settled=False)
-        flow_state.set("debts_raw", debts)
-    return flow_state.get("debts_raw", [])
+        flow_state.set(KEY_DEBTS_RAW, debts)
+    return flow_state.get(KEY_DEBTS_RAW, [])
 
 
 async def get_creditor_summary(flow_state, api, user_id) -> Dict[str, Dict]:
-    if flow_state.has("creditor_summary"):
-        return flow_state.get("creditor_summary")
+    if flow_state.has(KEY_CREDITOR_SUMMARY):
+        return flow_state.get(KEY_CREDITOR_SUMMARY)
 
     debts = await get_debts_data(flow_state, api, user_id)
     summary: Dict[str, Dict] = {}
@@ -70,7 +86,7 @@ async def get_creditor_summary(flow_state, api, user_id) -> Dict[str, Dict]:
         summary[creditor_name]["total_owed"] += outstanding
         summary[creditor_name]["debts"].append(debt)
 
-    flow_state.set("creditor_summary", summary)
+    flow_state.set(KEY_CREDITOR_SUMMARY, summary)
     return summary
 
 
@@ -113,16 +129,16 @@ async def build_main_keyboard(flow_state, api, user_id) -> List[List[ButtonCallb
 
 
 async def handle_main_button(data: str, flow_state, api, user_id) -> Optional[str]:
-    if data.startswith("creditor:"):
+    if data.startswith(CB_CREDITOR_PREFIX):
         creditor_name = data.split(":", 1)[1]
-        flow_state.set("selected_creditor", creditor_name)
-        flow_state.pop("staged_payments", None)
-        return "creditor_debts"
+        flow_state.set(KEY_SELECTED_CREDITOR, creditor_name)
+        flow_state.pop(KEY_STAGED_PAYMENTS, None)
+        return STATE_CREDITOR_DEBTS
     return None
 
 
 async def build_creditor_debts_text(flow_state, api, user_id) -> str:
-    creditor_name = flow_state.get("selected_creditor", "Unknown")
+    creditor_name = flow_state.get(KEY_SELECTED_CREDITOR, "Unknown")
     creditor_summary = await get_creditor_summary(flow_state, api, user_id)
 
     if creditor_name not in creditor_summary:
@@ -148,7 +164,7 @@ async def build_creditor_debts_text(flow_state, api, user_id) -> str:
         }
         card_items.append((card_name, f"{outstanding:.2f} €"))
 
-    flow_state.set("creditor_debts", creditor_debts)
+    flow_state.set(KEY_CREDITOR_DEBTS, creditor_debts)
 
     total_owed = get_total_owed(creditor_debts)
     total_staged = get_total_staged(flow_state)
@@ -178,7 +194,7 @@ async def build_creditor_debts_keyboard(flow_state, api, user_id) -> List[List[B
         flow_state,
         api,
         user_id,
-        items_key="creditor_debts",
+        items_key=KEY_CREDITOR_DEBTS,
         pay_all_text="✅ Mark All as Paid",
     )
 
@@ -202,7 +218,7 @@ async def handle_creditor_debts_button(data: str, flow_state, api, user_id) -> O
 
     async def after_save(total_staged: float) -> None:
         debt_user = await get_debt_user(flow_state, api, user_id)
-        creditor_name = flow_state.get("selected_creditor", "selected creditor")
+        creditor_name = flow_state.get(KEY_SELECTED_CREDITOR, "selected creditor")
 
         await api.message_manager.send_text(
             user_id,
@@ -242,10 +258,10 @@ async def handle_creditor_debts_button(data: str, flow_state, api, user_id) -> O
         flow_state,
         api,
         user_id,
-        items_key="creditor_debts",
+        items_key=KEY_CREDITOR_DEBTS,
         on_apply_payment=apply_payment,
-        save_state="main",
-        back_state="main",
+        save_state=STATE_MAIN,
+        back_state=STATE_MAIN,
         on_before_commit=snapshot_before_commit,
         on_after_save=after_save,
         return_previous_on_save=True,
@@ -258,36 +274,42 @@ async def handle_creditor_debts_input(input_text: str, flow_state, api, user_id)
         flow_state,
         api,
         user_id,
-        items_key="creditor_debts",
-        current_state="creditor_debts",
+        items_key=KEY_CREDITOR_DEBTS,
+        current_state=STATE_CREDITOR_DEBTS,
     )
 
 
 def create_debt_flow() -> MessageFlow:
     flow = MessageFlow()
 
+    creditor_debts_defaults = {
+        KEY_CREDITOR_DEBTS: {},
+        KEY_STAGED_PAYMENTS: {},
+    }
+
     flow.add_state(
         make_state(
-            "main",
+            STATE_MAIN,
             text_builder=build_main_text,
             keyboard_builder=build_main_keyboard,
             action=MessageAction.AUTO,
             timeout=180,
             keep_message_on_exit=False,
-            exit_buttons=["close"],
+            exit_buttons=[CommonCallbacks.CLOSE],
             on_button_press=handle_main_button,
         )
     )
 
     flow.add_state(
         make_state(
-            "creditor_debts",
+            STATE_CREDITOR_DEBTS,
             text_builder=build_creditor_debts_text,
             keyboard_builder=build_creditor_debts_keyboard,
             action=MessageAction.EDIT,
             timeout=120,
+            defaults=creditor_debts_defaults,
             input_prompt="Mark individual cards as paid or enter custom amount:",
-            input_storage_key="custom_amount_input",
+            input_storage_key=KEY_CUSTOM_AMOUNT_INPUT,
             on_input_received=handle_creditor_debts_input,
             on_button_press=handle_creditor_debts_button,
         )
@@ -329,4 +351,4 @@ async def run_debt_flow(conv, user_id: int, api) -> bool:
         return True
 
     flow = create_debt_flow()
-    return await flow.run(conv, user_id, api, start_state="main")
+    return await flow.run(conv, user_id, api, start_state=STATE_MAIN)

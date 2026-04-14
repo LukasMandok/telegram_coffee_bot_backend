@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from .message_flow import ButtonCallback
-from .message_flow_helpers import GridLayout, InputDistributor, MoneyParser, NavigationButtons, StagingManager
+from .message_flow_helpers import CommonCallbacks, GridLayout, InputDistributor, MoneyParser, NavigationButtons, StagingManager
 
 
 MONEY_PARSER = MoneyParser()
@@ -95,11 +95,11 @@ async def handle_staged_payments_button(
             stagingManager.stage(item_id, float(info["amount"]))
         return None
 
-    if data == "undo":
+    if data == CommonCallbacks.UNDO:
         stagingManager.clear()
         return None
 
-    if data in ("commit", "save"):
+    if data in ("commit", CommonCallbacks.SAVE):
         staged = stagingManager.get_staged()
         total_staged = sum(float(value) for value in staged.values())
         api.logger.debug(
@@ -140,7 +140,7 @@ async def handle_staged_payments_button(
             )
             return None
 
-    if data == "back":
+    if data == CommonCallbacks.BACK:
         stagingManager.clear()
         return back_state
 

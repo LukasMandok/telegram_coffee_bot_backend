@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from enum import Enum
 from ..common.log import Logger
 from .message_manager import NotificationStyle
+from .message_flow_ids import CommonCallbacks
 
 if TYPE_CHECKING:
     from telethon.tl.custom.conversation import Conversation
@@ -385,14 +386,14 @@ class ConfirmationDialog:
             state_id=self.state_id,
             text_builder=build_text,
             buttons=[
-                [ButtonCallback(self.confirm_text, "confirm")],
-                [ButtonCallback(self.cancel_text, "back")],
+                [ButtonCallback(self.confirm_text, CommonCallbacks.CONFIRM)],
+                [ButtonCallback(self.cancel_text, CommonCallbacks.BACK)],
             ],
             action=self.action,
             timeout=60,
             next_state_map={
-                "confirm": self.on_confirm_state,
-                "back": self.on_cancel_state,
+                CommonCallbacks.CONFIRM: self.on_confirm_state,
+                CommonCallbacks.BACK: self.on_cancel_state,
             },
             # Prevent 'confirm'/'back' from being treated as default exit buttons.
             exit_buttons=[],
@@ -648,18 +649,18 @@ class MessageFlow:
         # Add navigation buttons
         nav_buttons = []
         if current_page > 1:
-            nav_buttons.append(ButtonCallback(config.prev_button_text, "page_prev"))
+            nav_buttons.append(ButtonCallback(config.prev_button_text, CommonCallbacks.PAGE_PREV))
         if config.show_page_numbers and total_pages > 1:
             page_info = config.page_info_format.format(current=current_page, total=total_pages)
-            nav_buttons.append(ButtonCallback(page_info, "page_info"))
+            nav_buttons.append(ButtonCallback(page_info, CommonCallbacks.PAGE_INFO))
         if current_page < total_pages:
-            nav_buttons.append(ButtonCallback(config.next_button_text, "page_next"))
+            nav_buttons.append(ButtonCallback(config.next_button_text, CommonCallbacks.PAGE_NEXT))
         
         if nav_buttons:
             buttons.append(nav_buttons)
         
         # Add close/back button
-        buttons.append([ButtonCallback(config.close_button_text, "close")])
+        buttons.append([ButtonCallback(config.close_button_text, CommonCallbacks.CLOSE)])
         
         # Build text with items
         text_parts = []
@@ -689,13 +690,13 @@ class MessageFlow:
         
         pag_state = flow_state.pagination_state[state_id]
         
-        if data == "page_next":
+        if data == CommonCallbacks.PAGE_NEXT:
             pag_state["current_page"] = min(pag_state["current_page"] + 1, pag_state["total_pages"])
             return True
-        elif data == "page_prev":
+        elif data == CommonCallbacks.PAGE_PREV:
             pag_state["current_page"] = max(pag_state["current_page"] - 1, 1)
             return True
-        elif data == "page_info":
+        elif data == CommonCallbacks.PAGE_INFO:
             # Page info button does nothing (just shows current page)
             return True
         
@@ -817,7 +818,7 @@ class MessageFlow:
                             
                             # Check if it's in exit_buttons first
                             # None means use default buttons, empty list means no exit buttons
-                            exit_buttons_to_check = current_def.exit_buttons if current_def.exit_buttons is not None else ["close", "cancel", "done"]
+                            exit_buttons_to_check = current_def.exit_buttons if current_def.exit_buttons is not None else [CommonCallbacks.CLOSE, CommonCallbacks.CANCEL, CommonCallbacks.DONE]
                             if button_data in exit_buttons_to_check:
                                 return "__exit__"
                             
@@ -1082,7 +1083,7 @@ class MessageFlow:
             
             # Check for exit buttons
             # None means use default buttons, empty list means no exit buttons
-            exit_buttons_to_check = current_def.exit_buttons if current_def.exit_buttons is not None else ["close", "cancel", "done"]
+            exit_buttons_to_check = current_def.exit_buttons if current_def.exit_buttons is not None else [CommonCallbacks.CLOSE, CommonCallbacks.CANCEL, CommonCallbacks.DONE]
             self.logger.trace(f"Checking exit buttons: data={data}, exit_buttons_config={current_def.exit_buttons}, exit_buttons_to_check={exit_buttons_to_check}, data_in_exit={data in exit_buttons_to_check}")
             if data in exit_buttons_to_check:
                 self.logger.trace(f"EXIT BUTTON TRIGGERED: {data}")
@@ -1098,7 +1099,7 @@ class MessageFlow:
                     )
                 
                 if flow_state.current_message:
-                    if data == "close" and not current_def.keep_message_on_exit:
+                    if data == CommonCallbacks.CLOSE and not current_def.keep_message_on_exit:
                         await flow_state.current_message.delete()
                         flow_state.current_message = None
                     elif current_def.remove_buttons_on_exit:

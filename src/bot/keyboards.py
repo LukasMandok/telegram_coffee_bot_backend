@@ -10,6 +10,8 @@ from typing import Any, List, TYPE_CHECKING
 from telethon import Button, events
 from pydantic import BaseModel, Field
 
+from .message_flow_ids import CommonCallbacks
+
 if TYPE_CHECKING:
     from ..api.telethon_api import GroupState
 
@@ -139,15 +141,15 @@ class KeyboardManager:
         navigation_buttons = []
         
         if current_page > 0:
-            navigation_buttons.append(Button.inline("◀ Prev", "page_prev"))
+            navigation_buttons.append(Button.inline("◀ Prev", CommonCallbacks.PAGE_PREV))
             
         # Add page indicator
         navigation_buttons.append(
-            Button.inline(f"{current_page + 1}/{total_pages}", "page_info")
+            Button.inline(f"{current_page + 1}/{total_pages}", CommonCallbacks.PAGE_INFO)
         )
         
         if current_page < total_pages - 1:
-            navigation_buttons.append(Button.inline("Next ▶", "page_next"))
+            navigation_buttons.append(Button.inline("Next ▶", CommonCallbacks.PAGE_NEXT))
             
         return [navigation_buttons] if navigation_buttons else []
     

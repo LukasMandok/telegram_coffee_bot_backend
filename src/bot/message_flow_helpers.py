@@ -11,6 +11,8 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Callable, Awaitable, TypeVar, Generic, TYPE_CHECKING
 
+from .message_flow_ids import CommonCallbacks, CommonFlowKeys, CommonStateIds
+
 if TYPE_CHECKING:
     from .message_flow import MessageFlow, MessageFlowState, ButtonCallback
 else:
@@ -378,8 +380,8 @@ class SimpleStateBuilder:
     def yes_no_keyboard(
         yes_text: str = "✅ Yes",
         no_text: str = "❌ No",
-        yes_callback: str = "yes",
-        no_callback: str = "no"
+        yes_callback: str = CommonCallbacks.YES,
+        no_callback: str = CommonCallbacks.NO,
     ):
         """Create a simple yes/no keyboard."""
         async def builder(flow_state, api, user_id):
@@ -421,37 +423,37 @@ class NavigationButtons:
     """
     
     @staticmethod
-    def back(text: str = "◁ Back", callback: str = "back") -> List[ButtonCallback]:
+    def back(text: str = "◁ Back", callback: str = CommonCallbacks.BACK) -> List[ButtonCallback]:
         """Single back button."""
         return [ButtonCallback(text, callback)]
     
     @staticmethod
-    def prev(text: str = "◁ Prev", callback: str = "prev") -> List[ButtonCallback]:
+    def prev(text: str = "◁ Prev", callback: str = CommonCallbacks.PREV) -> List[ButtonCallback]:
         """Single previous button."""
         return [ButtonCallback(text, callback)]
     
     @staticmethod
-    def close(text: str = "❌ Close", callback: str = "close") -> List[ButtonCallback]:
+    def close(text: str = "❌ Close", callback: str = CommonCallbacks.CLOSE) -> List[ButtonCallback]:
         """Single close button."""
         return [ButtonCallback(text, callback)]
     
     @staticmethod
-    def cancel(text: str = "❌ Cancel", callback: str = "cancel") -> List[ButtonCallback]:
+    def cancel(text: str = "❌ Cancel", callback: str = CommonCallbacks.CANCEL) -> List[ButtonCallback]:
         """Single cancel button."""
         return [ButtonCallback(text, callback)]
     
     @staticmethod
-    def next(text: str = "Next ▷", callback: str = "next") -> List[ButtonCallback]:
+    def next(text: str = "Next ▷", callback: str = CommonCallbacks.NEXT) -> List[ButtonCallback]:
         """Single next button."""
         return [ButtonCallback(text, callback)]
     
     @staticmethod
-    def undo(text: str = "↩ Undo", callback: str = "undo") -> List[ButtonCallback]:
+    def undo(text: str = "↩ Undo", callback: str = CommonCallbacks.UNDO) -> List[ButtonCallback]:
         """Single undo button."""
         return [ButtonCallback(text, callback)]
     
     @staticmethod
-    def save(text: str = "💾 Save", callback: str = "save") -> List[ButtonCallback]:
+    def save(text: str = "💾 Save", callback: str = CommonCallbacks.SAVE) -> List[ButtonCallback]:
         """Single save button."""
         return [ButtonCallback(text, callback)]
     
@@ -459,8 +461,8 @@ class NavigationButtons:
     def back_and_close(
         back_text: str = "◁ Back",
         close_text: str = "❌ Close",
-        back_callback: str = "back",
-        close_callback: str = "close"
+        back_callback: str = CommonCallbacks.BACK,
+        close_callback: str = CommonCallbacks.CLOSE,
     ) -> List[ButtonCallback]:
         """Back and close buttons (use in same row)."""
         return [
@@ -472,8 +474,8 @@ class NavigationButtons:
     def back_and_next(
         back_text: str = "◁ Back",
         next_text: str = "Next ▷",
-        back_callback: str = "back",
-        next_callback: str = "next"
+        back_callback: str = CommonCallbacks.BACK,
+        next_callback: str = CommonCallbacks.NEXT,
     ) -> List[ButtonCallback]:
         """Back and next buttons (use in same row)."""
         return [
@@ -485,8 +487,8 @@ class NavigationButtons:
     def undo_and_save(
         undo_text: str = "↩ Undo",
         save_text: str = "💾 Save",
-        undo_callback: str = "undo",
-        save_callback: str = "save"
+        undo_callback: str = CommonCallbacks.UNDO,
+        save_callback: str = CommonCallbacks.SAVE,
     ) -> List[ButtonCallback]:
         """Undo and Save buttons (use in same row)."""
         return [
@@ -498,8 +500,8 @@ class NavigationButtons:
     def cancel_and_confirm(
         cancel_text: str = "❌ Cancel",
         confirm_text: str = "✅ Confirm",
-        cancel_callback: str = "cancel",
-        confirm_callback: str = "confirm"
+        cancel_callback: str = CommonCallbacks.CANCEL,
+        confirm_callback: str = CommonCallbacks.CONFIRM,
     ) -> List[ButtonCallback]:
         """Cancel and confirm buttons (use in same row)."""
         return [
@@ -511,48 +513,14 @@ class NavigationButtons:
     def save_and_cancel(
         save_text: str = "💾 Save",
         cancel_text: str = "❌ Cancel",
-        save_callback: str = "save",
-        cancel_callback: str = "cancel"
+        save_callback: str = CommonCallbacks.SAVE,
+        cancel_callback: str = CommonCallbacks.CANCEL,
     ) -> List[ButtonCallback]:
         """Save and cancel buttons (use in same row)."""
         return [
             ButtonCallback(save_text, save_callback),
             ButtonCallback(cancel_text, cancel_callback)
         ]
-
-
-class CommonCallbacks:
-    """Common callback_data constants used across message flows."""
-
-    CANCEL = "cancel"
-    CLOSE = "close"
-    DONE = "done"
-    BACK = "back"
-
-    CONFIRM = "confirm"
-    YES = "yes"
-    NO = "no"
-
-    PAGE_NEXT = "page_next"
-    PAGE_PREV = "page_prev"
-    PAGE_INFO = "page_info"
-
-
-class CommonFlowKeys:
-    """Common flow_state.flow_data keys used across message flows."""
-
-    AFTER_CANCEL = "after_cancel"
-    SELECTED_CARD_ID = "selected_card_id"
-
-
-class CommonStateIds:
-    """Common state_id constants used across message flows."""
-
-    MENU = "menu"
-    CLOSE_CONFIRM = "close_confirm"
-    CLOSE_EXECUTE = "close_execute"
-    EXIT_CANCELLED = "exit_cancelled"
-
 
 class DynamicListFlow:
     """
@@ -665,7 +633,7 @@ class DynamicListFlow:
             action=list_state_kwargs.get('action', MessageAction.EDIT),
             timeout=list_state_kwargs.get('timeout', 120),
             on_button_press=self._handle_list_selection,
-            next_state_map={"back": list_state_kwargs.get('back_state', 'main')}
+            next_state_map={CommonCallbacks.BACK: list_state_kwargs.get('back_state', 'main')}
         ))
         
         # Note: Detail state should be added separately by the user
@@ -743,7 +711,7 @@ class ExitStateBuilder:
     
     @staticmethod
     def create_cancelled(
-        state_id: str = "exit_cancelled",
+        state_id: str = CommonStateIds.EXIT_CANCELLED,
         message: str = "❌ **Cancelled**\n\nNo changes were made.",
         timeout: int = 1,
     ):
@@ -759,7 +727,7 @@ class ExitStateBuilder:
     
     @staticmethod
     def create_success(
-        state_id: str = "exit_success",
+        state_id: str = CommonStateIds.EXIT_SUCCESS,
         message: str = "✅ **Success**\n\nOperation completed successfully.",
         timeout: int = 1,
     ):
@@ -796,10 +764,13 @@ def make_state(
     action: Optional["_MessageActionHint"] = None,
     timeout: Optional[int] = None,
     keep_message_on_exit: Optional[bool] = None,
+    defaults: Optional[Dict[str, Any]] = None,
     # Navigation
     next_state_map: Optional[Dict[str, str]] = None,
     exit_buttons: Optional[List[str]] = None,
     back_button: Optional[str] = None,
+    route_callback_to_state_id: bool = False,
+    route_callback_allowlist: Optional[List[str]] = None,
     # Text input options
     input_prompt: Optional[str] = None,
     input_storage_key: Optional[str] = None,
@@ -844,7 +815,7 @@ def make_state(
     use_timeout = timeout or 120
     use_next_map = next_state_map or {}
     # None means use default exit buttons, empty list [] means no exit buttons
-    use_exit = exit_buttons if exit_buttons is not None else ["close", "cancel", "done"]
+    use_exit = exit_buttons if exit_buttons is not None else [CommonCallbacks.CLOSE, CommonCallbacks.CANCEL, CommonCallbacks.DONE]
 
     return _MessageDefinition(
         state_id=state_id,
@@ -856,9 +827,12 @@ def make_state(
         action=use_action,
         timeout=use_timeout,
         keep_message_on_exit=keep_message_on_exit if keep_message_on_exit is not None else False,
+        defaults=defaults,
         next_state_map=use_next_map,
         exit_buttons=use_exit,
         back_button=back_button,
+        route_callback_to_state_id=route_callback_to_state_id,
+        route_callback_allowlist=route_callback_allowlist,
         input_prompt=input_prompt,
         input_storage_key=input_storage_key,
         input_validator=input_validator,

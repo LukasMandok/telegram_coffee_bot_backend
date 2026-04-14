@@ -20,9 +20,45 @@ from ..message_flow import (
     PaginationConfig,
     StateType,
 )
-from ..message_flow_helpers import NavigationButtons
+from ..message_flow_helpers import CommonCallbacks, NavigationButtons
 from ...services.gsheet_sync import request_gsheet_sync_after_action
 from ...models import beanie_models as models
+
+
+STATE_MAIN = "main"
+STATE_CLEANUP_MENU = "cleanup_menu"
+STATE_CREATE_RESULT = "create_result"
+STATE_RESTORE_LIST = "restore_list"
+STATE_RESTORE_CONFIRM = "restore_confirm"
+STATE_RESTORE_RESULT = "restore_result"
+
+STATE_CLEAR_ALL_CONFIRM_1 = "clear_all_confirm_1"
+STATE_CLEAR_ALL_CONFIRM_2 = "clear_all_confirm_2"
+STATE_CLEAR_ALL_RESULT = "clear_all_result"
+
+STATE_CLEAR_OBSOLETE_CONFIRM = "clear_obsolete_confirm"
+STATE_CLEAR_OBSOLETE_RESULT = "clear_obsolete_result"
+
+CB_CREATE = "create"
+CB_RESTORE = "restore"
+CB_CLEANUP = "cleanup"
+
+CB_CLEAR_ALL = "clear_all"
+CB_CLEAR_OBSOLETE = "clear_obsolete"
+
+CB_RESTORE_PREFIX = "restore:"
+
+KEY_CREATED_SNAPSHOT_ID = "created_snapshot_id"
+KEY_CREATED_SNAPSHOT_META = "created_snapshot_meta"
+
+KEY_RESTORE_SNAPSHOT_ID = "restore_snapshot_id"
+KEY_RESTORE_SNAPSHOT_NUMBER = "restore_snapshot_number"
+KEY_RESTORE_ERROR = "restore_error"
+
+KEY_CLEAR_ALL_RESULT = "clear_all_result"
+KEY_CLEAR_ALL_ERROR = "clear_all_error"
+KEY_CLEAR_OBSOLETE_RESULT = "clear_obsolete_result"
+KEY_CLEAR_OBSOLETE_ERROR = "clear_obsolete_error"
 
 
 SNAPSHOT_REASON_MANUAL = "Manual snapshot"
@@ -61,16 +97,16 @@ async def create_manual_snapshot(flow_state, api, user_id) -> Optional[str]:
     )
 
     meta = await snapshot_manager.get_snapshot_meta(snapshot_id) if snapshot_id else None
-    flow_state.set("created_snapshot_id", snapshot_id)
-    flow_state.set("created_snapshot_meta", meta)
+    flow_state.set(KEY_CREATED_SNAPSHOT_ID, snapshot_id)
+    flow_state.set(KEY_CREATED_SNAPSHOT_META, meta)
 
-    return "create_result"
+    return STATE_CREATE_RESULT
 
 
 async def restore_selected(flow_state, api, user_id) -> None:
-    snapshot_id = flow_state.get("restore_snapshot_id")
+    snapshot_id = flow_state.get(KEY_RESTORE_SNAPSHOT_ID)
     if not snapshot_id:
-        flow_state.set("restore_error", "No snapshot selected")
+        flow_state.set(KEY_RESTORE_ERROR, "No snapshot selected")
         return
 
     snapshot_manager = api.get_snapshot_manager()
@@ -89,9 +125,9 @@ async def restore_selected(flow_state, api, user_id) -> None:
             pass
 
         request_gsheet_sync_after_action(reason="snapshot_restored")
-        flow_state.set("restore_error", None)
+        flow_state.set(KEY_RESTORE_ERROR, None)
     except Exception as exc:  # pragma: no cover
-        flow_state.set("restore_error", f"{type(exc).__name__}: {exc}")
+        flow_state.set(KEY_RESTORE_ERROR, f"{type(exc).__name__}: {exc}")
 
 
 async def build_main_text(flow_state, api, user_id) -> str:
@@ -104,9 +140,9 @@ async def build_main_text(flow_state, api, user_id) -> str:
 
 async def build_main_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
     return [
-        [ButtonCallback("📸 Create manual snapshot", "create", callback_handler=create_manual_snapshot)],
-        [ButtonCallback("↩️ Restore snapshot", "restore")],
-        [ButtonCallback("🧹 Cleanup", "cleanup")],
+        [ButtonCallback("📸 Create manual snapshot", CB_CREATE, callback_handler=create_manual_snapshot)],
+        [ButtonCallback("↩️ Restore snapshot", CB_RESTORE)],
+        [ButtonCallback("🧹 Cleanup", CB_CLEANUP)],
         NavigationButtons.close(),
     ]
 
@@ -121,9 +157,9 @@ async def build_cleanup_text(flow_state, api, user_id) -> str:
 
 async def build_cleanup_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
     return [
-        [ButtonCallback("🗑️ Delete ALL snapshots", "clear_all")],
-        [ButtonCallback("🚫 Delete obsolete snapshots", "clear_obsolete")],
-        [ButtonCallback("◁ Back", "back")],
+        [ButtonCallback("🗑️ Delete ALL snapshots", CB_CLEAR_ALL)],
+        [ButtonCallback("🚫 Delete obsolete snapshots", CB_CLEAR_OBSOLETE)],
+        [ButtonCallback("◁ Back", CommonCallbacks.BACK)],
     ]
 
 
@@ -131,31 +167,31 @@ async def clear_all_snapshots(flow_state, api, user_id) -> None:
     snapshot_manager = api.get_snapshot_manager()
     try:
         result = await snapshot_manager.clear_all_snapshots()
-        flow_state.set("clear_all_result", result)
-        flow_state.set("clear_all_error", None)
+        flow_state.set(KEY_CLEAR_ALL_RESULT, result)
+        flow_state.set(KEY_CLEAR_ALL_ERROR, None)
         # Ensure pagination cache doesn't show stale items when user goes back.
-        flow_state.pagination_state.pop("restore_list", None)
+        flow_state.pagination_state.pop(STATE_RESTORE_LIST, None)
     except Exception as exc:  # pragma: no cover
-        flow_state.set("clear_all_result", None)
-        flow_state.set("clear_all_error", f"{type(exc).__name__}: {exc}")
+        flow_state.set(KEY_CLEAR_ALL_RESULT, None)
+        flow_state.set(KEY_CLEAR_ALL_ERROR, f"{type(exc).__name__}: {exc}")
 
 
 async def clear_obsolete_snapshots(flow_state, api, user_id) -> None:
     snapshot_manager = api.get_snapshot_manager()
     try:
         result = await snapshot_manager.clear_obsolete_snapshots()
-        flow_state.set("clear_obsolete_result", result)
-        flow_state.set("clear_obsolete_error", None)
+        flow_state.set(KEY_CLEAR_OBSOLETE_RESULT, result)
+        flow_state.set(KEY_CLEAR_OBSOLETE_ERROR, None)
         # Ensure pagination cache doesn't show stale items when user goes back.
-        flow_state.pagination_state.pop("restore_list", None)
+        flow_state.pagination_state.pop(STATE_RESTORE_LIST, None)
     except Exception as exc:  # pragma: no cover
-        flow_state.set("clear_obsolete_result", None)
-        flow_state.set("clear_obsolete_error", f"{type(exc).__name__}: {exc}")
+        flow_state.set(KEY_CLEAR_OBSOLETE_RESULT, None)
+        flow_state.set(KEY_CLEAR_OBSOLETE_ERROR, f"{type(exc).__name__}: {exc}")
 
 
 async def build_create_result_text(flow_state, api, user_id) -> str:
-    snapshot_id = flow_state.get("created_snapshot_id", "")
-    meta: models.SnapshotMeta | None = flow_state.get("created_snapshot_meta")
+    snapshot_id = flow_state.get(KEY_CREATED_SNAPSHOT_ID, "")
+    meta: models.SnapshotMeta | None = flow_state.get(KEY_CREATED_SNAPSHOT_META)
 
     created_at = _format_date(meta.created_at) if meta is not None else "(unknown)"
     reason = _display_reason(meta) if meta is not None else SNAPSHOT_REASON_MANUAL
@@ -190,7 +226,7 @@ async def list_snapshots(flow_state, api, user_id) -> List[SnapshotListItem]:
         )
 
     # Clear existing pagination cache so list stays fresh if user returns.
-    flow_state.pagination_state.pop("restore_list", None)
+    flow_state.pagination_state.pop(STATE_RESTORE_LIST, None)
     return items
 
 
@@ -237,17 +273,17 @@ def build_restore_button(item: SnapshotListItem, idx: int) -> ButtonCallback:
     label = number_text
 
     async def select_and_confirm(flow_state, api, user_id) -> Optional[str]:
-        flow_state.set("restore_snapshot_id", snapshot_id)
-        flow_state.set("restore_snapshot_number", snapshot_number)
-        flow_state.set("restore_error", None)
-        return "restore_confirm"
+        flow_state.set(KEY_RESTORE_SNAPSHOT_ID, snapshot_id)
+        flow_state.set(KEY_RESTORE_SNAPSHOT_NUMBER, snapshot_number)
+        flow_state.set(KEY_RESTORE_ERROR, None)
+        return STATE_RESTORE_CONFIRM
 
-    return ButtonCallback(label, f"restore:{snapshot_id}", callback_handler=select_and_confirm)
+    return ButtonCallback(label, f"{CB_RESTORE_PREFIX}{snapshot_id}", callback_handler=select_and_confirm)
 
 
 async def build_restore_confirmation(flow_state, api, user_id) -> str:
-    snapshot_id = flow_state.get("restore_snapshot_id", "")
-    snapshot_number = flow_state.get("restore_snapshot_number")
+    snapshot_id = flow_state.get(KEY_RESTORE_SNAPSHOT_ID, "")
+    snapshot_number = flow_state.get(KEY_RESTORE_SNAPSHOT_NUMBER)
     if not snapshot_id:
         return "No snapshot selected."
 
@@ -286,8 +322,8 @@ async def build_restore_list_text(flow_state, api, user_id) -> str:
 
 
 async def build_restore_result_text(flow_state, api, user_id) -> str:
-    snapshot_id = flow_state.get("restore_snapshot_id", "")
-    err = flow_state.get("restore_error")
+    snapshot_id = flow_state.get(KEY_RESTORE_SNAPSHOT_ID, "")
+    err = flow_state.get(KEY_RESTORE_ERROR)
 
     if err:
         return (
@@ -302,8 +338,8 @@ async def build_restore_result_text(flow_state, api, user_id) -> str:
 
 
 async def build_clear_all_result_text(flow_state, api, user_id) -> str:
-    err = flow_state.get("clear_all_error")
-    result = flow_state.get("clear_all_result")
+    err = flow_state.get(KEY_CLEAR_ALL_ERROR)
+    result = flow_state.get(KEY_CLEAR_ALL_RESULT)
 
     if err:
         return "❌ **Clear failed**\n\n" f"Error: {err}"
@@ -319,8 +355,8 @@ async def build_clear_all_result_text(flow_state, api, user_id) -> str:
 
 
 async def build_clear_obsolete_result_text(flow_state, api, user_id) -> str:
-    err = flow_state.get("clear_obsolete_error")
-    result = flow_state.get("clear_obsolete_result")
+    err = flow_state.get(KEY_CLEAR_OBSOLETE_ERROR)
+    result = flow_state.get(KEY_CLEAR_OBSOLETE_RESULT)
 
     if err:
         return "❌ **Cleanup failed**\n\n" f"Error: {err}"
@@ -338,9 +374,25 @@ async def build_clear_obsolete_result_text(flow_state, api, user_id) -> str:
 def create_snapshots_flow() -> MessageFlow:
     flow = MessageFlow()
 
+    create_result_defaults = {
+        KEY_CREATED_SNAPSHOT_ID: "",
+        KEY_CREATED_SNAPSHOT_META: None,
+    }
+    restore_result_defaults = {
+        KEY_RESTORE_ERROR: None,
+    }
+    clear_all_result_defaults = {
+        KEY_CLEAR_ALL_ERROR: None,
+        KEY_CLEAR_ALL_RESULT: None,
+    }
+    clear_obsolete_result_defaults = {
+        KEY_CLEAR_OBSOLETE_ERROR: None,
+        KEY_CLEAR_OBSOLETE_RESULT: None,
+    }
+
     flow.add_state(
         MessageDefinition(
-            state_id="main",
+            state_id=STATE_MAIN,
             state_type=StateType.BUTTON,
             text_builder=build_main_text,
             keyboard_builder=build_main_keyboard,
@@ -349,7 +401,7 @@ def create_snapshots_flow() -> MessageFlow:
 
     flow.add_state(
         MessageDefinition(
-            state_id="cleanup_menu",
+            state_id=STATE_CLEANUP_MENU,
             state_type=StateType.BUTTON,
             text_builder=build_cleanup_text,
             keyboard_builder=build_cleanup_keyboard,
@@ -358,17 +410,18 @@ def create_snapshots_flow() -> MessageFlow:
 
     flow.add_state(
         MessageDefinition(
-            state_id="create_result",
+            state_id=STATE_CREATE_RESULT,
             state_type=StateType.BUTTON,
             text_builder=build_create_result_text,
             buttons=None,
             auto_exit_after_render=True,
+            defaults=create_result_defaults,
         )
     )
 
     flow.add_state(
         MessageDefinition(
-            state_id="restore_list",
+            state_id=STATE_RESTORE_LIST,
             state_type=StateType.BUTTON,
             text_builder=build_restore_list_text,
             # 4-column grid, 3 rows per page => 12 items.
@@ -377,31 +430,31 @@ def create_snapshots_flow() -> MessageFlow:
             pagination_item_formatter=format_snapshot_line,
             pagination_item_button_builder=build_restore_button,
             exit_buttons=[],
-            next_state_map={"close": "main"},
+            next_state_map={CommonCallbacks.CLOSE: STATE_MAIN},
         )
     )
 
     flow.add_confirmation(
-        state_id="clear_all_confirm_1",
+        state_id=STATE_CLEAR_ALL_CONFIRM_1,
         question=(
             "⚠️ **Delete ALL snapshots?**\n\n"
             "This will permanently delete all snapshot history."
         ),
-        on_confirm_state="clear_all_confirm_2",
-        on_cancel_state="cleanup_menu",
+        on_confirm_state=STATE_CLEAR_ALL_CONFIRM_2,
+        on_cancel_state=STATE_CLEANUP_MENU,
         confirm_text="Continue",
         cancel_text="◁ Back",
         warning="This cannot be undone.",
     )
 
     flow.add_confirmation(
-        state_id="clear_all_confirm_2",
+        state_id=STATE_CLEAR_ALL_CONFIRM_2,
         question=(
             "🚨 **Final confirmation**\n\n"
             "Really delete ALL snapshots?"
         ),
-        on_confirm_state="clear_all_result",
-        on_cancel_state="cleanup_menu",
+        on_confirm_state=STATE_CLEAR_ALL_RESULT,
+        on_cancel_state=STATE_CLEANUP_MENU,
         confirm_text="✅ Yes, delete all",
         cancel_text="◁ Back",
         warning="This cannot be undone.",
@@ -409,23 +462,24 @@ def create_snapshots_flow() -> MessageFlow:
 
     flow.add_state(
         MessageDefinition(
-            state_id="clear_all_result",
+            state_id=STATE_CLEAR_ALL_RESULT,
             state_type=StateType.BUTTON,
             text_builder=build_clear_all_result_text,
             buttons=None,
             auto_exit_after_render=True,
+            defaults=clear_all_result_defaults,
             on_enter=clear_all_snapshots,
         )
     )
 
     flow.add_confirmation(
-        state_id="clear_obsolete_confirm",
+        state_id=STATE_CLEAR_OBSOLETE_CONFIRM,
         question=(
             "Delete all **obsolete** snapshots?\n\n"
             "This deletes snapshots marked as obsolete and removes them from history."
         ),
-        on_confirm_state="clear_obsolete_result",
-        on_cancel_state="cleanup_menu",
+        on_confirm_state=STATE_CLEAR_OBSOLETE_RESULT,
+        on_cancel_state=STATE_CLEANUP_MENU,
         confirm_text="✅ Yes, delete obsolete",
         cancel_text="◁ Back",
         warning="This cannot be undone.",
@@ -433,20 +487,21 @@ def create_snapshots_flow() -> MessageFlow:
 
     flow.add_state(
         MessageDefinition(
-            state_id="clear_obsolete_result",
+            state_id=STATE_CLEAR_OBSOLETE_RESULT,
             state_type=StateType.BUTTON,
             text_builder=build_clear_obsolete_result_text,
             buttons=None,
             auto_exit_after_render=True,
+            defaults=clear_obsolete_result_defaults,
             on_enter=clear_obsolete_snapshots,
         )
     )
 
     flow.add_confirmation(
-        state_id="restore_confirm",
+        state_id=STATE_RESTORE_CONFIRM,
         question=build_restore_confirmation,
-        on_confirm_state="restore_result",
-        on_cancel_state="restore_list",
+        on_confirm_state=STATE_RESTORE_RESULT,
+        on_cancel_state=STATE_RESTORE_LIST,
         confirm_text="✅ Restore",
         cancel_text="◁ Back",
         warning="⚠️ This will overwrite the current database state.",
@@ -454,22 +509,23 @@ def create_snapshots_flow() -> MessageFlow:
 
     flow.add_state(
         MessageDefinition(
-            state_id="restore_result",
+            state_id=STATE_RESTORE_RESULT,
             state_type=StateType.BUTTON,
             text_builder=build_restore_result_text,
             buttons=None,
             auto_exit_after_render=True,
+            defaults=restore_result_defaults,
             on_enter=restore_selected,
         )
     )
 
     # Simple transitions
-    flow.states["main"].next_state_map.update({"restore": "restore_list", "cleanup": "cleanup_menu"})
-    flow.states["cleanup_menu"].next_state_map.update(
+    flow.states[STATE_MAIN].next_state_map.update({CB_RESTORE: STATE_RESTORE_LIST, CB_CLEANUP: STATE_CLEANUP_MENU})
+    flow.states[STATE_CLEANUP_MENU].next_state_map.update(
         {
-            "back": "main",
-            "clear_all": "clear_all_confirm_1",
-            "clear_obsolete": "clear_obsolete_confirm",
+            CommonCallbacks.BACK: STATE_MAIN,
+            CB_CLEAR_ALL: STATE_CLEAR_ALL_CONFIRM_1,
+            CB_CLEAR_OBSOLETE: STATE_CLEAR_OBSOLETE_CONFIRM,
         }
     )
 

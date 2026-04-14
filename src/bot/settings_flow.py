@@ -6,14 +6,41 @@ including PayPal link setup.
 """
 
 from typing import Optional, List
+
+from ..common.log import Logger
 from .message_flow import (
     MessageFlow, MessageDefinition, ButtonCallback,
     MessageAction, StateType, TextLengthValidator
 )
 from .message_flow_helpers import (
-    make_state, NavigationButtons, ExitStateBuilder
+    CommonCallbacks,
+    CommonStateIds,
+    ExitStateBuilder,
+    NavigationButtons,
+    make_state,
 )
 from ..handlers.paypal import create_paypal_link, validate_paypal_link
+
+
+STATE_MAIN = "main"
+STATE_ENTER_LINK = "enter_link"
+STATE_CONFIRM_SAVE = "confirm_save"
+STATE_CONFIRM_REMOVE = "confirm_remove"
+
+STATE_EXIT_REMOVAL_CANCELLED = "exit_removal_cancelled"
+STATE_EXIT_SAVE_SUCCESS = "exit_save_success"
+STATE_EXIT_REMOVE_SUCCESS = "exit_remove_success"
+
+CB_ADD = "add"
+CB_CHANGE = "change"
+CB_REMOVE = "remove"
+
+KEY_PAYPAL_INPUT = "paypal_input"
+KEY_VALIDATION_ERROR_TEXT = "validation_error_text"
+KEY_FORMATTED_LINK = "formatted_link"
+KEY_ORIGINAL_INPUT = "original_input"
+KEY_VALIDATION_ATTEMPTS = "validation_attempts"
+KEY_OLD_PAYPAL_LINK = "old_paypal_link"
 
 
 # ============================================================================
@@ -44,25 +71,25 @@ async def build_paypal_main_keyboard(flow_state, api, user_id) -> List[List[Butt
     
     if user.paypal_link:
         return [
-            [ButtonCallback("🔄 Change Link", "change")],
-            [ButtonCallback("❌ Remove Link", "remove")],
+            [ButtonCallback("🔄 Change Link", CB_CHANGE)],
+            [ButtonCallback("❌ Remove Link", CB_REMOVE)],
             NavigationButtons.close()
         ]
     else:
         return [
-            [ButtonCallback("➕ Add PayPal Link", "add")],
+            [ButtonCallback("➕ Add PayPal Link", CB_ADD)],
             NavigationButtons.close()
         ]
 
 
 async def handle_paypal_main_button(data: str, flow_state, api, user_id) -> Optional[str]:
     """Handle main PayPal menu button presses."""
-    if data == "change" or data == "add":
-        return "enter_link"
-    elif data == "remove":
-        return "confirm_remove"
-    elif data == "close":
-        return "exit_cancelled"
+    if data in (CB_CHANGE, CB_ADD):
+        return STATE_ENTER_LINK
+    if data == CB_REMOVE:
+        return STATE_CONFIRM_REMOVE
+    if data == CommonCallbacks.CLOSE:
+        return CommonStateIds.EXIT_CANCELLED
     return None
 
 
@@ -73,10 +100,10 @@ async def handle_paypal_main_button(data: str, flow_state, api, user_id) -> Opti
 async def build_enter_link_text(flow_state, api, user_id) -> str:
     """Build the text for entering a PayPal link."""
     # Check if there's a validation error to display
-    validation_error = flow_state.get('validation_error_text')
+    validation_error = flow_state.get(KEY_VALIDATION_ERROR_TEXT)
     if validation_error:
         # Clear it after using it
-        flow_state.pop('validation_error_text', None)
+        flow_state.pop(KEY_VALIDATION_ERROR_TEXT, None)
         return validation_error
     
     # Normal prompt text
@@ -111,7 +138,6 @@ async def validate_paypal_input(text: str, flow_state) -> tuple[bool, Optional[s
 
 async def handle_paypal_input(input_text: str, flow_state, api, user_id) -> Optional[str]:
     """Handle PayPal link input and validate it."""
-    from ..common.log import Logger
     logger = Logger("PayPalFlow")
     
     # Format the link
@@ -126,18 +152,18 @@ async def handle_paypal_input(input_text: str, flow_state, api, user_id) -> Opti
         
         if is_valid:
             # Store the formatted link and move to confirm
-            flow_state.set('formatted_link', formatted_link)
-            flow_state.set('original_input', input_text)
+            flow_state.set(KEY_FORMATTED_LINK, formatted_link)
+            flow_state.set(KEY_ORIGINAL_INPUT, input_text)
             logger.info(f"PayPal link validated successfully for user {user_id}: {formatted_link}")
-            return "confirm_save"
+            return STATE_CONFIRM_SAVE
         else:
             # Validation failed - show error and stay in input state
             logger.warning(f"PayPal link validation failed for user {user_id}: {formatted_link}")
-            flow_state.set('formatted_link', formatted_link)
+            flow_state.set(KEY_FORMATTED_LINK, formatted_link)
             
             # Get attempt count
-            attempts = flow_state.get('validation_attempts', 0) + 1
-            flow_state.set('validation_attempts', attempts)
+            attempts = flow_state.get(KEY_VALIDATION_ATTEMPTS, 0) + 1
+            flow_state.set(KEY_VALIDATION_ATTEMPTS, attempts)
             logger.debug(f"Validation attempt {attempts}/3 for user {user_id}")
             
             max_attempts = 3
@@ -158,7 +184,7 @@ async def handle_paypal_input(input_text: str, flow_state, api, user_id) -> Opti
             
             # Show error by updating the message and stay in input state
             remaining = max_attempts - attempts
-            flow_state.set('validation_error_text', 
+            flow_state.set(KEY_VALIDATION_ERROR_TEXT, 
                 f"❌ **Validation Failed** (Attempt {attempts}/{max_attempts})\n\n"
                 f"The PayPal link is not valid or doesn't exist:\n"
                 f"{formatted_link}\n\n"
@@ -169,15 +195,15 @@ async def handle_paypal_input(input_text: str, flow_state, api, user_id) -> Opti
                 f"You have **{remaining} attempt(s)** remaining.\n\n"
                 f"💡 Type your username or link below:"
             )
-            return "enter_link"  # Stay in input state for retry
+            return STATE_ENTER_LINK  # Stay in input state for retry
     except Exception as e:
         # Validation error - show error and stay in input state
         logger.error(f"Exception during PayPal validation for user {user_id}, link: {formatted_link}", exc=e)
-        flow_state.set('formatted_link', formatted_link)
+        flow_state.set(KEY_FORMATTED_LINK, formatted_link)
         
         # Get attempt count
-        attempts = flow_state.get('validation_attempts', 0) + 1
-        flow_state.set('validation_attempts', attempts)
+        attempts = flow_state.get(KEY_VALIDATION_ATTEMPTS, 0) + 1
+        flow_state.set(KEY_VALIDATION_ATTEMPTS, attempts)
         logger.debug(f"Validation attempt {attempts}/3 (exception) for user {user_id}")
         
         max_attempts = 3
@@ -198,13 +224,13 @@ async def handle_paypal_input(input_text: str, flow_state, api, user_id) -> Opti
         
         # Show error by updating the message and stay in input state
         remaining = max_attempts - attempts
-        flow_state.set('validation_error_text',
+        flow_state.set(KEY_VALIDATION_ERROR_TEXT,
             f"❌ **Validation Error** (Attempt {attempts}/{max_attempts})\n\n"
             f"Error validating link: {str(e)}\n\n"
             f"You have **{remaining} attempt(s)** remaining.\n\n"
             f"💡 Type your username or link below:"
         )
-        return "enter_link"  # Stay in input state for retry
+        return STATE_ENTER_LINK  # Stay in input state for retry
 
 
 # ============================================================================
@@ -213,7 +239,7 @@ async def handle_paypal_input(input_text: str, flow_state, api, user_id) -> Opti
 
 async def build_confirm_save_text(flow_state, api, user_id) -> str:
     """Build confirmation text for saving PayPal link."""
-    formatted_link = flow_state.get('formatted_link', 'Unknown')
+    formatted_link = flow_state.get(KEY_FORMATTED_LINK, 'Unknown')
     
     return (
         f"✅ **PayPal Link Validated**\n\n"
@@ -225,16 +251,16 @@ async def build_confirm_save_text(flow_state, api, user_id) -> str:
 
 async def handle_confirm_save_button(data: str, flow_state, api, user_id) -> Optional[str]:
     """Handle confirmation button press."""
-    if data == "confirm":
+    if data == CommonCallbacks.CONFIRM:
         # Save the link
-        formatted_link = flow_state.get('formatted_link')
+        formatted_link = flow_state.get(KEY_FORMATTED_LINK)
         user = await api.conversation_manager.repo.find_user_by_id(user_id)
         user.paypal_link = formatted_link
         await user.save()
         
-        return "exit_save_success"
-    elif data == "cancel":
-        return "exit_cancelled"
+        return STATE_EXIT_SAVE_SUCCESS
+    elif data == CommonCallbacks.CANCEL:
+        return CommonStateIds.EXIT_CANCELLED
     return None
 
 
@@ -244,10 +270,9 @@ async def handle_confirm_save_button(data: str, flow_state, api, user_id) -> Opt
 
 async def build_save_success_text(flow_state, api, user_id) -> str:
     """Build save success text with link info."""
-    from ..common.log import Logger
     logger = Logger("PayPalFlow")
     
-    formatted_link = flow_state.get('formatted_link', 'Unknown')
+    formatted_link = flow_state.get(KEY_FORMATTED_LINK, 'Unknown')
     logger.info(f"PayPal link saved for user {user_id}: {formatted_link}")
     
     return (
@@ -260,10 +285,9 @@ async def build_save_success_text(flow_state, api, user_id) -> str:
 
 async def build_remove_success_text(flow_state, api, user_id) -> str:
     """Build removal success text with link info."""
-    from ..common.log import Logger
     logger = Logger("PayPalFlow")
     
-    old_link = flow_state.get('old_paypal_link', 'Unknown')
+    old_link = flow_state.get(KEY_OLD_PAYPAL_LINK, 'Unknown')
     logger.info(f"PayPal link removed for user {user_id}: {old_link}")
     
     return (
@@ -291,17 +315,17 @@ async def build_confirm_remove_text(flow_state, api, user_id) -> str:
 
 async def handle_confirm_remove_button(data: str, flow_state, api, user_id) -> Optional[str]:
     """Handle remove confirmation button press."""
-    if data == "confirm":
+    if data == CommonCallbacks.CONFIRM:
         # Remove the link
         user = await api.conversation_manager.repo.find_user_by_id(user_id)
         old_link = user.paypal_link
-        flow_state.set('old_paypal_link', old_link)
+        flow_state.set(KEY_OLD_PAYPAL_LINK, old_link)
         user.paypal_link = None
         await user.save()
         
-        return "exit_remove_success"
-    elif data == "cancel":
-        return "exit_removal_cancelled"
+        return STATE_EXIT_REMOVE_SUCCESS
+    elif data == CommonCallbacks.CANCEL:
+        return STATE_EXIT_REMOVAL_CANCELLED
     return None
 
 
@@ -312,10 +336,17 @@ async def handle_confirm_remove_button(data: str, flow_state, api, user_id) -> O
 def create_paypal_flow() -> MessageFlow:
     """Create the PayPal setup message flow."""
     flow = MessageFlow()
+
+    enter_link_defaults = {
+        KEY_VALIDATION_ATTEMPTS: 0,
+        KEY_VALIDATION_ERROR_TEXT: None,
+        KEY_FORMATTED_LINK: None,
+        KEY_ORIGINAL_INPUT: None,
+    }
     
     # Main menu
     flow.add_state(make_state(
-        "main",
+        STATE_MAIN,
         text_builder=build_paypal_main_text,
         keyboard_builder=build_paypal_main_keyboard,
         action=MessageAction.AUTO,
@@ -327,21 +358,22 @@ def create_paypal_flow() -> MessageFlow:
     # Enter link state (text input with cancel button)
     async def handle_enter_link_cancel(data: str, flow_state, api, user_id) -> Optional[str]:
         """Handle cancel button in enter_link state."""
-        if data == "cancel":
-            return "exit_cancelled"
+        if data == CommonCallbacks.CANCEL:
+            return CommonStateIds.EXIT_CANCELLED
         return None
     
     flow.add_state(MessageDefinition(
-        state_id="enter_link",
+        state_id=STATE_ENTER_LINK,
         state_type=StateType.MIXED,  # Allow both text input and button press
         text_builder=build_enter_link_text,
         buttons=[
-            [ButtonCallback("❌ Cancel", "cancel")]
+            [ButtonCallback("❌ Cancel", CommonCallbacks.CANCEL)]
         ],
         action=MessageAction.EDIT,
+        defaults=enter_link_defaults,
         input_validator=TextLengthValidator(min_length=3, max_length=200),
         input_timeout=120,
-        input_storage_key="paypal_input",
+        input_storage_key=KEY_PAYPAL_INPUT,
         exit_buttons=[],  # No default exit buttons - handler manages navigation
         on_input_received=handle_paypal_input,
         on_button_press=handle_enter_link_cancel,
@@ -349,11 +381,11 @@ def create_paypal_flow() -> MessageFlow:
     
     # Confirm save state
     flow.add_state(make_state(
-        "confirm_save",
+        STATE_CONFIRM_SAVE,
         text_builder=build_confirm_save_text,
         buttons=[
-            [ButtonCallback("✅ Save Link", "confirm")],
-            [ButtonCallback("❌ Cancel", "cancel")]
+            [ButtonCallback("✅ Save Link", CommonCallbacks.CONFIRM)],
+            [ButtonCallback("❌ Cancel", CommonCallbacks.CANCEL)]
         ],
         action=MessageAction.EDIT,
         timeout=60,
@@ -363,11 +395,11 @@ def create_paypal_flow() -> MessageFlow:
     
     # Confirm remove state
     flow.add_state(make_state(
-        "confirm_remove",
+        STATE_CONFIRM_REMOVE,
         text_builder=build_confirm_remove_text,
         buttons=[
-            [ButtonCallback("✅ Yes, Remove", "confirm")],
-            [ButtonCallback("❌ Cancel", "cancel")]
+            [ButtonCallback("✅ Yes, Remove", CommonCallbacks.CONFIRM)],
+            [ButtonCallback("❌ Cancel", CommonCallbacks.CANCEL)]
         ],
         action=MessageAction.EDIT,
         timeout=60,
@@ -377,23 +409,23 @@ def create_paypal_flow() -> MessageFlow:
     
     # Exit states - using universal ExitStateBuilder
     flow.add_state(ExitStateBuilder.create_cancelled(
-        state_id="exit_cancelled",
+        state_id=CommonStateIds.EXIT_CANCELLED,
         message="❌ **PayPal Setup Cancelled**\n\nNo changes were made."
     ))
     
     flow.add_state(ExitStateBuilder.create_cancelled(
-        state_id="exit_removal_cancelled",
+        state_id=STATE_EXIT_REMOVAL_CANCELLED,
         message="❌ **Removal Cancelled**\n\nYour PayPal link was not removed."
     ))
     
     # These use dynamic text builders for link info
     flow.add_state(ExitStateBuilder.create(
-        state_id="exit_save_success",
+        state_id=STATE_EXIT_SAVE_SUCCESS,
         text_builder=build_save_success_text
     ))
     
     flow.add_state(ExitStateBuilder.create(
-        state_id="exit_remove_success",
+        state_id=STATE_EXIT_REMOVE_SUCCESS,
         text_builder=build_remove_success_text
     ))
     

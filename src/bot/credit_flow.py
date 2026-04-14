@@ -16,7 +16,8 @@ from .message_flow import (
 )
 from .message_flow_helpers import (
     GridLayout, ListBuilder, make_state,
-    NavigationButtons
+    CommonCallbacks,
+    NavigationButtons,
 )
 from .payment_flow import (
     build_staged_payments_keyboard,
@@ -27,13 +28,31 @@ from .payment_flow import (
 from ..models.coffee_models import PaymentReason
 
 
-VIEW_MODE_KEY = "credit_overview_view_mode"
+STATE_MAIN = "main"
+STATE_NOTIFICATION_SENT = "notification_sent"
+STATE_DEBTORS_LIST = "debtors_list"
+STATE_DEBTOR_DEBTS = "debtor_debts"
+
+CB_TOGGLE_VIEW = "toggle_view"
+CB_NOTIFY_ALL = "notify_all"
+CB_MARK_PAID = "mark_paid"
+
+CB_DEBTOR_PREFIX = "debtor:"
+
+KEY_VIEW_MODE = "credit_overview_view_mode"
 VIEW_BY_CARD = "by_card"
 VIEW_BY_DEBTOR = "by_debtor"
 
+KEY_CREDITS_RAW = "credits_raw"
+KEY_DEBTOR_DEBTS = "debtor_debts"
+KEY_SELECTED_DEBTOR = "selected_debtor"
+KEY_NOTIFICATION_RESULT = "notification_result"
+KEY_STAGED_PAYMENTS = "staged_payments"
+KEY_CUSTOM_AMOUNT_INPUT = "custom_amount_input"
+
 
 def _get_view_mode(flow_state) -> str:
-    mode = flow_state.get(VIEW_MODE_KEY, VIEW_BY_CARD)
+    mode = flow_state.get(KEY_VIEW_MODE, VIEW_BY_CARD)
     if mode not in (VIEW_BY_CARD, VIEW_BY_DEBTOR):
         return VIEW_BY_CARD
     return mode
@@ -48,15 +67,15 @@ def _get_view_mode(flow_state) -> str:
 
 async def get_credits_data(flow_state, api, user_id):
     """Fetch and cache all credits for the user (raw objects), avoiding duplicate DB calls."""
-    if not flow_state.has('credits_raw'):
+    if not flow_state.has(KEY_CREDITS_RAW):
         user = await api.conversation_manager.repo.find_user_by_id(user_id)
         all_credits = await api.debt_manager.get_user_credits(user, include_settled=False)
-        flow_state.set('credits_raw', all_credits)
-    return flow_state.get('credits_raw')
+        flow_state.set(KEY_CREDITS_RAW, all_credits)
+    return flow_state.get(KEY_CREDITS_RAW)
 
 
 def invalidate_credit_cache(flow_state) -> None:
-    flow_state.clear('credits_raw', 'debtor_debts')
+    flow_state.clear(KEY_CREDITS_RAW, KEY_DEBTOR_DEBTS)
 
 async def build_credit_main_text(flow_state, api, user_id) -> str:
     """Build the main credit overview text - with automatic caching."""
@@ -116,25 +135,25 @@ async def build_credit_main_keyboard(flow_state, api, user_id) -> List[List[Butt
     """Build the main credit overview keyboard."""
     toggle_label = "👥 View by User" if _get_view_mode(flow_state) == VIEW_BY_CARD else "🗂️ View by Card"
     return [
-        [ButtonCallback(toggle_label, "toggle_view")],
-        [ButtonCallback("💸 Mark as Paid", "mark_paid"), ButtonCallback("📢 Notify All", "notify_all")],
+        [ButtonCallback(toggle_label, CB_TOGGLE_VIEW)],
+        [ButtonCallback("💸 Mark as Paid", CB_MARK_PAID), ButtonCallback("📢 Notify All", CB_NOTIFY_ALL)],
         NavigationButtons.close()
     ]
 
 
 async def handle_main_buttons(data: str, flow_state, api, user_id) -> Optional[str]:
     """Handle main menu buttons."""
-    if data == "toggle_view":
+    if data == CB_TOGGLE_VIEW:
         current_mode = _get_view_mode(flow_state)
         new_mode = VIEW_BY_DEBTOR if current_mode == VIEW_BY_CARD else VIEW_BY_CARD
-        flow_state.set(VIEW_MODE_KEY, new_mode)
+        flow_state.set(KEY_VIEW_MODE, new_mode)
         await api.conversation_manager.repo.update_user_settings(
             user_id,
             credit_overview_view_mode=new_mode,
         )
         return None
 
-    if data == "notify_all":
+    if data == CB_NOTIFY_ALL:
         # Send notifications
         user = await api.conversation_manager.repo.find_user_by_id(user_id)
         all_credits = await get_credits_data(flow_state, api, user_id)
@@ -160,8 +179,8 @@ async def handle_main_buttons(data: str, flow_state, api, user_id) -> Optional[s
                 except:
                     pass
         
-        flow_state.flow_data['notification_result'] = f"✅ Sent {notified} payment reminder(s)"
-        return "notification_sent"
+        flow_state.flow_data[KEY_NOTIFICATION_RESULT] = f"✅ Sent {notified} payment reminder(s)"
+        return STATE_NOTIFICATION_SENT
     
     return None
 
@@ -215,10 +234,10 @@ async def build_debtors_list_keyboard(flow_state, api, user_id) -> List[List[But
 
 async def handle_debtor_selection(data: str, flow_state, api, user_id) -> Optional[str]:
     """Handle debtor selection."""
-    if data.startswith("debtor:"):
+    if data.startswith(CB_DEBTOR_PREFIX):
         debtor_name = data.split(":", 1)[1]
-        flow_state.set('selected_debtor', debtor_name)
-        return "debtor_debts"
+        flow_state.set(KEY_SELECTED_DEBTOR, debtor_name)
+        return STATE_DEBTOR_DEBTS
     return None
 
 
@@ -228,7 +247,7 @@ async def handle_debtor_selection(data: str, flow_state, api, user_id) -> Option
 
 async def build_debtor_debts_text(flow_state, api, user_id) -> str:
     """Build text for individual debtor's debts."""
-    debtor_name = flow_state.get('selected_debtor', 'Unknown')
+    debtor_name = flow_state.get(KEY_SELECTED_DEBTOR, 'Unknown')
     
     # Get debts for this debtor
     all_credits = await get_credits_data(flow_state, api, user_id)
@@ -248,8 +267,8 @@ async def build_debtor_debts_text(flow_state, api, user_id) -> str:
                 }
                 total_owed += outstanding
     
-    flow_state.set('debtor_debts', debtor_debts)
-    total_staged = get_total_staged(flow_state)
+    flow_state.set(KEY_DEBTOR_DEBTS, debtor_debts)
+    total_staged = get_total_staged(flow_state, staging_key=KEY_STAGED_PAYMENTS)
     
     # Build text
     text = f"**Payments from {debtor_name}**\n\n"
@@ -268,7 +287,8 @@ async def build_debtor_debts_keyboard(flow_state, api, user_id) -> List[List[But
         flow_state,
         api,
         user_id,
-        items_key='debtor_debts',
+        items_key=KEY_DEBTOR_DEBTS,
+        staging_key=KEY_STAGED_PAYMENTS,
         pay_all_text="✅ Mark All as Paid",
     )
 
@@ -292,7 +312,7 @@ async def handle_debtor_debts_button(data: str, flow_state, api, user_id) -> Opt
         )
 
     async def after_save(_total_staged: float) -> None:
-        debtor_name = flow_state.get('selected_debtor', 'selected debtor')
+        debtor_name = flow_state.get(KEY_SELECTED_DEBTOR, 'selected debtor')
         await api.message_manager.send_text(
             user_id,
             f"✅ Marked {_total_staged:.2f} € as paid by {debtor_name}",
@@ -307,10 +327,11 @@ async def handle_debtor_debts_button(data: str, flow_state, api, user_id) -> Opt
         flow_state,
         api,
         user_id,
-        items_key='debtor_debts',
+        items_key=KEY_DEBTOR_DEBTS,
         on_apply_payment=apply_payment,
-        save_state='debtors_list',
-        back_state='debtors_list',
+        save_state=STATE_DEBTORS_LIST,
+        back_state=STATE_DEBTORS_LIST,
+        staging_key=KEY_STAGED_PAYMENTS,
         on_before_commit=snapshot_before_commit,
         on_after_save=after_save,
         return_previous_on_save=True,
@@ -324,8 +345,9 @@ async def handle_debtor_debts_input(input_text: str, flow_state, api, user_id) -
         flow_state,
         api,
         user_id,
-        items_key='debtor_debts',
-        current_state='debtor_debts',
+        items_key=KEY_DEBTOR_DEBTS,
+        current_state=STATE_DEBTOR_DEBTS,
+        staging_key=KEY_STAGED_PAYMENTS,
     )
 
 
@@ -336,49 +358,60 @@ async def handle_debtor_debts_input(input_text: str, flow_state, api, user_id) -
 def create_credit_flow() -> MessageFlow:
     """Create the credit overview message flow - much simpler with helpers!"""
     flow = MessageFlow()
+
+    main_defaults = {
+        KEY_VIEW_MODE: VIEW_BY_CARD,
+    }
+
+    debtor_debts_defaults = {
+        KEY_DEBTOR_DEBTS: {},
+        KEY_STAGED_PAYMENTS: {},
+    }
     
     # Main overview
     flow.add_state(make_state(
-        "main",
+        STATE_MAIN,
         text_builder=build_credit_main_text,
         keyboard_builder=build_credit_main_keyboard,
         action=MessageAction.AUTO,
         timeout=180,
         keep_message_on_exit=False,
-        next_state_map={"mark_paid": "debtors_list"},
-        exit_buttons=["close"],
+        defaults=main_defaults,
+        next_state_map={CB_MARK_PAID: STATE_DEBTORS_LIST},
+        exit_buttons=[CommonCallbacks.CLOSE],
         on_button_press=handle_main_buttons,
     ))
     
     flow.add_state(make_state(
-        "notification_sent",
-        text_builder=lambda fs, api, uid: fs.flow_data.get('notification_result', '✅ Notifications sent'),
-        buttons=[[ButtonCallback("◀ Back to Credits", "back")]],
+        STATE_NOTIFICATION_SENT,
+        text_builder=lambda fs, api, uid: fs.flow_data.get(KEY_NOTIFICATION_RESULT, '✅ Notifications sent'),
+        buttons=[[ButtonCallback("◀ Back to Credits", CommonCallbacks.BACK)]],
         action=MessageAction.EDIT,
         timeout=30,
-        next_state_map={"back": "main"},
+        next_state_map={CommonCallbacks.BACK: STATE_MAIN},
     ))
     
     # Debtors list
     flow.add_state(make_state(
-        "debtors_list",
+        STATE_DEBTORS_LIST,
         text_builder=build_debtors_list_text,
         keyboard_builder=build_debtors_list_keyboard,
         action=MessageAction.EDIT,
         timeout=120,
-        next_state_map={"back": "main"},
+        next_state_map={CommonCallbacks.BACK: STATE_MAIN},
         on_button_press=handle_debtor_selection,
     ))
     
     # Individual debtor's debts
     flow.add_state(make_state(
-        "debtor_debts",
+        STATE_DEBTOR_DEBTS,
         text_builder=build_debtor_debts_text,
         keyboard_builder=build_debtor_debts_keyboard,
         action=MessageAction.EDIT,
         timeout=120,
+        defaults=debtor_debts_defaults,
         input_prompt="Mark individual cards as paid or enter custom amount:",
-        input_storage_key="custom_amount_input",
+        input_storage_key=KEY_CUSTOM_AMOUNT_INPUT,
         on_input_received=handle_debtor_debts_input,
         on_button_press=handle_debtor_debts_button,
     ))
@@ -423,6 +456,6 @@ async def run_credit_flow(conv, user_id: int, api) -> bool:
         conv,
         user_id,
         api,
-        start_state="main",
-        initial_data={VIEW_MODE_KEY: initial_view_mode},
+        start_state=STATE_MAIN,
+        initial_data={KEY_VIEW_MODE: initial_view_mode},
     )
