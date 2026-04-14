@@ -177,6 +177,30 @@ class CoffeeCardManager:
 
         request_gsheet_sync_after_action(reason="card_created")
 
+        # Notify admins about new card creation (background notification, respects notification settings).
+        try:
+            admin_ids = await repo.get_registered_admins()
+            if admin_ids and getattr(self.api, "message_manager", None) is not None:
+                purchaser_name = purchaser.display_name or str(purchaser_id)
+                message = (
+                    "🆕 **New coffee card created**\n\n"
+                    f"Card: **{card.name}**\n"
+                    f"Total coffees: **{card.total_coffees}**\n"
+                    f"Cost per coffee: **€{card.cost_per_coffee:.2f}**\n"
+                    f"Total cost: **€{card.total_cost:.2f}**\n"
+                    f"Purchaser: **{purchaser_name}**"
+                )
+                for admin_id in admin_ids:
+                    if int(admin_id) == int(purchaser_id):
+                        continue
+                    await self.api.message_manager.send_user_notification(int(admin_id), message)
+        except Exception as exc:
+            self.logger.warning(
+                "Failed to notify admins about new card creation",
+                extra_tag="CARD",
+                exc=exc,
+            )
+
         return card
     
     async def get_available(self) -> int:
@@ -334,8 +358,6 @@ class CoffeeCardManager:
             await self.api.message_manager.send_user_notification(
                 purchaser.user_id,
                 purchaser_message,
-                vanish=False,
-                conv=False,
             )
         
         # Notify all consumers who have debts
@@ -366,8 +388,6 @@ class CoffeeCardManager:
             await self.api.message_manager.send_user_notification(
                 debtor.user_id,
                 debtor_message,
-                vanish=False,
-                conv=False,
             )
         
         # If someone else completed it manually, notify them too

@@ -44,8 +44,11 @@ VIEW_BY_CARD = "by_card"
 VIEW_BY_DEBTOR = "by_debtor"
 
 KEY_CREDITS_RAW = "credits_raw"
+KEY_CREDITOR_NAME = "creditor_name"
 KEY_DEBTOR_DEBTS = "debtor_debts"
 KEY_SELECTED_DEBTOR = "selected_debtor"
+KEY_SELECTED_DEBTOR_TELEGRAM_USER_ID = "selected_debtor_telegram_user_id"
+KEY_SELECTED_DEBTOR_TOTAL_OWED = "selected_debtor_total_owed"
 KEY_NOTIFICATION_RESULT = "notification_result"
 KEY_STAGED_PAYMENTS = "staged_payments"
 KEY_CUSTOM_AMOUNT_INPUT = "custom_amount_input"
@@ -71,11 +74,17 @@ async def get_credits_data(flow_state, api, user_id):
         user = await api.conversation_manager.repo.find_user_by_id(user_id)
         all_credits = await api.debt_manager.get_user_credits(user, include_settled=False)
         flow_state.set(KEY_CREDITS_RAW, all_credits)
+        flow_state.set(KEY_CREDITOR_NAME, user.display_name or str(user_id))
     return flow_state.get(KEY_CREDITS_RAW)
 
 
 def invalidate_credit_cache(flow_state) -> None:
-    flow_state.clear(KEY_CREDITS_RAW, KEY_DEBTOR_DEBTS)
+    flow_state.clear(
+        KEY_CREDITS_RAW,
+        KEY_DEBTOR_DEBTS,
+        KEY_SELECTED_DEBTOR_TELEGRAM_USER_ID,
+        KEY_SELECTED_DEBTOR_TOTAL_OWED,
+    )
 
 async def build_credit_main_text(flow_state, api, user_id) -> str:
     """Build the main credit overview text - with automatic caching."""
@@ -177,8 +186,6 @@ async def handle_main_buttons(data: str, flow_state, api, user_id) -> Optional[s
                     if await api.message_manager.send_user_notification(
                         debt.debtor.user_id,
                         notify_text,
-                        vanish=False,
-                        conv=False,
                     ):
                         notified += 1
                 except Exception:
@@ -259,9 +266,12 @@ async def build_debtor_debts_text(flow_state, api, user_id) -> str:
     
     debtor_debts = {}
     total_owed = 0.0
+    debtor_telegram_user_id: int | None = None
     
     for debt in all_credits:
         if debt.debtor and debt.debtor.display_name == debtor_name:
+            if debtor_telegram_user_id is None and isinstance(debt.debtor, TelegramUser):
+                debtor_telegram_user_id = debt.debtor.user_id
             outstanding = debt.total_amount - debt.paid_amount
             if outstanding > 0:
                 debt_id = str(debt.id)
@@ -273,6 +283,8 @@ async def build_debtor_debts_text(flow_state, api, user_id) -> str:
                 total_owed += outstanding
     
     flow_state.set(KEY_DEBTOR_DEBTS, debtor_debts)
+    flow_state.set(KEY_SELECTED_DEBTOR_TELEGRAM_USER_ID, debtor_telegram_user_id)
+    flow_state.set(KEY_SELECTED_DEBTOR_TOTAL_OWED, total_owed)
     total_staged = get_total_staged(flow_state, staging_key=KEY_STAGED_PAYMENTS)
     
     # Build text
@@ -295,6 +307,36 @@ async def build_debtor_debts_keyboard(flow_state, api, user_id) -> List[List[But
         items_key=KEY_DEBTOR_DEBTS,
         staging_key=KEY_STAGED_PAYMENTS,
         pay_all_text="✅ Mark All as Paid",
+    )
+
+
+async def notify_debtors(
+    api,
+    *,
+    creditor_user_id: int,
+    creditor_name: str,
+    debtor_telegram_user_id: int | None,
+    paid_amount: float,
+    remaining_owed: float,
+) -> None:
+    if debtor_telegram_user_id is None:
+        return
+    if debtor_telegram_user_id == creditor_user_id:
+        return
+
+    remaining_line = (
+        f"✅ You don't owe any more money to {creditor_name}."
+        if remaining_owed <= 1e-9
+        else f"You still owe **{remaining_owed:.2f} €** to {creditor_name}."
+    )
+
+    await api.message_manager.send_user_notification(
+        debtor_telegram_user_id,
+        (
+            "💸 **Payment update**\n\n"
+            f"{creditor_name} marked **{paid_amount:.2f} €** as paid.\n"
+            f"{remaining_line}"
+        ),
     )
 
 
@@ -325,6 +367,23 @@ async def handle_debtor_debts_button(data: str, flow_state, api, user_id) -> Opt
             conv=True,
             delete_after=2,
         )
+
+        # Notify the debtor (if they are a Telegram user) that the creditor marked payment as paid.
+        try:
+            await notify_debtors(
+                api,
+                creditor_user_id=user_id,
+                creditor_name=flow_state.get(KEY_CREDITOR_NAME, str(user_id)),
+                debtor_telegram_user_id=flow_state.get(KEY_SELECTED_DEBTOR_TELEGRAM_USER_ID),
+                paid_amount=_total_staged,
+                remaining_owed=max(
+                    0.0,
+                    float(flow_state.get(KEY_SELECTED_DEBTOR_TOTAL_OWED, 0.0)) - float(_total_staged),
+                ),
+            )
+        except Exception:
+            pass
+
         invalidate_credit_cache(flow_state)
 
     return await handle_staged_payments_button(

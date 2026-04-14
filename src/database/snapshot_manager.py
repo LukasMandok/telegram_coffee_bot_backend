@@ -480,11 +480,7 @@ class SnapshotManager:
 
         for admin_id in admin_ids:
             try:
-                await api.message_manager.send_perm_notification(
-                    user_id=int(admin_id),
-                    text=message,
-                    silent=False,
-                )
+                await api.message_manager.send_user_notification(int(admin_id), message)
             except Exception as exc:
                 self.logger.warning(
                     f"Failed to send snapshot restore notification to admin {admin_id}: {exc}",

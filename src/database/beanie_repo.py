@@ -5,7 +5,7 @@ from beanie import init_beanie
 from typing import Optional, Dict, Any
 from datetime import datetime
 
-from .base_repo import BaseRepository
+from .base_repo import BaseRepository, EffectiveNotificationPolicy
 from ..models import beanie_models as models
 from ..models.coffee_models import CoffeeCard, CoffeeOrder, Payment, UserDebt, CoffeeSession
 from ..common.log import (
@@ -646,6 +646,52 @@ class BeanieRepository(BaseRepository):
         except Exception as e:
             log_database_error("get_notification_settings", str(e))
             return None
+
+    async def get_effective_notification_settings(
+        self,
+        user_id: int,
+        *,
+        force_silent: bool = False,
+        notification_settings: Dict[str, Any] | None = None,
+        telegram_user: Any | None = None,
+        user_settings: Any | None = None,
+    ) -> EffectiveNotificationPolicy:
+        resolved_notification_settings = notification_settings
+        if resolved_notification_settings is None:
+            resolved_notification_settings = await self.get_notification_settings() or {
+                "notifications_enabled": True,
+                "notifications_silent": False,
+            }
+
+        if not resolved_notification_settings.get("notifications_enabled", True):
+            return EffectiveNotificationPolicy(can_send=False, silent=False, blocked_reason="app_notifications_disabled")
+
+        resolved_telegram_user = telegram_user
+        if resolved_telegram_user is None:
+            resolved_telegram_user = await self.find_user_by_id(user_id)
+
+        if resolved_telegram_user is None:
+            return EffectiveNotificationPolicy(can_send=False, silent=False, blocked_reason="user_not_found")
+
+        if resolved_telegram_user.is_archived:
+            return EffectiveNotificationPolicy(can_send=False, silent=False, blocked_reason="user_archived")
+
+        if resolved_telegram_user.is_disabled:
+            return EffectiveNotificationPolicy(can_send=False, silent=False, blocked_reason="user_disabled")
+
+        resolved_user_settings = user_settings
+        if resolved_user_settings is None:
+            resolved_user_settings = await self.get_user_settings(user_id)
+
+        user_enabled = resolved_user_settings.notifications_enabled if resolved_user_settings else True
+        if not user_enabled:
+            return EffectiveNotificationPolicy(can_send=False, silent=False, blocked_reason="user_notifications_disabled")
+
+        app_silent = bool(resolved_notification_settings.get("notifications_silent", False))
+        user_silent = resolved_user_settings.notifications_silent if resolved_user_settings else False
+        effective_silent = bool(force_silent or app_silent or user_silent)
+
+        return EffectiveNotificationPolicy(can_send=True, silent=effective_silent, blocked_reason=None)
 
     async def update_notification_settings(self, **kwargs) -> bool:
         """

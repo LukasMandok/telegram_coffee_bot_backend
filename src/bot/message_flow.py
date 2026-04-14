@@ -960,9 +960,11 @@ class MessageFlow:
 
                 # Show on_enter notification (only on true entry).
                 if current_def.on_enter_notification:
-                    await self._show_notification(
-                        api, user_id, current_def.on_enter_notification,
-                        current_def.notification_style, current_def.notification_auto_delete
+                    await api.message_manager.send_notification(
+                        user_id=user_id,
+                        text=current_def.on_enter_notification,
+                        style=current_def.notification_style,
+                        auto_delete=current_def.notification_auto_delete,
                     )
             
             # Build text (dynamic or static)
@@ -1093,9 +1095,11 @@ class MessageFlow:
                 
                 # Show on_exit notification
                 if current_def.on_exit_notification:
-                    await self._show_notification(
-                        api, user_id, current_def.on_exit_notification,
-                        current_def.notification_style, current_def.notification_auto_delete
+                    await api.message_manager.send_notification(
+                        user_id=user_id,
+                        text=current_def.on_exit_notification,
+                        style=current_def.notification_style,
+                        auto_delete=current_def.notification_auto_delete,
                     )
                 
                 if flow_state.current_message:
@@ -1190,19 +1194,4 @@ class MessageFlow:
             
             self.logger.trace(f"Successfully navigated to {next_state_id}")
     
-    async def _show_notification(
-        self,
-        api: Any,
-        user_id: int,
-        text: str,
-        style: NotificationStyle,
-        auto_delete: int
-    ) -> None:
-        """Show a notification based on style."""
-        await api.message_manager.send_notification(
-            user_id=user_id,
-            text=text,
-            style=style,
-            auto_delete=auto_delete,
-        )
-        # POPUP styles would need button_event, handled separately
+

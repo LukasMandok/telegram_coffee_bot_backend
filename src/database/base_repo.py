@@ -1,10 +1,18 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import List, Optional, Any, Dict, TYPE_CHECKING
 
 from ..models.beanie_models import DebtSettings, GsheetSettings, SnapshotSettings
 
 if TYPE_CHECKING:
     from .snapshot_manager import SnapshotManager
+
+
+@dataclass(frozen=True)
+class EffectiveNotificationPolicy:
+    can_send: bool
+    silent: bool
+    blocked_reason: str | None = None
 
 class BaseRepository(ABC):
     snapshot_manager: "SnapshotManager | None" = None
@@ -102,6 +110,22 @@ class BaseRepository(ABC):
     # App-wide notification settings
     async def get_notification_settings(self) -> Optional[Dict[str, Any]]:
         """Get app-wide notification settings."""
+        raise NotImplementedError
+
+    async def get_effective_notification_settings(
+        self,
+        user_id: int,
+        *,
+        force_silent: bool = False,
+        notification_settings: Dict[str, Any] | None = None,
+        telegram_user: Any | None = None,
+        user_settings: Any | None = None,
+    ) -> EffectiveNotificationPolicy:
+        """Compute whether a background notification should be sent and whether it should be silent.
+
+        Centralizes the effective notification policy (global enabled/silent + user enabled/silent
+        + archived/disabled user filtering) so message senders do not reimplement this logic.
+        """
         raise NotImplementedError
 
     async def update_notification_settings(self, **kwargs) -> bool:

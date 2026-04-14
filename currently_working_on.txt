@@ -4,16 +4,16 @@ done:
 - credit (payment)
 - debt (payment)
 - paypal
-- settings
+- settings (main menu)
 - card
 remaining:
 - signup
 - passive user
+- settings submenu inntegration
 
 
 Coffee Cards:
 - the Card Completed (All debtors have been notified) message is not necessary at all.
-
 - Royalty system (adjustable in the settings). either an adjustable amount of free coffee for the creditor or that he doesn't have to contribute to missing coffees. 
 
 Sessions / Order:
@@ -44,9 +44,8 @@ mongo
 
 Credit menu:
 - I want an option to allow to notify each user separately from the credit overview menu. There should be a notify user buttons in the main menu which brings you to a new submenu, there you should get a list with all the outstanding payments on the top for the users and a list buttons of users to notify each one separely or a button to notify all (like the existing one)
+- Schredder still appears with 0 outstandign credit, so I think that debts might not be correctly marked as paid at all places
 
-Message Flow:
-- implement the general flow states into the other flows
 - add an option to message flows, which allow actions on initiation, submit and cancel -> so I can so gsheet synchronizations on sumbit and start backups on initiation save them on submit and delete them on cancel 
 -> the function for requesting a number should be implemented in the messageManager
 
@@ -58,8 +57,8 @@ General:
 Settings:
 - Settings for vanishing messages are currently not consistent between bot restarts. It looks like they are not correctly saved in the database or are overwritten by another place
 - make each toggle button the same, so that an activated option has a green dot and an deactivated an red dot on the toggle button (instead of showing how the stat would change if you press the button), this should also include all of the checkmark/cross icons in toggle buttons used somewhere else. This should be completely consistent in the whole message flow.
-- when I enter a command wrongly, it should tell me, that I can enter /help for a list of commands, and it should also suggest a better command (for example if I do /create_card instead of /new_card it should suggest /new_card, same for /snapshot -> /snapshots and /debts -> /debt and so on)
 - add an admin setting to promote telegram users to admins
+- make sure that all submenues are correctly implemented as message flow. Currently most of this is still manually in the conversation manager
 
 Logging:
 - each logger should register with the settings manager, so that I get a full list of modules [module name], which I can separately deactivate
@@ -73,7 +72,6 @@ User:
 
 maybe:
 - emulate other users
-- use fonts to highight certain text
 
 - reorganize the code, to put general stuff into the services and remvove the telethon specific send message stuff -> should only go via the api, which should be more generic
 this should also allow to use the restapi with a webpage instead (except for notifications)
@@ -83,26 +81,4 @@ this should also allow to use the restapi with a webpage instead (except for not
 
 not working:
 - add a reply keyboard and close if pressed and reopen if the coversation finishes. 
-
-
-new Snapshot logic:
-
-ok, from my understanding the obsolete collections should be skipped, but loading an obsolete collection is really complicated whit the current system and obsolete collections.
-
-For this reason I propose a completly new system.
-
-Whenever a snapshot is created you add them to a list of all snapshots. When a snapshot is you add them to the list as well. Also you go back the list and add them to the modified_snapshot list until you hit the same number of the restored snapshot again, also add that one to the modified_snapshot list. (make sure you just use the snapshto numbers for that)
-
-then you create a modified_collections list from all unique collections in the modified_snapshot list. (we need a function to retrieve a list of snapshots based on a list of numbers)
-
-Then you go back from the back of the modified_snapshot list and collect all snapshots into a collected_snapshots list and keep track of all collected_collections until the collected_collections list matches the modified_collections list. Dont add snapshots to the collected_snapshots list, that only contain collections already in collected_colllections list.
-
-Now we create a restore point of all collected_collections list, this one should also be added to the overall snapshot list.
-
-now we restore the collected_collections list from the back, meaning the ones which were added last. (as a reference, the loaded snapshot always has to be restored last).
-
-great, and in the end we modify collections obsolete status, based on the modified snapshot list: 
-
-from the right of the list mark all snapshots as not obsolete until the next number in the list is larger.
-and in general mark all numbers larger then the loaded snapshot number as obsolete.
 

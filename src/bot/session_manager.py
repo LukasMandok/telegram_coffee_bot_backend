@@ -154,8 +154,6 @@ class SessionManager:
                 msg = await self.api.message_manager.send_user_notification(
                     member.user_id,
                     f"{initiator_display_name} started a new coffee session and is entering coffees. You can join with /order.",
-                    vanish=False,
-                    conv=False,
                 )
                 if session_key and msg is not None:
                     self.session_notifications[session_key].append(msg)
@@ -418,8 +416,6 @@ class SessionManager:
                 await self.api.message_manager.send_user_notification(
                     group_member_data.user_id,
                     f"**{initiator_display_name}** has ordered **{group_member_data.coffee_count}** {coffee_word} for you.\n",
-                    vanish=True,
-                    conv=True,
                 )
 
         # Close all keyboards immediately for this session so UI is consistent
@@ -510,8 +506,7 @@ class SessionManager:
                 await self.api.message_manager.send_user_notification(
                     participant_user_id,
                     f"🔒 **Session Completed by Another User**\n",
-                    vanish=True,
-                    conv=False,
+                    delete_after=15,
                 )
 
         # Remove conversation state for all participants so they are unblocked
@@ -575,8 +570,7 @@ class SessionManager:
                     participant_user_id,
                     f"❌ **Session Cancelled**\n"
                     f"The coffee session has been cancelled.\n",
-                    vanish=True,
-                    conv=False,
+                    delete_after=15,
                 )
 
         # Delete persisted initial session notifications on cancel as well

@@ -240,15 +240,13 @@ async def handle_creditor_debts_button(data: str, flow_state, api, user_id) -> O
                     if debt.creditor and debt.creditor.stable_id == creditor_user.stable_id:
                         remaining_owed += max(0.0, debt.total_amount - debt.paid_amount)
 
-                await api.message_manager.send_text(
+                await api.message_manager.send_user_notification(
                     creditor_user.user_id,
                     (
                         f"💸 **Payment update**\n\n"
                         f"{debt_user.display_name} marked **{total_staged:.2f} €** as paid to you.\n"
                         f"Remaining owed by {debt_user.display_name}: **{remaining_owed:.2f} €**"
                     ),
-                    vanish=False,
-                    conv=False,
                 )
 
         invalidate_debt_cache(flow_state)

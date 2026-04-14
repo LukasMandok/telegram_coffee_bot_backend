@@ -5,11 +5,14 @@ This module handles message operations including sending, editing, deleting,
 and managing message lifecycle for the coffee ordering bot.
 """
 
+import asyncio
+
 from enum import Enum
 from typing import Any, Optional, List, Union, TYPE_CHECKING
 from pydantic import BaseModel
 
 from .telethon_models import MessageModel
+from ..dependencies.dependencies import get_repo
 from ..common.log import log_telegram_message_sent, log_telegram_keyboard_sent, log_telegram_api_error, log_telegram_message_deleted, Logger
 
 if TYPE_CHECKING:
@@ -108,7 +111,6 @@ class MessageManager:
             # Auto-delete message after delay if requested
             if delete_after > 0:
                 async def delete_after_delay():
-                    import asyncio
                     await asyncio.sleep(delete_after)
                     try:
                         await message_model.delete()
@@ -116,7 +118,6 @@ class MessageManager:
                         pass  # Ignore deletion errors
                 
                 # Start deletion task in background
-                import asyncio
                 asyncio.create_task(delete_after_delay())
 
             log_telegram_message_sent(user_id, "text", text[:50] if text else "")
@@ -175,6 +176,41 @@ class MessageManager:
         except Exception as e:
             log_telegram_api_error("send_keyboard", str(e), user_id)
             return None
+
+    async def send_user_notification(
+        self,
+        user_id: int,
+        text: str,
+        *,
+        force_silent: bool = False,
+        link_preview: bool = False,
+        delete_after: int = 0,
+    ) -> Optional["MessageModel"]:
+        """Send a *notification* message to a single user.
+
+        Use this for messages that are triggered by other users / background jobs
+        (i.e. not a direct reply to this user's own command/button).
+
+        This is a thin wrapper around `send_notification()`.
+        """
+
+        style = NotificationStyle.MESSAGE_PERM
+        auto_delete = 8
+        if delete_after and delete_after > 0:
+            style = NotificationStyle.MESSAGE_TEMP
+            auto_delete = int(delete_after)
+
+        return await self.send_notification(
+            user_id=user_id,
+            text=text,
+            style=style,
+            auto_delete=auto_delete,
+            background=True,
+            force_silent=force_silent,
+            vanish=False,
+            conv=False,
+            link_preview=link_preview,
+        )
     
     def add_latest_message(
         self, 
@@ -231,7 +267,6 @@ class MessageManager:
             
         message = self.latest_messages.pop(0)
         if isinstance(message, list):
-            import asyncio
             await asyncio.gather(*(m.delete() for m in message))
             self.logger.trace(f"Deleted list with {len(message)} messages", extra_tag="VANISH DEBUG")
         else:
@@ -266,8 +301,6 @@ class MessageManager:
     
     async def message_vanisher(self) -> None:
         """Background task to delete old messages after a timeout."""
-        import asyncio
-        
         while True:
             await asyncio.sleep(10)
             
@@ -309,8 +342,8 @@ class MessageManager:
         
         Respects app-wide notification settings and individual user preferences:
         - If app notifications are disabled globally, no messages are sent
+        - Users can disable notifications via user setting (notifications_enabled)
         - Silent mode is determined by: app_silent OR user_silent (either triggers silent)
-        - Users cannot disable notifications, only control their silent preference
         
         Args:
             text: The notification message text
@@ -323,19 +356,17 @@ class MessageManager:
         Returns:
             Number of users who successfully received the notification
         """
-        from ..dependencies.dependencies import get_repo
-        
         repo = get_repo()
         
         # Check app-wide notification settings
-        notification_settings = await repo.get_notification_settings()
-        
+        notification_settings = await repo.get_notification_settings() or {
+            "notifications_enabled": True,
+            "notifications_silent": False,
+        }
+
         # If notifications are disabled globally, don't send to anyone
-        if not notification_settings or not notification_settings.get("notifications_enabled", True):
+        if not notification_settings.get("notifications_enabled", True):
             return 0
-        
-        # Get app-wide silent preference
-        app_silent = notification_settings.get("notifications_silent", False)
         
         # Use find_all_telegram_users to only get users with user_id
         telegram_users = await repo.find_all_telegram_users(
@@ -351,26 +382,23 @@ class MessageManager:
             if user.user_id in exclude_set:
                 continue
             
-            # Get user's silent preference
             user_settings = await repo.get_user_settings(user.user_id)
-            user_silent = user_settings.notifications_silent if user_settings else False
-            
-            # Determine if message should be silent
-            # Message is silent if: forced silent OR app silent OR user silent
-            send_silent = silent or app_silent or user_silent
-            
-            try:
-                await self.send_text(
-                    user_id=user.user_id,
-                    text=text,
-                    vanish=False,  # Don't add to cleanup queue for broadcasts
-                    conv=False,
-                    silent=send_silent,
-                    link_preview=link_preview
-                )
+            message = await self.send_notification(
+                user_id=user.user_id,
+                text=text,
+                style=NotificationStyle.MESSAGE_PERM,
+                auto_delete=0,
+                background=True,
+                force_silent=silent,
+                vanish=False,  # Don't add to cleanup queue for broadcasts
+                conv=False,
+                link_preview=link_preview,
+                notification_settings=notification_settings,
+                telegram_user=user,
+                user_settings=user_settings,
+            )
+            if message is not None:
                 sent_count += 1
-            except Exception as e:
-                log_telegram_api_error("send_notification_to_all_users", str(e), user.user_id)
         
         return sent_count
     
@@ -437,47 +465,118 @@ class MessageManager:
         style: NotificationStyle,
         auto_delete: int = 8,
         button_event: Any | None = None,
-    ) -> None:
+        *,
+        background: bool = False,
+        force_silent: bool = False,
+        silent: bool | None = None,
+        vanish: bool = False,
+        conv: bool = False,
+        link_preview: bool = False,
+        notification_settings: dict[str, Any] | None = None,
+        telegram_user: Any | None = None,
+        user_settings: Any | None = None,
+    ) -> Optional["MessageModel"]:
+        send_silent: bool | None = silent
+
+        if background:
+            repo = get_repo()
+
+            policy = await repo.get_effective_notification_settings(
+                user_id,
+                force_silent=force_silent,
+                notification_settings=notification_settings,
+                telegram_user=telegram_user,
+                user_settings=user_settings,
+            )
+            if not policy.can_send:
+                return None
+
+            send_silent = policy.silent
+
         if style == NotificationStyle.POPUP_BRIEF:
             await self.send_popup_brief(
                 user_id=user_id,
                 text=text,
                 button_event=button_event,
                 auto_delete=auto_delete,
+                silent=send_silent,
             )
-            return
+            return None
 
         if style == NotificationStyle.POPUP_ALERT:
             await self.send_popup_alert(
                 user_id=user_id,
                 text=text,
                 button_event=button_event,
+                silent=send_silent,
             )
-            return
+            return None
 
         if style == NotificationStyle.MESSAGE_TEMP:
-            await self.send_temp_notification(user_id=user_id, text=text, auto_delete=auto_delete)
-            return
+            if send_silent is None:
+                send_silent = True
+            return await self.send_temp_notification(
+                user_id=user_id,
+                text=text,
+                auto_delete=auto_delete,
+                silent=send_silent,
+                vanish=vanish,
+                conv=conv,
+                link_preview=link_preview,
+            )
 
         if style == NotificationStyle.MESSAGE_PERM:
-            await self.send_perm_notification(user_id=user_id, text=text)
+            if send_silent is None:
+                send_silent = False
+            return await self.send_perm_notification(
+                user_id=user_id,
+                text=text,
+                silent=send_silent,
+                vanish=vanish,
+                conv=conv,
+                link_preview=link_preview,
+            )
 
-    async def send_temp_notification(self, user_id: int, text: str, auto_delete: int = 8) -> None:
-        await self.send_text(
-            user_id,
-            text,
-            vanish=False,
-            conv=False,
+        return None
+
+    async def send_temp_notification(
+        self,
+        user_id: int,
+        text: str,
+        auto_delete: int = 8,
+        *,
+        silent: bool = True,
+        vanish: bool = False,
+        conv: bool = False,
+        link_preview: bool = False,
+    ) -> Optional["MessageModel"]:
+        return await self.send_text(
+            user_id=user_id,
+            text=text,
+            vanish=vanish,
+            conv=conv,
+            silent=silent,
+            link_preview=link_preview,
             delete_after=auto_delete,
         )
 
-    async def send_perm_notification(self, user_id: int, text: str, silent: bool = False) -> None:
-        await self.send_text(
-            user_id,
-            text,
-            vanish=False,
-            conv=False,
+    async def send_perm_notification(
+        self,
+        user_id: int,
+        text: str,
+        *,
+        silent: bool = False,
+        vanish: bool = False,
+        conv: bool = False,
+        link_preview: bool = False,
+    ) -> Optional["MessageModel"]:
+        return await self.send_text(
+            user_id=user_id,
+            text=text,
+            vanish=vanish,
+            conv=conv,
             silent=silent,
+            link_preview=link_preview,
         )
 
     async def send_popup_brief(
@@ -487,15 +586,20 @@ class MessageManager:
         text: str,
         button_event: Any | None = None,
         auto_delete: int = 3,
+        silent: bool | None = None,
     ) -> None:
         if button_event is not None:
             await self.send_popup_notification(button_event, text, show_alert=False)
             return
 
+        if silent is None:
+            silent = True
+
         await self.send_temp_notification(
             user_id=user_id,
             text=text,
             auto_delete=max(1, int(auto_delete) or 3),
+            silent=silent,
         )
 
     async def send_popup_alert(
@@ -504,10 +608,14 @@ class MessageManager:
         user_id: int,
         text: str,
         button_event: Any | None = None,
+        silent: bool | None = None,
     ) -> None:
         if button_event is not None:
             await self.send_popup_notification(button_event, text, show_alert=True)
             return
 
-        await self.send_perm_notification(user_id=user_id, text=text, silent=False)
+        if silent is None:
+            silent = False
+
+        await self.send_perm_notification(user_id=user_id, text=text, silent=silent)
 

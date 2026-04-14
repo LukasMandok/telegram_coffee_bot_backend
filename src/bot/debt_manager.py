@@ -523,19 +523,16 @@ class DebtManager:
             )
 
             try:
+                # TODO: Maybe you want to use conv=True, vanish=True here?
                 if isinstance(debtor_user, TelegramUser):
                     await self.api.message_manager.send_user_notification(
                         debtor_user.user_id,
                         notification_text,
-                        vanish=True,
-                        conv=True,
                     )
                 if isinstance(creditor_user, TelegramUser):
                     await self.api.message_manager.send_user_notification(
                         creditor_user.user_id,
                         notification_text,
-                        vanish=True,
-                        conv=True,
                     )
             except Exception as e:
                 self.logger.warning(
