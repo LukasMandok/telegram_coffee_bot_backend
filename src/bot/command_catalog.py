@@ -22,7 +22,6 @@ BOT_COMMANDS: list[tuple[str, str, bool]] = [
     ("close_card", "Close the last active coffee card", False),
     ("settings", "Adjust your personal preferences", True),
     ("paypal", "Setup your paypal.me link", False),
-    ("cancel", "Cancel your current conversation", True),
     ("sync", "(Admin) Export current state to Google Sheets", False),
     ("snapshots", "(Admin) Create and restore snapshots", False),
     ("help", "Show help and available commands", True),

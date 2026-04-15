@@ -59,7 +59,7 @@ class MessageModel(BaseModel):
             telegram_message=telegram_message
         )
     
-    async def edit(self, text: str, buttons: Any = None) -> None:
+    async def edit(self, text: str, buttons: Any = None) -> "MessageModel":
         """Edit the original Telegram message.
         
         Args:
@@ -67,8 +67,12 @@ class MessageModel(BaseModel):
             buttons: New keyboard buttons (optional)
         """
         if self.telegram_message:
-            await self.telegram_message.edit(text, buttons=buttons)
+            edited = await self.telegram_message.edit(text, buttons=buttons)
+            if edited is not None:
+                self.telegram_message = edited
             self.text = text
+
+        return self
             
     async def delete(self) -> None:
         """Delete the original Telegram message."""

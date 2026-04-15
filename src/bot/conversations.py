@@ -563,7 +563,7 @@ class ConversationManager:
                 return None, message_to_edit, None
             return None, message_to_edit, None
 
-    async def send_or_edit_message(self, user_id: int, text: str, message_to_edit: Optional[Any] = None, remove_buttons: bool = False):
+    async def send_or_edit_message(self, user_id: int, text: str, message_to_edit: Optional[Any] = None, remove_buttons: bool = False, delete_after: int = 0):
         """
         Edit an existing message or send a new text message if editing is not possible.
         
@@ -583,15 +583,24 @@ class ConversationManager:
         if message_to_edit:
             try:
                 if remove_buttons:
-                    await self.api.message_manager.edit_message(message_to_edit, text, buttons=None)
+                    await self.api.message_manager.edit_message(
+                        message_to_edit,
+                        text,
+                        buttons=None,
+                        delete_after=delete_after,
+                    )
                 else:
-                    await self.api.message_manager.edit_message(message_to_edit, text)
+                    await self.api.message_manager.edit_message(
+                        message_to_edit,
+                        text,
+                        delete_after=delete_after,
+                    )
             except Exception as e:
                 # If editing fails, fall back to sending new message
                 self.logger.warning(f"Failed to edit message, sending new one", exc=e, extra_tag="Telegram")
-                await self.api.message_manager.send_text(user_id, text, True, True)
+                await self.api.message_manager.send_text(user_id, text, True, True, delete_after=delete_after)
         else:
-            await self.api.message_manager.send_text(user_id, text, True, True)
+            await self.api.message_manager.send_text(user_id, text, True, True, delete_after=delete_after)
 
     async def send_text_and_wait_message(self, conv: Conversation, user_id: int, text: str, timeout: int = 45):
         """
@@ -776,7 +785,10 @@ class ConversationManager:
                         (
                             f"✅ User takeover successful! Thanks for registering, {first_name}!\n"
                             f"Your display name: **{new_user.display_name}**\n\n"
-                            f"💡 Tip: send a number (e.g. `2`) to quick-order for yourself."
+                            f"💡 Getting Started\n"
+                            f" - send a number of coffees to quick-order for yourself.\n"
+                            f" - enter /order to enter coffees for a larger group.\n"
+                            f" - enter /help for a complete overview about all commands.\n"
                         ),
                         KeyboardManager.get_persistent_keyboard(),
                         True,
@@ -817,7 +829,10 @@ class ConversationManager:
                 user_id,
                 (
                     f"✅ Registration successful! Welcome {first_name}!\n\n"
-                    f"💡 Tip: send a number (e.g. `2`) to quick-order for yourself."
+                    f"💡 Getting Started\n"
+                    f" - send a number of coffees to quick-order for yourself.\n"
+                    f" - enter /order to order coffees for a larger group.\n"
+                    f" - enter /help for a complete overview about all commands.\n"
                 ),
                 KeyboardManager.get_persistent_keyboard(),
                 True,
@@ -1156,7 +1171,13 @@ class ConversationManager:
             await self.send_or_edit_message(user_id, "❌ Order cancelled.", message_confirm, remove_buttons=True)
             return False
 
-        await self.send_or_edit_message(user_id, "⏳ Placing order...", message_confirm, remove_buttons=True)
+        await self.send_or_edit_message(
+            user_id,
+            "⏳ Placing order...",
+            message_confirm,
+            remove_buttons=True,
+            delete_after=5,
+        )
 
         try:
             snapshot_manager: SnapshotManager = self.api.get_snapshot_manager()
@@ -1171,7 +1192,6 @@ class ConversationManager:
                     consumer=initiator,
                     cards=cards,
                     quantity=quantity,
-                    from_session=False,
                     session=None,
                     enforce_capacity=True,
                 )
@@ -1403,7 +1423,8 @@ class ConversationManager:
                     user_id, 
                     "✅ Settings saved!", 
                     message, 
-                    remove_buttons=True
+                    remove_buttons=True,
+                    delete_after=5,
                 )
                 return True
             

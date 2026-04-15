@@ -55,7 +55,14 @@ class MessageManager:
         message = await self.bot.send_message(*args, **kwargs)
         return message
 
-    async def edit_message(self, message: 'MessageModel', text: str, **kwargs: Any) -> Optional['MessageModel']:
+    async def edit_message(
+        self,
+        message: 'MessageModel',
+        text: str,
+        *,
+        delete_after: int = 0,
+        **kwargs: Any,
+    ) -> Optional['MessageModel']:
         """
         Edit an existing message.
         
@@ -63,12 +70,35 @@ class MessageManager:
         Silently ignores MessageNotModifiedError (when content is identical).
         """
         try:
-            edited = await message.edit(text, **kwargs)
-            return edited
+            await message.edit(text, **kwargs)
+
+            # Auto-delete edited message after delay if requested
+            if delete_after and delete_after > 0:
+                async def delete_after_delay(msg: Any) -> None:
+                    await asyncio.sleep(int(delete_after))
+                    try:
+                        await msg.delete()
+                    except Exception:
+                        pass
+
+                asyncio.create_task(delete_after_delay(message))
+
+            return message
         except Exception as e:
             # Check if it's MessageNotModifiedError
             if "MessageNotModifiedError" in str(type(e).__name__):
                 # Content is identical, silently ignore
+
+                if delete_after and delete_after > 0:
+                    async def delete_after_delay(msg: Any) -> None:
+                        await asyncio.sleep(int(delete_after))
+                        try:
+                            await msg.delete()
+                        except Exception:
+                            pass
+
+                    asyncio.create_task(delete_after_delay(message))
+
                 return message
             # Re-raise other errors
             raise
