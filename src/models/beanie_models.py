@@ -242,7 +242,7 @@ class SnapshotSettings(BaseModel):
     # Snapshot creation points (linked to snapshot context prefixes)
     card_closed: bool = Field(default=True, description="Create snapshot when a card is closed manually")
     session_completed: bool = Field(default=True, description="Create snapshot when a session is completed")
-    quick_order: bool = Field(default=False, description="Create snapshot for quick-order flow")
+    quick_order: bool = Field(default=True, description="Create snapshot for quick-order flow")
     card_created: bool = Field(default=True, description="Create snapshot when a card is created manually")
 
 

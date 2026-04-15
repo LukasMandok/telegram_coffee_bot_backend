@@ -1143,10 +1143,33 @@ class ConversationManager:
             )
             return False
 
+        split_preview_lines: list[str] = []
+        try:
+            preview_cards = await self.api.coffee_card_manager.get_coffee_cards_for_order(quantity)
+            if len(preview_cards) > 1:
+                remaining = int(quantity)
+                for card in preview_cards:
+                    take = min(remaining, max(0, int(card.remaining_coffees)))
+                    if take <= 0:
+                        continue
+                    split_preview_lines.append(f"• **{card.name}**: **{take}**")
+                    remaining -= take
+                    if remaining <= 0:
+                        break
+        except Exception:
+            split_preview_lines = []
+
+        split_preview_text = ""
+        if split_preview_lines:
+            split_preview_text = "\n\n⚠️ This order will be split across multiple cards:\n" + "\n".join(
+                split_preview_lines
+            )
+
         confirm_text = (
             "☕ **Quick Order**\n\n"
             f"Order **{quantity}** coffee(s) for **{initiator.display_name}**?\n"
-            f"Available right now: **{available}**\n\n"
+            f"Available right now: **{available}**"
+            f"{split_preview_text}\n\n"
             "Confirm?"
         )
 
@@ -1184,10 +1207,14 @@ class ConversationManager:
             async with snapshot_manager.pending_snapshot(
                 reason=f"Quick Order ({initiator.display_name} x{quantity})",
                 context="quick_order",
-                collections=("coffee_cards", "coffee_orders"),
+                collections=("coffee_cards", "coffee_orders", "user_debts", "payments"),
             ):
                 cards = await self.api.coffee_card_manager.get_coffee_cards_for_order(quantity)
-                await place_order(
+                self.logger.debug(
+                    f"Quick order using {len(cards)} card(s): {', '.join([c.name for c in cards])}"
+                )
+
+                orders = await place_order(
                     initiator=initiator,
                     consumer=initiator,
                     cards=cards,
@@ -1196,14 +1223,49 @@ class ConversationManager:
                     enforce_capacity=True,
                 )
 
+                cards_to_close = [
+                    card
+                    for card in cards
+                    if bool(card.is_active) and int(card.remaining_coffees) == 0
+                ]
+                if cards_to_close:
+                    self.logger.debug(
+                        f"Quick order closing filled card(s): {', '.join([c.name for c in cards_to_close])}"
+                    )
+
+                for card in cards_to_close:
+                    await self.api.coffee_card_manager.close_card(
+                        card,
+                        requesting_user_id=user_id,
+                        closed_by_session=False,
+                    )
+
                 # Refresh cached counts after mutating cards
                 await self.api.coffee_card_manager.load_from_db()
 
                 request_gsheet_sync_after_action(reason="quick_order_completed")
 
+
+            split_summary_lines: list[str] = []
+            if isinstance(orders, list) and len(orders) > 1:
+                for order in orders:
+                    card_name = "(unknown)"
+                    try:
+                        await order.fetch_all_links()
+                        linked_card = order.coffee_cards[0]
+                        card_name = linked_card.name
+                    except Exception:
+                        card_name = "(unknown)"
+
+                    split_summary_lines.append(f"• **{card_name}**: **{int(order.quantity)}**")
+
+            split_summary_text = ""
+            if split_summary_lines:
+                split_summary_text = "\n\n⚠️ Split across cards:\n" + "\n".join(split_summary_lines)
+
             await self.api.message_manager.send_text(
                 user_id,
-                f"✅ Ordered **{quantity}** coffee(s) for **{initiator.display_name}**.",
+                f"✅ Ordered **{quantity}** coffee(s) for **{initiator.display_name}**.{split_summary_text}",
                 True,
                 True,
             )

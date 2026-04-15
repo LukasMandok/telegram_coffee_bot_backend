@@ -496,8 +496,20 @@ class CoffeeCardManager:
         )
 
         order = orders[0]
-        
-        await self._update_available()
+
+        if bool(card.is_active) and int(card.remaining_coffees) == 0:
+            self.logger.debug(
+                f"Auto-completing card after individual order: {card.name}",
+                extra_tag="QuickOrder",
+            )
+            await self.close_card(
+                card,
+                requesting_user_id=initiator_id,
+                closed_by_session=False,
+            )
+        else:
+            await self._update_available()
+
         request_gsheet_sync_after_action(reason="quick_order_completed")
         return order
     
