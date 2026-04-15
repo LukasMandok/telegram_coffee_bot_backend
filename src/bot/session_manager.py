@@ -154,6 +154,7 @@ class SessionManager:
                 msg = await self.api.message_manager.send_user_notification(
                     member.user_id,
                     f"{initiator_display_name} started a new coffee session and is entering coffees. You can join with /order.",
+                    force_silent=True
                 )
                 if session_key and msg is not None:
                     self.session_notifications[session_key].append(msg)

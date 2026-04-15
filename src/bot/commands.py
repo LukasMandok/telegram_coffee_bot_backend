@@ -728,32 +728,37 @@ class CommandManager:
         help_text = (
             "🤖 **Coffee Bot Commands**\n\n"
             "**Getting Started:**\n"
-            "• `/start` - Register with the bot\n\n"
+            "• /start - Register with the bot\n\n"
             
             "**Coffee Orders:**\n"
-            "• `/order` - Create or join a session to place an order\n"
+            "• /order - Create or join a session to place an order\n"
             "• `send a number` - Quick order for yourself (e.g. send `2` → confirm)\n"
 
             "**Coffee Cards:**\n"
-            "• `/cards` - Show status and manage all coffee cards\n"
-            "• `/new_card` - Create a new coffee card that you paid for\n"
-            "• `/close_card` - Close the last active coffee card\n\n"
+            "• /cards - Show status and manage all coffee cards\n"
+            "• /new_card - Create a new coffee card that you paid for\n"
+            "• /close_card - Close the last active coffee card\n\n"
             
             "**Finances:**\n"
-            "• `/debt` - Show and manage your debts\n"
-            "• `/credit` - Display and manage debts others owe to you\n"
-            "• `/paypal` - Setup your paypal.me link\n\n"
+            "• /debt - Show and manage your debts\n"
+            "• /credit - Display and manage debts others owe to you\n"
+            "• /paypal - Setup your paypal.me link\n\n"
             
             "**Settings:**\n"
-            "• `/settings` - Adjust your personal preferences\n"
+            "• /settings - Adjust your personal preferences\n"
             "  📋 **Ordering:** Page size, group sorting\n"
             "  💬 **Vanishing Messages:** Auto-cleanup, threshold\n"
             "  🔧 **Administration (Admins Only):**\n"
             "     📊 Logging settings\n"
             "     🔔 Notification preferences\n"
             
+            "**Managment (Admins Only):**\n"
+            "• /sync - Export current state to Google Sheets\n"
+            "• /snapshots - Create and restore snapshots\n"
+            "• /users - "
+            
             "**Other:**\n"
-            "• `/help` - Show this help message\n\n"
+            "• /help - Show this help message\n\n"
         )
         
         await self.api.message_manager.send_text(

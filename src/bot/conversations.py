@@ -976,14 +976,14 @@ class ConversationManager:
             # Use SessionManager to start or join a session
             session, is_new_session = await self.api.session_manager.start_or_join_session(user_id)
             
-            if is_new_session:
-                await self.api.message_manager.send_text(
-                    user_id,
-                    "☕ **New coffee session started!**\n"
-                    "Other users can join by typing `/order`",
-                    True, True
-                )
-            else:
+            # if is_new_session:
+            #     await self.api.message_manager.send_text(
+            #         user_id,
+            #         "☕ **New coffee session started!**\n"
+            #         "Other users can join by typing `/order`",
+            #         True, True
+            #     )
+            if not is_new_session:
                 await self.api.message_manager.send_text(
                     user_id,
                     "👥 **Joined existing coffee session!**\n"
