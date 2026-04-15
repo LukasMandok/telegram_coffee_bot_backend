@@ -117,9 +117,13 @@ class CoffeeOrder(Document):
 
     quantity: int = Field(..., ge=1, description="Number of coffees ordered")
     order_date: datetime = Field(default_factory=datetime.now)
-    
-    # Track if from a session, but session can be found via session.orders (no backlink needed)
-    from_session: bool = Field(default=False, description="Whether this order was part of a group session")
+
+    # Optional link to the session this order belongs to.
+    # When None, this is a standalone/quick order.
+    session: Optional[Link["CoffeeSession"]] = Field(
+        default=None,
+        description="Session this order belongs to (None for quick orders)",
+    )
     
     class Settings:
         name = "coffee_orders"

@@ -22,6 +22,7 @@ Sessions / Order:
 - in the coffee order summary, add who gave the order/completed the session to the message
 - prevent users from joning the same session multiple times (this is porbably only possible because of a bug but still)
 - sessions should timout after 10 min if it is suspended and noone joins again (probably already implemented)
+XXX session closed by another user currently does not remove the keyboard and other messages on the other users.
 
 Quick order:
 - quick order currently does not trigger the closing of a coffee card if it is filled up, even though splitting coffees between active cards work.
@@ -43,7 +44,6 @@ mongo
 (- if a card is completed because all coffees were used up it does not update the spreadsheet but earlier when the session was closed, so the card is not marked as completed in google spreadsheet yet)
 
 Credit menu:
-- I want an option to allow to notify each user separately from the credit overview menu. There should be a notify user buttons in the main menu which brings you to a new submenu, there you should get a list with all the outstanding payments on the top for the users and a list buttons of users to notify each one separely or a button to notify all (like the existing one)
 - Schredder still appears with 0 outstandign credit, so I think that debts might not be correctly marked as paid at all places
 
 - add an option to message flows, which allow actions on initiation, submit and cancel -> so I can so gsheet synchronizations on sumbit and start backups on initiation save them on submit and delete them on cancel 
@@ -51,13 +51,11 @@ Credit menu:
 
 General:
 - in every menu with numbered list and buttons (like the snapshot menu, it should be possible to enter the number in the chat instead of pressing the button)
-- the /new_card command still wants to use the setup_paypal_link_subconversation_old (which does not exist anymore)
 - catch the Ctrl+C in the terminal, to make sure that the bot is closed properly
 
 Settings:
 - Settings for vanishing messages are currently not consistent between bot restarts. It looks like they are not correctly saved in the database or are overwritten by another place
 - make each toggle button the same, so that an activated option has a green dot and an deactivated an red dot on the toggle button (instead of showing how the stat would change if you press the button), this should also include all of the checkmark/cross icons in toggle buttons used somewhere else. This should be completely consistent in the whole message flow.
-- add an admin setting to promote telegram users to admins
 - make sure that all submenues are correctly implemented as message flow. Currently most of this is still manually in the conversation manager
 
 Logging:
@@ -69,6 +67,7 @@ Logging:
 User:
 - create a user managment system to archive and unarchive users.
 - allow adding passive users
+- add an admin setting to promote telegram users to admins
 
 maybe:
 - emulate other users
@@ -82,3 +81,28 @@ this should also allow to use the restapi with a webpage instead (except for not
 not working:
 - add a reply keyboard and close if pressed and reopen if the coversation finishes. 
 
+
+
+
+users menu:
+the next big think would be the implementation of a user managment system.
+
+I want a new command /users, which opens the users menu.
+
+the menu should show some basic information in a tight formatting
+- amount of registered user, including the amount of telegram users, disabled and archived users
+
+
+Google Spredsheet two-way syncing:
+
+Can you help me implement a two-way syncing.
+The idea behind this is, that users should be able to make changes in the google spreadsheet (only for the paid amount, all other cells should be protected).
+And whenever a sync is triggered, either by action or by a periodic sync, the bot should check for changes in the upstream spreadsheet and propagate thos to the bot.
+it is important that this only affects paid amount so far.
+Also I need a mechanism, to make sure that changes of the paid amount in the bot are priotised over the changes in the spreadsheet, if they affect the same value.
+this means, that for paid amounts, the actual changed values should be forwarded to the syncing algorithm, so it does not overwrite them
+
+
+Settings:
+
+whenether you have the option to enter a number via an inline keyboard, like in the coffee cards overview, or the snapshots, there should be a way to enter the number as a text message instead.

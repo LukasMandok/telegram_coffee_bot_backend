@@ -74,15 +74,16 @@ async def create_coffee_order(
             )
 
     # Use the shared order creation utility
-    order = await place_order(
+    orders = await place_order(
         initiator=initiator,
         consumer=consumer,
         cards=[card],
         quantity=quantity,
-        from_session=False,
         session=None,
         enforce_capacity=True
     )
+
+    order = orders[0]
 
     request_gsheet_sync_after_action(reason="quick_order_completed")
     

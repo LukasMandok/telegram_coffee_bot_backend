@@ -409,18 +409,18 @@ class CoffeeCardManager:
                 ],
             )
         
-        # If someone else completed it manually, notify them too
-        if requesting_user_id and requesting_user_id != purchaser.user_id:
-            await self.api.message_manager.send_text(
-                requesting_user_id,
-                f"✅ **Card Completed!**\n\n"
-                f"📋 Card: **{card.name}**\n"
-                f"👤 Purchaser: {purchaser.display_name}\n"
-                f"💰 Total Debts: €{total_debt:.2f}",
-                vanish=False,
-                conv=False,
-                silent=False
-            )
+        # # If someone else completed it manually, notify them too
+        # if requesting_user_id and requesting_user_id != purchaser.user_id:
+        #     await self.api.message_manager.send_text(
+        #         requesting_user_id,
+        #         f"✅ **Card Completed!**\n\n"
+        #         f"📋 Card: **{card.name}**\n"
+        #         f"👤 Purchaser: {purchaser.display_name}\n"
+        #         f"💰 Total Debts: €{total_debt:.2f}",
+        #         vanish=False,
+        #         conv=False,
+        #         silent=False
+        #     )
         
         self.logger.info(f"Card '{card.name}' completed with {len(debts)} debts created, {len(debts)} notifications sent")
         
@@ -486,15 +486,16 @@ class CoffeeCardManager:
             raise ValueError(f"Consumer {consumer_name} not found")
 
         # Create order with integrated debt tracking
-        order = await place_order(
+        orders = await place_order(
             initiator=initiator,
             consumer=consumer,
             cards=[card],
             quantity=1,
-            from_session=False,
             session=None,
             enforce_capacity=False
         )
+
+        order = orders[0]
         
         await self._update_available()
         request_gsheet_sync_after_action(reason="quick_order_completed")
@@ -608,17 +609,16 @@ class CoffeeCardManager:
                 continue
             
             # Create order with integrated debt tracking
-            order = await place_order(
+            orders = await place_order(
                 initiator=initiator,
                 consumer=consumer,
                 cards=cards,
                 quantity=quantity,
-                from_session=True,
                 session=session,
                 enforce_capacity=True
             )
-            
-            orders_created.append(order)
+
+            orders_created.extend(orders)
         
         # Update cached available count
         await self._update_available()
