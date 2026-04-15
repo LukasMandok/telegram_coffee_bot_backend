@@ -18,9 +18,10 @@ from ..message_flow import (
     MessageDefinition,
     MessageFlow,
     PaginationConfig,
+    RegexValidator,
     StateType,
 )
-from ..message_flow_helpers import CommonCallbacks, NavigationButtons
+from ..message_flow_helpers import CommonCallbacks, NavigationButtons, build_text_input_handler
 from ...services.gsheet_sync import request_gsheet_sync_after_action
 from ...models import beanie_models as models
 
@@ -316,9 +317,37 @@ async def build_restore_confirmation(flow_state, api, user_id) -> str:
 async def build_restore_list_text(flow_state, api, user_id) -> str:
     return (
         "**Select a snapshot**\n\n"
-        "Choose a snapshot number to restore.\n\n"
+        "Choose a snapshot number to restore (button or type the number).\n\n"
         "↩️: loaded   ~~obsolete~~   \n⬅: previously loaded"
     )
+
+
+async def resolve_snapshot_number_matches(
+    typed_number: int,
+    flow_state,
+    api,
+    user_id: int,
+) -> List[models.SnapshotMeta]:
+    snapshot_manager = api.get_snapshot_manager()
+    meta = await snapshot_manager.get_snapshot_meta_by_number(int(typed_number))
+    return [meta] if meta is not None else []
+
+
+async def _select_snapshot_from_match(meta: models.SnapshotMeta, flow_state, api, user_id) -> Optional[str]:
+    flow_state.set(KEY_RESTORE_SNAPSHOT_ID, meta.snapshot_id)
+    flow_state.set(KEY_RESTORE_SNAPSHOT_NUMBER, meta.snapshot_number)
+    flow_state.set(KEY_RESTORE_ERROR, None)
+    return STATE_RESTORE_CONFIRM
+
+
+handle_restore_list_input = build_text_input_handler(
+    retry_state_id=STATE_RESTORE_LIST,
+    resolve_matches=resolve_snapshot_number_matches,
+    on_match_selected=_select_snapshot_from_match,
+    invalid_number_message="❌ Please enter a positive snapshot number (e.g. `12`).",
+    not_found_message="❌ Snapshot number **{number}** not found.",
+    ambiguous_message="❌ Snapshot number **{number}** is ambiguous. Please use the buttons.",
+)
 
 
 async def build_restore_result_text(flow_state, api, user_id) -> str:
@@ -422,7 +451,7 @@ def create_snapshots_flow() -> MessageFlow:
     flow.add_state(
         MessageDefinition(
             state_id=STATE_RESTORE_LIST,
-            state_type=StateType.BUTTON,
+            state_type=StateType.MIXED,
             text_builder=build_restore_list_text,
             # 4-column grid, 3 rows per page => 12 items.
             pagination_config=PaginationConfig(page_size=12, items_per_row=4, close_button_text="◁ Back"),
@@ -430,6 +459,8 @@ def create_snapshots_flow() -> MessageFlow:
             pagination_item_formatter=format_snapshot_line,
             pagination_item_button_builder=build_restore_button,
             exit_buttons=[],
+            input_validator=RegexValidator(r"^\s*\d+\s*$", error_message="❌ Please type a snapshot number (e.g. `12`)."),
+            on_input_received=handle_restore_list_input,
             next_state_map={CommonCallbacks.CLOSE: STATE_MAIN},
         )
     )

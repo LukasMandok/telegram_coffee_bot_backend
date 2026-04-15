@@ -206,6 +206,65 @@ class IntegerParser:
             return None
 
 
+U = TypeVar("U")
+
+
+def build_text_input_handler(
+    *,
+    retry_state_id: str,
+    resolve_matches: Callable[[int, "MessageFlowState", Any, int], Awaitable[List[U]]],
+    on_match_selected: Callable[[U, "MessageFlowState", Any, int], Awaitable[Optional[str]]],
+    invalid_number_message: str,
+    not_found_message: str,
+    ambiguous_message: str,
+    delete_after_seconds: int = 3,
+) -> Callable[[str, "MessageFlowState", Any, int], Awaitable[Optional[str]]]:
+    """Build an `on_input_received` handler for "type a number to select".
+
+    Messages may use `{number}` formatting.
+    """
+
+    parser = IntegerParser()
+
+    async def _handler(input_text: str, flow_state: "MessageFlowState", api: Any, user_id: int) -> Optional[str]:
+        typed_number = parser.parse(input_text)
+        if typed_number is None or typed_number <= 0:
+            await api.message_manager.send_text(
+                user_id,
+                invalid_number_message,
+                vanish=True,
+                conv=True,
+                delete_after=delete_after_seconds,
+            )
+            return retry_state_id
+
+        matches = await resolve_matches(int(typed_number), flow_state, api, int(user_id))
+        if not matches:
+            await api.message_manager.send_text(
+                user_id,
+                not_found_message.format(number=typed_number),
+                vanish=True,
+                conv=True,
+                delete_after=delete_after_seconds,
+            )
+            return retry_state_id
+
+        if len(matches) > 1:
+            await api.message_manager.send_text(
+                user_id,
+                ambiguous_message.format(number=typed_number),
+                vanish=True,
+                conv=True,
+                delete_after=max(delete_after_seconds, 4),
+            )
+            return retry_state_id
+
+        next_state = await on_match_selected(matches[0], flow_state, api, int(user_id))
+        return next_state or retry_state_id
+
+    return _handler
+
+
 class ListBuilder:
     """
     Build formatted lists with optional grouping and summaries.

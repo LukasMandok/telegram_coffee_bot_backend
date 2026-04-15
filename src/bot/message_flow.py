@@ -731,20 +731,24 @@ class MessageFlow:
         if current_def.input_prompt:
             full_text += f"\n\n{current_def.input_prompt}"
         
-        # Build keyboard - use keyboard_builder for dynamic keyboards, or buttons for static
+        # Build keyboard (pagination/dynamic/static) so MIXED states can still display lists.
         cancel_keyboard = None
-        if current_def.keyboard_builder:
-            # Dynamic keyboard (for MIXED states)
+        button_callbacks: Optional[List[List[ButtonCallback]]] = None
+        if current_def.pagination_config:
+            button_callbacks, items_text = await self._build_pagination_keyboard(flow_state, current_def, api, user_id)
+            if items_text:
+                full_text = f"{full_text}\n\n{items_text}"
+        elif current_def.keyboard_builder:
+            # Dynamic keyboard
             button_callbacks = await current_def.keyboard_builder(flow_state, api, user_id)
+        else:
+            # Static keyboard (None means remove buttons)
+            button_callbacks = current_def.buttons
+
+        if button_callbacks is not None:
             cancel_keyboard = [
                 [Button.inline(btn.text, btn.callback_data) for btn in row]
                 for row in button_callbacks
-            ]
-        elif current_def.buttons:
-            # Static keyboard
-            cancel_keyboard = [
-                [Button.inline(btn.text, btn.callback_data) for btn in row]
-                for row in current_def.buttons
             ]
         
         # Send or edit message
@@ -815,6 +819,14 @@ class MessageFlow:
                             # Button callback - answer it first
                             await result.answer()
                             button_data = result.data.decode('utf-8')
+
+                            # Pagination navigation (prev/next/page info)
+                            if current_def.pagination_config and await self._handle_pagination_button(
+                                button_data,
+                                flow_state,
+                                current_def.state_id,
+                            ):
+                                return current_def.state_id
                             
                             # Check if it's in exit_buttons first
                             # None means use default buttons, empty list means no exit buttons
@@ -832,6 +844,18 @@ class MessageFlow:
                                 next_state = await current_def.on_button_press(button_data, flow_state, api, user_id)
                             
                             # If handler returned a state, use it
+                            if next_state is not None:
+                                return next_state
+
+                            # Check button-specific callback handlers
+                            for row in (button_callbacks or []):
+                                for btn in row:
+                                    if btn.callback_data == button_data and btn.callback_handler:
+                                        next_state = await btn.callback_handler(flow_state, api, user_id)
+                                        break
+                                if next_state is not None:
+                                    break
+
                             if next_state is not None:
                                 return next_state
                             
