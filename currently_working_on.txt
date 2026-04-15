@@ -23,8 +23,10 @@ Sessions / Order:
 - prevent users from joning the same session multiple times (this is porbably only possible because of a bug but still)
 - sessions should timout after 10 min if it is suspended and noone joins again (probably already implemented)
 XXX session closed by another user currently does not remove the keyboard and other messages on the other users.
+- when you do a quick callback response with the notification keyboard on a debt, make sure it doesnt fail, if the debt was paid in some other way before (or if the debt that this callback relates to was already paid partly, in this case it should just not marking it as paid). Also it should not collide with other similar keyboards, which are created later (in this case the earlier keyboards should just be unvalid.)
 
-Quick order:
+
+XXX Quick order:
 - quick order currently does not trigger the closing of a coffee card if it is filled up, even though splitting coffees between active cards work.
 - also the quick order should say to the user in case the order will be split between multiple cards
 - for quick ordering, the splitting between two coffee cards work, but the first card is not closed.
@@ -50,7 +52,6 @@ Credit menu:
 -> the function for requesting a number should be implemented in the messageManager
 
 General:
-- in every menu with numbered list and buttons (like the snapshot menu, it should be possible to enter the number in the chat instead of pressing the button)
 - catch the Ctrl+C in the terminal, to make sure that the bot is closed properly
 
 Settings:

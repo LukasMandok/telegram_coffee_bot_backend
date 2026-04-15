@@ -25,6 +25,7 @@ from ..message_flow import (
     MessageDefinition,
     MessageFlow,
     PaginationConfig,
+    RegexValidator,
     StateType,
     TextLengthValidator,
 )
@@ -36,6 +37,7 @@ from ..message_flow_helpers import (
     IntegerParser,
     MoneyParser,
     NavigationButtons,
+    build_text_input_handler,
     format_date,
 )
 from ...common.log import Logger
@@ -211,6 +213,45 @@ async def handle_cards_list_button(data: str, flow_state, api, user_id: int) -> 
     flow_state.set(KEY_SELECTED_CARD_ID, card_id)
     flow_state.set(KEY_DETAILS_BACK_STATE, STATE_CARDS_LIST)
     return STATE_CARD_DETAILS
+
+
+async def resolve_card_number_matches(
+    typed_number: int,
+    flow_state,
+    api,
+    user_id: int,
+) -> List[str]:
+    cards = await list_all_cards(flow_state, api, user_id)
+
+    matches: List[str] = []
+    for idx, card in enumerate(cards):
+        match = re.search(r"(\d+)(?!.*\d)", card.name)
+        label = match.group(1) if match else str(idx + 1)
+        try:
+            label_number = int(label)
+        except ValueError:
+            continue
+
+        if label_number == typed_number and card.id is not None:
+            matches.append(str(card.id))
+
+    return matches
+
+
+async def _select_card_from_match(card_id: str, flow_state, api, user_id: int) -> Optional[str]:
+    flow_state.set(KEY_SELECTED_CARD_ID, card_id)
+    flow_state.set(KEY_DETAILS_BACK_STATE, STATE_CARDS_LIST)
+    return STATE_CARD_DETAILS
+
+
+handle_cards_list_input = build_text_input_handler(
+    retry_state_id=STATE_CARDS_LIST,
+    resolve_matches=resolve_card_number_matches,
+    on_match_selected=_select_card_from_match,
+    invalid_number_message="❌ Please enter a positive card number (e.g. `17`).",
+    not_found_message="❌ Card number **{number}** not found.",
+    ambiguous_message="❌ Card number **{number}** is ambiguous. Please use the buttons.",
+)
 
 
 async def build_card_details_text(flow_state, api, user_id: int) -> str:
@@ -939,8 +980,11 @@ def create_card_menu_flow() -> MessageFlow:
     flow.add_state(
         MessageDefinition(
             state_id=STATE_CARDS_LIST,
-            state_type=StateType.BUTTON,
-            text="📋 **All Coffee Cards**",
+            state_type=StateType.MIXED,
+            text=(
+                "📋 **All Coffee Cards**\n\n"
+                "Select a card using the buttons, or type its number."
+            ),
             pagination_config=PaginationConfig(page_size=5, items_per_row=5, close_button_text="◁ Back"),
             pagination_items_builder=list_all_cards,
             pagination_item_formatter=format_card_details,
@@ -948,6 +992,8 @@ def create_card_menu_flow() -> MessageFlow:
             pagination_reset_on_enter=False,
             exit_buttons=[],
             on_button_press=handle_cards_list_button,
+            input_validator=RegexValidator(r"^\s*\d+\s*$", error_message="❌ Please type a card number (e.g. `17`)."),
+            on_input_received=handle_cards_list_input,
             next_state_map={CommonCallbacks.CLOSE: STATE_MENU},
         )
     )
