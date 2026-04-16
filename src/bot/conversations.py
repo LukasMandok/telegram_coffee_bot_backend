@@ -1031,6 +1031,11 @@ class ConversationManager:
             if button_data is None:
                 break                   
             if button_data == "group_submit":
+                # Disable the keyboard immediately to prevent double-submits.
+                try:
+                    await message.edit(message.text or message.message or "", buttons=None)
+                except Exception:
+                    pass
                 submitted = True
                 break
             elif button_data == "group_cancel":

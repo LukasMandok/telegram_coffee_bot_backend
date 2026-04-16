@@ -485,47 +485,29 @@ class SessionManager:
 
 
         # Orders created successfully - session completion is final now.
-        # Replace the existing group-order message (and remove its keyboard) instead of sending
-        # an additional completion message.
-        active_keyboard_user_ids = set(self.api.group_keyboard_manager.active_keyboards.get(session_id, {}).keys())
+        # Remove the keyboard message(s), then send completion messages.
+        await self.api.group_keyboard_manager.cleanup_session_keyboards(session_id)
 
-        replacement_text_by_user_id = {
-            user_id: (
-                "✅ **Session Completed!**\n"
-                if user_id == submitted_by_user_id
-                else "🔒 **Session Completed by Another User**\n"
-            )
-            for user_id in active_keyboard_user_ids
-        }
+        # Send completion messages (submitter gets a direct message, others a notification).
+        for participant_user_id in participant_user_ids:
+            if participant_user_id is None:
+                continue
 
-        edited_user_ids = await self.api.group_keyboard_manager.cleanup_session_keyboards(
-            session_id,
-            replacement_text_by_user_id=replacement_text_by_user_id or None,
-        )
-
-        # Fallback: if we couldn't edit an existing message for a participant, send a normal
-        # completion message.
-        # for participant_user_id in participant_user_ids:
-        #     if participant_user_id is None:
-        #         continue
-        #     if participant_user_id in edited_user_ids:
-        #         continue
-
-        #     if participant_user_id == submitted_by_user_id:
-        #         await self.api.message_manager.send_text(
-        #             participant_user_id,
-        #             "✅ **Session Completed!**\n",
-        #             vanish=True,
-        #             conv=True,
-        #             silent=False,
-        #         )
-        #     else:
-        #         await self.api.message_manager.send_user_notification(
-        #             participant_user_id,
-        #             "🔒 **Session Completed by Another User**\n",
-        #             vanish=True,
-        #             conv=True,
-        #         )
+            if participant_user_id == submitted_by_user_id:
+                await self.api.message_manager.send_text(
+                    participant_user_id,
+                    "✅ **Session Completed!**\n",
+                    vanish=True,
+                    conv=True,
+                    silent=False,
+                )
+            else:
+                await self.api.message_manager.send_user_notification(
+                    participant_user_id,
+                    "🔒 **Session Completed by Another User**\n",
+                    vanish=True,
+                    conv=True,
+                )
 
         # Remove conversation state for all participants so they are unblocked
         for participant_user_id in participant_user_ids:

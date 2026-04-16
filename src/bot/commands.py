@@ -145,7 +145,6 @@ class CommandManager:
 
     async def handle_debt_quick_confirm_callback(self, event: events.CallbackQuery.Event) -> None:
         """Handle callback buttons for the debtor 'Did you already pay?' message."""
-        auto_delete_seconds = 5
         eps = 1e-9
 
         sender_id = event.sender_id
@@ -170,7 +169,7 @@ class CommandManager:
             await self.api.message_manager.send_temp_notification(
                 sender_id,
                 "You can view and mark your debts as paid later using /debt",
-                auto_delete=auto_delete_seconds,
+                auto_delete=15,
                 silent=True,
                 vanish=False,
                 conv=False,
