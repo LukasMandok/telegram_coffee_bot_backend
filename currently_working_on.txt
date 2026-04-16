@@ -13,6 +13,7 @@ remaining:
 
 
 Coffee Cards:
+- a button in the coffee card details to switch to debts, which shows the debts on the card for all users, and show how much of it is paid (also per user)
 - the Card Completed (All debtors have been notified) message is not necessary at all.
 - Royalty system (adjustable in the settings). either an adjustable amount of free coffee for the creditor or that he doesn't have to contribute to missing coffees. 
 
@@ -22,18 +23,14 @@ Sessions / Order:
 - in the coffee order summary, add who gave the order/completed the session to the message
 - prevent users from joning the same session multiple times (this is porbably only possible because of a bug but still)
 - sessions should timout after 10 min if it is suspended and noone joins again (probably already implemented)
-XXX session closed by another user currently does not remove the keyboard and other messages on the other users.
-- when you do a quick callback response with the notification keyboard on a debt, make sure it doesnt fail, if the debt was paid in some other way before (or if the debt that this callback relates to was already paid partly, in this case it should just not marking it as paid). Also it should not collide with other similar keyboards, which are created later (in this case the earlier keyboards should just be unvalid.)
 
 
-XXX Quick order:
-- quick order currently does not trigger the closing of a coffee card if it is filled up, even though splitting coffees between active cards work.
-- also the quick order should say to the user in case the order will be split between multiple cards
-- for quick ordering, the splitting between two coffee cards work, but the first card is not closed.
 
 Snapshots: 
-- an option to make specific snapshots as permanent, so they are not part of the fixed number of snapshots that are deleted, when more are created.
-- sub collection snapshots (for example only the inactivity counters of users) and full collection snapshots should cover those sub-collection snapshots as well on restore
+- add a button to the snapshot menus to undo the last action (load the last snapshot) and please improve the ordering and naming of buttons for the menu. You should get a short confirm for that which tells you what exactly is undone.
+- delete all should really delete all (also permanent snapshots) and reset the counter back to 0.
+(- an option to make specific snapshots as permanent, so they are not part of the fixed number of snapshots that are deleted, when more are created.)
+(- sub collection snapshots (for example only the inactivity counters of users) and full collection snapshots should cover those sub-collection snapshots as well on restore)
 
 Spreadsheet:
 - add a emtpy row in the spreadsheet above the table to make it less cramped
@@ -102,3 +99,7 @@ And whenever a sync is triggered, either by action or by a periodic sync, the bo
 it is important that this only affects paid amount so far.
 Also I need a mechanism, to make sure that changes of the paid amount in the bot are priotised over the changes in the spreadsheet, if they affect the same value.
 this means, that for paid amounts, the actual changed values should be forwarded to the syncing algorithm, so it does not overwrite them
+
+# next
+- enfore the paypal flow being carried out before the a user can create a new card, in case he doesnt have a paypal link setup yet.
+- correct the order for quick order and card closing, so one gets the order summary before getting the notification about card completion 
