@@ -1031,7 +1031,6 @@ class ConversationManager:
             if button_data is None:
                 break                   
             if button_data == "group_submit":
-                await message.edit("✅ **Submitted!**", buttons=None)
                 submitted = True
                 break
             elif button_data == "group_cancel":
@@ -1071,9 +1070,6 @@ class ConversationManager:
                     session, user_id, 'prev'
                 )
                 
-        # Unregister the keyboard when conversation ends
-        self.api.group_keyboard_manager.unregister_keyboard(user_id, str(session.id))
-            
         if submitted:
             # Use SessionManager to complete the session
             try:
@@ -1082,8 +1078,14 @@ class ConversationManager:
                 return True
             except Exception:
                 return False
+            finally:
+                # Ensure we don't leave a stale keyboard reference around on failure paths.
+                self.api.group_keyboard_manager.unregister_keyboard(user_id, str(session.id))
 
-        elif canceled:
+        # Unregister the keyboard when conversation ends
+        self.api.group_keyboard_manager.unregister_keyboard(user_id, str(session.id))
+            
+        if canceled:
             log_conversation_cancelled(user_id, "group_selection", "user_cancelled")
 
             # Finalize cancel: remove this user from the session participants

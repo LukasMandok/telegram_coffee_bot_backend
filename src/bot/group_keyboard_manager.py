@@ -473,17 +473,56 @@ class GroupKeyboardManager:
             self.logger.error(f"Failed to sync keyboard for user {user_id}: {e}", extra_tag="KEYBOARD", exc_info=e)
             self.unregister_keyboard(user_id, session_id)
     
-    async def cleanup_session_keyboards(self, session_id: str) -> None:
+    async def cleanup_session_keyboards(
+        self,
+        session_id: str,
+        *,
+        replacement_text_by_user_id: Optional[Dict[int, str]] = None,
+    ) -> set[int]:
+        """Clean up all keyboards for a completed or cancelled session.
+
+        By default, this only removes the inline keyboard markup from the existing messages.
+        If `replacement_text_by_user_id` is provided, it will also replace the message text
+        (per user) while removing the keyboard.
+
+        Returns:
+            Set of user IDs for which the message was successfully edited.
         """
-        Clean up all keyboards for a completed or cancelled session.
-        
-        Args:
-            session_id: Coffee session ID
-        """
-        if session_id in self.active_keyboards:
-            participant_count = len(self.active_keyboards[session_id])
-            del self.active_keyboards[session_id]
-            self.logger.debug(f"Cleaned up {participant_count} keyboards for session {session_id}", extra_tag="KEYBOARD")
+
+        keyboards = self.active_keyboards.get(session_id)
+        if not keyboards:
+            return set()
+
+        edited_user_ids: set[int] = set()
+
+        for user_id, active_keyboard in list(keyboards.items()):
+            try:
+                replacement_text = None
+                if replacement_text_by_user_id is not None:
+                    replacement_text = replacement_text_by_user_id.get(user_id)
+
+                if replacement_text is None:
+                    msg = await self.api.bot.get_messages(user_id, ids=active_keyboard.message_id)
+                    if not msg:
+                        continue
+                    replacement_text = msg.text or msg.message or ""
+
+                await self.api.bot.edit_message(
+                    user_id,
+                    active_keyboard.message_id,
+                    replacement_text,
+                    buttons=None,
+                )
+                edited_user_ids.add(user_id)
+            except Exception:
+                # Best-effort cleanup: the message may have been deleted or become uneditable.
+                pass
+
+        participant_count = len(keyboards)
+        del self.active_keyboards[session_id]
+        self.logger.debug(f"Cleaned up {participant_count} session keyboards", extra_tag="KEYBOARD")
+
+        return edited_user_ids
     
     def get_active_sessions(self) -> List[str]:
         """Get list of session IDs with active keyboards."""

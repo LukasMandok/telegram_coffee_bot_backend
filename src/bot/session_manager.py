@@ -419,9 +419,6 @@ class SessionManager:
                     f"**{initiator_display_name}** has ordered **{group_member_data.coffee_count}** {coffee_word} for you.\n",
                 )
 
-        # Close all keyboards immediately for this session so UI is consistent
-        await self.api.group_keyboard_manager.cleanup_session_keyboards(session_id)
-
         # Try to create orders FIRST - this may fail if insufficient coffees
         try:
             await self.create_orders()
@@ -487,29 +484,48 @@ class SessionManager:
             raise CoffeeSessionError()
 
 
-        # Orders created successfully - now check for fully filled cards and auto-complete them
-        await self._auto_complete_filled_cards(submitted_by_user_id)
+        # Orders created successfully - session completion is final now.
+        # Replace the existing group-order message (and remove its keyboard) instead of sending
+        # an additional completion message.
+        active_keyboard_user_ids = set(self.api.group_keyboard_manager.active_keyboards.get(session_id, {}).keys())
 
-        # Send notifications to participants captured earlier
-        for participant_user_id in participant_user_ids:
-            if participant_user_id is None:
-                continue
-            if participant_user_id == submitted_by_user_id:
-                await self.api.message_manager.send_text(
-                    participant_user_id,
-                    f"✅ **Session Completed!**\n"
-                    f"Total: {total_coffees} coffees\n",
-                    vanish=True,
-                    conv=True,
-                    silent=False
-                )
-            else:
-                await self.api.message_manager.send_user_notification(
-                    participant_user_id,
-                    f"🔒 **Session Completed by Another User**\n",
-                    vanish=True,
-                    conv = True
-                )
+        replacement_text_by_user_id = {
+            user_id: (
+                "✅ **Session Completed!**\n"
+                if user_id == submitted_by_user_id
+                else "🔒 **Session Completed by Another User**\n"
+            )
+            for user_id in active_keyboard_user_ids
+        }
+
+        edited_user_ids = await self.api.group_keyboard_manager.cleanup_session_keyboards(
+            session_id,
+            replacement_text_by_user_id=replacement_text_by_user_id or None,
+        )
+
+        # Fallback: if we couldn't edit an existing message for a participant, send a normal
+        # completion message.
+        # for participant_user_id in participant_user_ids:
+        #     if participant_user_id is None:
+        #         continue
+        #     if participant_user_id in edited_user_ids:
+        #         continue
+
+        #     if participant_user_id == submitted_by_user_id:
+        #         await self.api.message_manager.send_text(
+        #             participant_user_id,
+        #             "✅ **Session Completed!**\n",
+        #             vanish=True,
+        #             conv=True,
+        #             silent=False,
+        #         )
+        #     else:
+        #         await self.api.message_manager.send_user_notification(
+        #             participant_user_id,
+        #             "🔒 **Session Completed by Another User**\n",
+        #             vanish=True,
+        #             conv=True,
+        #         )
 
         # Remove conversation state for all participants so they are unblocked
         for participant_user_id in participant_user_ids:
@@ -546,6 +562,9 @@ class SessionManager:
                 error=str(e),
                 context={"session_id": session_id}
             )
+
+        # Auto-complete cards after session completion + summary notifications.
+        await self._auto_complete_filled_cards(submitted_by_user_id)
 
         # Clear current session reference
         if self.session and str(self.session.id) == session_id:

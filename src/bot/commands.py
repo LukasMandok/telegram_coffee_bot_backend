@@ -751,11 +751,12 @@ class CommandManager:
             "  🔧 **Administration (Admins Only):**\n"
             "     📊 Logging settings\n"
             "     🔔 Notification preferences\n"
+            "• /profile - Manage your own Information\n\n"
             
             "**Managment (Admins Only):**\n"
             "• /sync - Export current state to Google Sheets\n"
             "• /snapshots - Create and restore snapshots\n"
-            "• /users - "
+            "• /users - Manage users\n\n"
             
             "**Other:**\n"
             "• /help - Show this help message\n\n"
