@@ -363,7 +363,7 @@ async def handle_debt_quick_confirm_callback(*, event: events.CallbackQuery.Even
     await api.message_manager.send_temp_notification(
         sender_id,
         f"✅ Your debt for {card_name} is marked as paid.",
-        auto_delete=auto_delete_seconds,
+        # auto_delete=auto_delete_seconds,
         silent=True,
         vanish=False,
         conv=False,

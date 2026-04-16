@@ -23,13 +23,11 @@ from .keyboards import KeyboardManager
 from .credit_flow import run_credit_flow
 from .conversation_flows.debt_flow import run_debt_flow
 from .conversation_flows.card_flow import create_card_menu_flow, create_close_card_flow, create_new_card_flow
+from .conversation_flows.quick_order_flow import create_quick_order_flow, format_not_enough_coffees_text
 from .conversation_flows.snapshots_flow import create_snapshots_flow
 from .message_flow_helpers import CommonFlowKeys, IntegerParser, MoneyParser
 
-from ..services.order import place_order
-from ..services.gsheet_sync import request_gsheet_sync_after_action
-from ..database.snapshot_manager import SnapshotManager
-from ..exceptions.coffee_exceptions import CoffeeSessionError, InsufficientCoffeeError, NoActiveCoffeeCardsError
+from ..exceptions.coffee_exceptions import CoffeeSessionError, NoActiveCoffeeCardsError
 
 from ..common.log import (
     log_telegram_callback, log_conversation_started, log_conversation_step, log_unexpected_error,
@@ -1120,22 +1118,11 @@ class ConversationManager:
 
     @managed_conversation("quick_order", 45)
     async def quick_order_conversation(self, user_id: int, conv: Conversation, state: ConversationState, quantity: int) -> bool:
-        """Quick solo order flow: confirm/cancel then place a non-session order for the user."""
-        if quantity <= 0:
-            await self.api.message_manager.send_text(
-                user_id,
-                "❌ Please enter a number greater than 0.",
-                True,
-                True,
-            )
-            return False
-
+        """Quick solo order flow (MessageFlow-based)."""
         initiator = await self.repo.find_user_by_id(user_id)
         if not initiator:
-            await self.api.message_manager.send_text(user_id, "❌ User not found.", True, True)
             return False
 
-        # Refresh cards from DB only when cached availability looks insufficient
         cached_available = await self.api.coffee_card_manager.get_available()
         if quantity > cached_available:
             await self.api.coffee_card_manager.load_from_db()
@@ -1144,158 +1131,21 @@ class ConversationManager:
         if quantity > available:
             await self.api.message_manager.send_text(
                 user_id,
-                f"❌ Not enough coffees available right now. Requested={quantity}, available={available}.",
+                format_not_enough_coffees_text(quantity, int(available)),
                 True,
                 True,
+                delete_after=8,
             )
             return False
 
-        split_preview_lines: list[str] = []
-        try:
-            preview_cards = await self.api.coffee_card_manager.get_coffee_cards_for_order(quantity)
-            if len(preview_cards) > 1:
-                remaining = int(quantity)
-                for card in preview_cards:
-                    take = min(remaining, max(0, int(card.remaining_coffees)))
-                    if take <= 0:
-                        continue
-                    split_preview_lines.append(f"• **{card.name}**: **{take}**")
-                    remaining -= take
-                    if remaining <= 0:
-                        break
-        except Exception:
-            split_preview_lines = []
-
-        split_preview_text = ""
-        if split_preview_lines:
-            split_preview_text = "\n\n⚠️ This order will be split across multiple cards:\n" + "\n".join(
-                split_preview_lines
-            )
-
-        confirm_text = (
-            "☕ **Quick Order**\n\n"
-            f"Order **{quantity}** coffee(s) for **{initiator.display_name}**?\n"
-            f"Available right now: **{available}**"
-            f"{split_preview_text}\n\n"
-            "Confirm?"
-        )
-
-        data, message_confirm = await self.send_keyboard_and_wait_response(
+        flow = create_quick_order_flow()
+        return await flow.run(
             conv,
             user_id,
-            confirm_text,
-            KeyboardManager.get_confirmation_keyboard(),
-            30,
+            self.api,
+            start_state="quick_order_confirm",
+            initial_data={"quantity": quantity, "initiator": initiator},
         )
-
-        if data is None:
-            await self.send_or_edit_message(
-                user_id,
-                "⏱️ Confirmation timed out.",
-                message_confirm,
-                remove_buttons=True,
-            )
-            return False
-
-        if data == "No":
-            await self.send_or_edit_message(user_id, "❌ Order cancelled.", message_confirm, remove_buttons=True)
-            return False
-
-        await self.send_or_edit_message(
-            user_id,
-            "⏳ Placing order...",
-            message_confirm,
-            remove_buttons=True,
-            delete_after=5,
-        )
-
-        try:
-            snapshot_manager: SnapshotManager = self.api.get_snapshot_manager()
-            async with snapshot_manager.pending_snapshot(
-                reason=f"Quick Order ({initiator.display_name} x{quantity})",
-                context="quick_order",
-                collections=("coffee_cards", "coffee_orders", "user_debts", "payments"),
-            ):
-                cards = await self.api.coffee_card_manager.get_coffee_cards_for_order(quantity)
-                self.logger.debug(
-                    f"Quick order using {len(cards)} card(s): {', '.join([c.name for c in cards])}"
-                )
-
-                orders = await place_order(
-                    initiator=initiator,
-                    consumer=initiator,
-                    cards=cards,
-                    quantity=quantity,
-                    session=None,
-                    enforce_capacity=True,
-                )
-
-                cards_to_close = [
-                    card
-                    for card in cards
-                    if bool(card.is_active) and int(card.remaining_coffees) == 0
-                ]
-                if cards_to_close:
-                    self.logger.debug(
-                        f"Quick order closing filled card(s): {', '.join([c.name for c in cards_to_close])}"
-                    )
-
-                for card in cards_to_close:
-                    await self.api.coffee_card_manager.close_card(
-                        card,
-                        requesting_user_id=user_id,
-                        closed_by_session=False,
-                    )
-
-                # Refresh cached counts after mutating cards
-                await self.api.coffee_card_manager.load_from_db()
-
-                request_gsheet_sync_after_action(reason="quick_order_completed")
-
-
-            split_summary_lines: list[str] = []
-            if isinstance(orders, list) and len(orders) > 1:
-                for order in orders:
-                    card_name = "(unknown)"
-                    try:
-                        await order.fetch_all_links()
-                        linked_card = order.coffee_cards[0]
-                        card_name = linked_card.name
-                    except Exception:
-                        card_name = "(unknown)"
-
-                    split_summary_lines.append(f"• **{card_name}**: **{int(order.quantity)}**")
-
-            split_summary_text = ""
-            if split_summary_lines:
-                split_summary_text = "\n\n⚠️ Split across cards:\n" + "\n".join(split_summary_lines)
-
-            await self.api.message_manager.send_text(
-                user_id,
-                f"✅ Ordered **{quantity}** coffee(s) for **{initiator.display_name}**.{split_summary_text}",
-                True,
-                True,
-            )
-            return True
-
-        except InsufficientCoffeeError as e:
-            await self.api.message_manager.send_text(
-                user_id,
-                f"❌ Not enough coffees available. Requested={e.requested}, available={e.available}.",
-                True,
-                True,
-            )
-            return False
-        except Exception as e:
-            self.logger.error("Quick order failed", exc=e)
-            await self.api.message_manager.send_text(
-                user_id,
-                "❌ Quick order failed due to an unexpected error.",
-                True,
-                True,
-            )
-            return False
-                
 
     @managed_conversation("add_passive_user", 60)
     async def add_passive_user_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:

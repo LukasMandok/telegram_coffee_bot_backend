@@ -309,6 +309,9 @@ class CommandManager:
         except ValueError:
             return
 
+        if quantity <= 0:
+            return
+
         await self.api.conversation_manager.quick_order_conversation(user_id, quantity)
 
     async def handle_unknown_command(self, event: events.NewMessage.Event) -> None:

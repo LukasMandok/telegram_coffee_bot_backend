@@ -46,7 +46,6 @@ Credit menu:
 - Schredder still appears with 0 outstandign credit, so I think that debts might not be correctly marked as paid at all places
 
 - add an option to message flows, which allow actions on initiation, submit and cancel -> so I can so gsheet synchronizations on sumbit and start backups on initiation save them on submit and delete them on cancel 
--> the function for requesting a number should be implemented in the messageManager
 
 General:
 - catch the Ctrl+C in the terminal, to make sure that the bot is closed properly
@@ -63,9 +62,13 @@ Logging:
 - transfer a lot INFO logging to DEBUG or even trace and keep this cleaner.
 
 User:
-- create a user managment system to archive and unarchive users.
-- allow adding passive users
-- add an admin setting to promote telegram users to admins
+XXX create a user managment system to archive and unarchive users.
+XXX allow adding passive users
+XXX add an admin setting to promote telegram users to admins
+
+Feedback:
+- a command /feedback which allows a user to send a message as feedback, which is stored in the database with the corresponding user and a score between 1-5 how important this feature is.
+
 
 maybe:
 - emulate other users
@@ -82,14 +85,6 @@ not working:
 
 
 
-users menu:
-the next big think would be the implementation of a user managment system.
-
-I want a new command /users, which opens the users menu.
-
-the menu should show some basic information in a tight formatting
-- amount of registered user, including the amount of telegram users, disabled and archived users
-
 
 Google Spredsheet two-way syncing:
 
@@ -102,4 +97,22 @@ this means, that for paid amounts, the actual changed values should be forwarded
 
 # next
 - enfore the paypal flow being carried out before the a user can create a new card, in case he doesnt have a paypal link setup yet.
-- correct the order for quick order and card closing, so one gets the order summary before getting the notification about card completion 
+
+
+Users:
+
+the next big think would be the implementation of a user managment system using the message flow system in a new file.
+
+I want a new command /users, which opens the users menu and is only accessible to admins
+
+the menu should show some basic information in a tight formatting
+- amount of registered user (total, passive, telegram, archived and disabled)
+
+- it should provide a submenu to modify the status of each user. You should provide a 2 column keyboard of alphabetically sorted users. each one should get a dot to highlight its status:
+green (🟢) for an active user, yellow (🟡) for an archived user and red (🔴) for a disabled user. By pressing on the user you should be able to cycle through the state.
+
+the user menu should also have a button to create a new passive user (provide a Sur and Last Name, the displayname will be determined automatically).
+
+and lastly I want a manage submenu, which justs lists all users alphabetically.
+If you press on one, you will get all the user details. 
+There should will have a button to cyctle the status of the user (active, archived, disabled), a button to promote the user to an admin (if it is a telegram user) and an option to change the users display name.
