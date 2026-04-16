@@ -5,7 +5,7 @@ Handles debt creation when coffee cards are completed, and payment processing.
 Debts are created once per card completion, not on individual orders.
 """
 
-from typing import List, Dict, Optional, Any, Protocol, Callable, Tuple, Sequence
+from typing import List, Dict, Optional, Any, Protocol, Callable, Tuple, Sequence, cast
 from datetime import datetime
 
 from beanie import Link as BeanieLink
@@ -793,6 +793,91 @@ class DebtManager:
         request_gsheet_sync_after_action(reason="debt_paid")
         
         return payment_events
+
+    async def apply_debtor_quick_confirm_payment(
+        self,
+        *,
+        sender_user_id: int,
+        expected_debtor_user_id: int | None = None,
+        debt_id: str,
+    ) -> Tuple[UserDebt, str, float]:
+        epsilon = 1e-9
+
+        debt_id = (debt_id or "").strip()
+        if not debt_id:
+            raise ValueError("Invalid debt reference")
+
+        if expected_debtor_user_id is not None and sender_user_id != expected_debtor_user_id:
+            raise ValueError("This payment confirmation isn't for you")
+
+        repo = get_repo()
+        sender = await repo.find_user_by_id(sender_user_id)
+        if sender is None:
+            raise ValueError("User not found")
+
+        debt = await UserDebt.get(debt_id)
+        if debt is None:
+            raise ValueError("Debt not found")
+
+        if isinstance(debt.creditor, BeanieLink):
+            try:
+                await debt.fetch_link("creditor")
+            except Exception:
+                pass
+
+        if isinstance(debt.debtor, BeanieLink):
+            debtor_ref_id = debt.debtor.ref.id
+            debtor_user = await TelegramUser.get(debtor_ref_id) or await PassiveUser.get(debtor_ref_id)
+
+            if debtor_user is None:
+                if expected_debtor_user_id is None:
+                    raise ValueError("Debt is missing debtor")
+                debtor_user = sender
+
+            debt.debtor = debtor_user
+
+        if isinstance(debt.debtor, BeanieLink):
+            raise ValueError("Debt is missing debtor")
+
+        debtor_user = cast(PassiveUser, debt.debtor)
+        if debtor_user.stable_id != sender.stable_id:
+            raise ValueError("This payment confirmation isn't for you")
+
+        card_name = "this card"
+        if isinstance(debt.coffee_card, BeanieLink):
+            try:
+                await debt.fetch_link("coffee_card")
+            except Exception:
+                pass
+        if not isinstance(debt.coffee_card, BeanieLink):
+            card_name = debt.coffee_card.name
+
+        outstanding = max(0.0, float(debt.total_amount) - float(debt.paid_amount))
+        if outstanding <= epsilon:
+            return debt, card_name, 0.0
+
+        if float(debt.paid_amount) > epsilon:
+            # The debt was already partially paid via another mechanism; don't auto-complete it.
+            return debt, card_name, 0.0
+
+        snapshot_manager = self.api.get_snapshot_manager()
+        await snapshot_manager.create_snapshot(
+            reason="Apply Payment (debtor quick confirm)",
+            context="apply_payment_debtor_quick_confirm",
+            collections=("user_debts", "payments"),
+            save_in_background=True,
+        )
+
+        await self._apply_payment_to_debt(
+            debt,
+            outstanding,
+            reason=PaymentReason.DEBTOR_MARKED_PAID,
+            description="Debtor quick confirm",
+        )
+
+        request_gsheet_sync_after_action(reason="debt_paid")
+
+        return debt, card_name, outstanding
     
     async def _apply_payment_to_debt(
         self,

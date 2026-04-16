@@ -213,11 +213,11 @@ async def _send_debt_reminder_with_quick_confirm(
             [
                 ButtonCallback(
                     DebtQuickConfirmCallbacks.YES_TEXT,
-                    f"{DebtQuickConfirmCallbacks.YES_PREFIX}{debt.id}",
+                    f"{DebtQuickConfirmCallbacks.YES_PREFIX}{debtor_user_id}:{str(debt.id)}",
                 ),
                 ButtonCallback(
                     DebtQuickConfirmCallbacks.NO_TEXT,
-                    f"{DebtQuickConfirmCallbacks.NO_PREFIX}{debt.id}",
+                    f"{DebtQuickConfirmCallbacks.NO_PREFIX}{debtor_user_id}:{str(debt.id)}",
                 ),
             ]
         ],

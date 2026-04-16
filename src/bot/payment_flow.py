@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
+from telethon import events
+
+from ..models.beanie_models import PassiveUser, TelegramUser
 from .message_flow import ButtonCallback
 from .message_flow_helpers import CommonCallbacks, GridLayout, InputDistributor, MoneyParser, NavigationButtons, StagingManager
+from .message_flow_ids import DebtQuickConfirmCallbacks
 
 
 MONEY_PARSER = MoneyParser()
@@ -203,3 +207,166 @@ async def handle_staged_payments_input(
     )
 
     return current_state
+
+
+# ==========================================================================
+# QUICK CONFIRM CALLBACK (PAYMENT REMINDERS)
+# ==========================================================================
+
+
+async def _notify_creditor_debt_quick_confirm(
+    api,
+    *,
+    debt,
+    paid_amount: float,
+    card_name: str,
+) -> None:
+    if paid_amount <= 1e-9:
+        return
+
+    if not isinstance(debt.creditor, TelegramUser):
+        return
+    if not isinstance(debt.debtor, PassiveUser):
+        return
+
+    try:
+        await api.message_manager.send_user_notification(
+            debt.creditor.user_id,
+            (
+                "💸 **Payment update**\n\n"
+                f"{debt.debtor.display_name} marked **{paid_amount:.2f} €** as paid.\n"
+                f"Card: **{card_name}**"
+            ),
+        )
+    except Exception as exc:
+        api.logger.warning("Debt quick-confirm: creditor notify failed", exc=exc)
+
+
+async def handle_debt_quick_confirm_callback(*, event: events.CallbackQuery.Event, api) -> None:
+    sender_id = event.sender_id
+    if not isinstance(sender_id, int):
+        api.logger.warning(f"Debt quick-confirm: invalid sender_id={sender_id!r}")
+        return
+
+    data = (event.data or b"").decode("utf-8", errors="ignore")
+    if not data.startswith(DebtQuickConfirmCallbacks.PREFIX):
+        return
+
+    try:
+        await event.answer()
+    except Exception:
+        pass
+
+    try:
+        await event.delete()
+    except Exception:
+        pass
+
+    auto_delete_seconds = 15
+
+    if data.startswith(DebtQuickConfirmCallbacks.NO_PREFIX):
+        await api.message_manager.send_temp_notification(
+            sender_id,
+            "You can view and mark your debts as paid later using /debt",
+            auto_delete=auto_delete_seconds,
+            silent=True,
+            vanish=False,
+            conv=False,
+        )
+        raise events.StopPropagation
+
+    if not data.startswith(DebtQuickConfirmCallbacks.YES_PREFIX):
+        return
+
+    payload = data[len(DebtQuickConfirmCallbacks.YES_PREFIX) :].strip()
+    if not payload:
+        await api.message_manager.send_temp_notification(
+            sender_id,
+            "❌ Invalid payment confirmation.",
+            auto_delete=auto_delete_seconds,
+            silent=True,
+            vanish=False,
+            conv=False,
+        )
+        raise events.StopPropagation
+
+    expected_debtor_user_id: int | None = None
+    debt_id = payload
+
+    maybe_user_id, sep, maybe_debt_id = payload.partition(":")
+    if sep and maybe_user_id.isdigit() and maybe_debt_id:
+        expected_debtor_user_id = int(maybe_user_id)
+        debt_id = maybe_debt_id
+
+    try:
+        debt, card_name, paid_amount = await api.debt_manager.apply_debtor_quick_confirm_payment(
+            sender_user_id=sender_id,
+            expected_debtor_user_id=expected_debtor_user_id,
+            debt_id=debt_id,
+        )
+    except ValueError as exc:
+        await api.message_manager.send_temp_notification(
+            sender_id,
+            f"❌ {exc}",
+            auto_delete=auto_delete_seconds,
+            silent=True,
+            vanish=False,
+            conv=False,
+        )
+        raise events.StopPropagation
+    except Exception as exc:
+        api.logger.warning("Debt quick-confirm failed", exc=exc)
+        await api.message_manager.send_temp_notification(
+            sender_id,
+            "❌ Failed to mark this debt as paid. Please try again later or use /debt.",
+            auto_delete=auto_delete_seconds,
+            silent=True,
+            vanish=False,
+            conv=False,
+        )
+        raise events.StopPropagation
+
+    if paid_amount <= 1e-9:
+        outstanding = max(0.0, float(debt.total_amount) - float(debt.paid_amount))
+        if float(debt.paid_amount) > 1e-9 and outstanding > 1e-9:
+            await api.message_manager.send_temp_notification(
+                sender_id,
+                (
+                    f"ℹ️ This debt for {card_name} was already partially paid "
+                    f"(**{float(debt.paid_amount):.2f} €** of **{float(debt.total_amount):.2f} €**). "
+                    "Please use /debt to manage it."
+                ),
+                auto_delete=auto_delete_seconds,
+                silent=True,
+                vanish=False,
+                conv=False,
+            )
+            raise events.StopPropagation
+
+        await api.message_manager.send_temp_notification(
+            sender_id,
+            f"✅ Nothing to do — your debt for {card_name} is already settled.",
+            auto_delete=auto_delete_seconds,
+            silent=True,
+            vanish=False,
+            conv=False,
+        )
+        raise events.StopPropagation
+
+    await _notify_creditor_debt_quick_confirm(
+        api,
+        debt=debt,
+        paid_amount=paid_amount,
+        card_name=card_name,
+    )
+
+    await api.message_manager.send_temp_notification(
+        sender_id,
+        f"✅ Your debt for {card_name} is marked as paid.",
+        auto_delete=auto_delete_seconds,
+        silent=True,
+        vanish=False,
+        conv=False,
+    )
+
+    raise events.StopPropagation

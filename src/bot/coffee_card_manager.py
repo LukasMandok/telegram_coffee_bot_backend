@@ -399,11 +399,11 @@ class CoffeeCardManager:
                     [
                         ButtonCallback(
                             DebtQuickConfirmCallbacks.YES_TEXT,
-                            f"{DebtQuickConfirmCallbacks.YES_PREFIX}{debt.id}",
+                            f"{DebtQuickConfirmCallbacks.YES_PREFIX}{debtor.user_id}:{debt.id}",
                         ),
                         ButtonCallback(
                             DebtQuickConfirmCallbacks.NO_TEXT,
-                            f"{DebtQuickConfirmCallbacks.NO_PREFIX}{debt.id}",
+                            f"{DebtQuickConfirmCallbacks.NO_PREFIX}{debtor.user_id}:{debt.id}",
                         ),
                     ]
                 ],
