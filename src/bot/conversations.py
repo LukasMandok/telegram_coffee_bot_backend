@@ -25,6 +25,7 @@ from .conversation_flows.debt_flow import run_debt_flow
 from .conversation_flows.card_flow import create_card_menu_flow, create_close_card_flow, create_new_card_flow
 from .conversation_flows.quick_order_flow import create_quick_order_flow, format_not_enough_coffees_text
 from .conversation_flows.snapshots_flow import create_snapshots_flow
+from .conversation_flows.users_flow import create_users_flow
 from .message_flow_helpers import CommonFlowKeys, IntegerParser, MoneyParser
 
 from ..exceptions.coffee_exceptions import CoffeeSessionError, NoActiveCoffeeCardsError
@@ -1260,6 +1261,12 @@ class ConversationManager:
     async def snapshots_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
         """Admin snapshots menu (MessageFlow-based)."""
         flow = create_snapshots_flow()
+        return await flow.run(conv, user_id, self.api, start_state="main")
+
+    @managed_conversation("users", 240)
+    async def users_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
+        """Admin users menu (MessageFlow-based)."""
+        flow = create_users_flow()
         return await flow.run(conv, user_id, self.api, start_state="main")
     
     @managed_conversation("close_card", 60)

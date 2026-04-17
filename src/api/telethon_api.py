@@ -142,6 +142,7 @@ class TelethonAPI:
         self.add_handler(lambda event: self.command_manager.handle_settings_command(event), "/settings")
         self.add_handler(lambda event: self.command_manager.handle_sync_command(event), "/sync")
         self.add_handler(lambda event: self.command_manager.handle_snapshots_command(event), "/snapshots")
+        self.add_handler(lambda event: self.command_manager.handle_users_command(event), "/users")
         self.add_handler(lambda event: self.command_manager.handle_help_command(event), "/help")
         self.add_handler(lambda event: self.command_manager.handle_cancel_command(event), "/cancel")
         # TODO: check if I actually need them

@@ -24,6 +24,7 @@ BOT_COMMANDS: list[tuple[str, str, bool]] = [
     ("paypal", "Setup your paypal.me link", False),
     ("sync", "(Admin) Export current state to Google Sheets", False),
     ("snapshots", "(Admin) Create and restore snapshots", False),
+    ("users", "(Admin) Manage users", False),
     ("help", "Show help and available commands", True),
 ]
 

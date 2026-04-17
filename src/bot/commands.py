@@ -286,6 +286,17 @@ class CommandManager:
 
         await self.api.conversation_manager.snapshots_conversation(user_id)
 
+    @dep.verify_admin
+    async def handle_users_command(self, event: events.NewMessage.Event) -> None:
+        """Admin command to manage users via a MessageFlow conversation."""
+        user_id = event.sender_id
+        log_telegram_command(user_id, "/users", getattr(event, 'chat_id', None))
+
+        if await self._check_and_notify_active_conversation(user_id):
+            return
+
+        await self.api.conversation_manager.users_conversation(user_id)
+
     @dep.verify_user
     async def handle_digits_command(self, event: events.NewMessage.Event) -> None:
         """
