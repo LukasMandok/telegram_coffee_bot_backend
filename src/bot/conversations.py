@@ -2283,10 +2283,9 @@ class ConversationManager:
                 new_value = not log_settings.get("log_show_time", True)
                 success = await repo.update_log_settings(log_show_time=new_value)
                 
-                # Answer the callback event with a popup notification
+                # Answer callback without notification (UI re-renders with updated button/text)
                 if event:
-                    status = "enabled" if new_value else "disabled"
-                    await event.answer(f"✅ Time display {status}!", alert=False)
+                    await event.answer()
                 
                 if not success:
                     await self.api.message_manager.send_text(
@@ -2303,10 +2302,9 @@ class ConversationManager:
                 new_value = not log_settings.get("log_show_caller", True)
                 success = await repo.update_log_settings(log_show_caller=new_value)
                 
-                # Answer the callback event with a popup notification
+                # Answer callback without notification (UI re-renders with updated button/text)
                 if event:
-                    status = "enabled" if new_value else "disabled"
-                    await event.answer(f"✅ Caller display {status}!", alert=False)
+                    await event.answer()
                 
                 if not success:
                     await self.api.message_manager.send_text(
@@ -2323,10 +2321,9 @@ class ConversationManager:
                 new_value = not log_settings.get("log_show_class", True)
                 success = await repo.update_log_settings(log_show_class=new_value)
                 
-                # Answer the callback event with a popup notification
+                # Answer callback without notification (UI re-renders with updated button/text)
                 if event:
-                    status = "enabled" if new_value else "disabled"
-                    await event.answer(f"✅ Class name display {status}!", alert=False)
+                    await event.answer()
                 
                 if not success:
                     await self.api.message_manager.send_text(
