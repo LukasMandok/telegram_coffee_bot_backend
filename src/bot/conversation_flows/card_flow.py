@@ -39,6 +39,7 @@ from ..message_flow_helpers import (
     NavigationButtons,
     build_text_input_handler,
     format_date,
+    format_money,
 )
 from ...common.log import Logger
 from ...config import app_config
@@ -56,6 +57,7 @@ DEFAULT_COST_PER_COFFEE = 0.8
 STATE_MENU = CommonStateIds.MENU
 STATE_CARDS_LIST = "cards_list"
 STATE_CARD_DETAILS = "card_details"
+STATE_CARD_DEBTS = "card_debts"
 
 STATE_CREATE_MAIN = "create_main"
 STATE_CREATE_TOTAL = "create_total"
@@ -75,6 +77,11 @@ KEY_COST_PER_COFFEE = "cost_per_coffee"
 
 KEY_SELECTED_CARD_ID = "selected_card_id"
 KEY_DETAILS_BACK_STATE = "details_back_state"
+
+KEY_SELECTED_CARD_VIEW_DATA_CARD_ID = "selected_card_view_data_card_id"
+KEY_SELECTED_CARD_DEBTS_OVERVIEW_ITEMS = "selected_card_debts_overview_items"
+KEY_SELECTED_CARD_DEBTS_OVERVIEW_TOTAL = "selected_card_debts_overview_total"
+KEY_SELECTED_CARD_DEBTS_OVERVIEW_PAID = "selected_card_debts_overview_paid"
 
 
 @dataclass(frozen=True)
@@ -140,6 +147,7 @@ async def handle_card_menu_button(data: str, flow_state, api, user_id: int) -> O
 
             flow_state.set(KEY_SELECTED_CARD_ID, str(oldest.id))
             flow_state.set(KEY_DETAILS_BACK_STATE, STATE_MENU)
+            _reset_selected_card_view_state(flow_state)
             return STATE_CARD_DETAILS
 
         return None
@@ -212,6 +220,7 @@ async def handle_cards_list_button(data: str, flow_state, api, user_id: int) -> 
 
     flow_state.set(KEY_SELECTED_CARD_ID, card_id)
     flow_state.set(KEY_DETAILS_BACK_STATE, STATE_CARDS_LIST)
+    _reset_selected_card_view_state(flow_state)
     return STATE_CARD_DETAILS
 
 
@@ -241,7 +250,35 @@ async def resolve_card_number_matches(
 async def _select_card_from_match(card_id: str, flow_state, api, user_id: int) -> Optional[str]:
     flow_state.set(KEY_SELECTED_CARD_ID, card_id)
     flow_state.set(KEY_DETAILS_BACK_STATE, STATE_CARDS_LIST)
+    _reset_selected_card_view_state(flow_state)
     return STATE_CARD_DETAILS
+
+
+def _reset_selected_card_view_state(flow_state) -> None:
+    """Clear pagination + derived data when the selected card changes."""
+    flow_state.pagination_state.pop(STATE_CARD_DETAILS, None)
+    flow_state.pagination_state.pop(STATE_CARD_DEBTS, None)
+    flow_state.clear(
+        KEY_SELECTED_CARD_VIEW_DATA_CARD_ID,
+        KEY_SELECTED_CARD_DEBTS_OVERVIEW_ITEMS,
+        KEY_SELECTED_CARD_DEBTS_OVERVIEW_TOTAL,
+        KEY_SELECTED_CARD_DEBTS_OVERVIEW_PAID,
+    )
+
+
+def _get_card_status_parts(card: CoffeeCard) -> tuple[str, str]:
+    if card.is_active:
+        return "🟢", "Active"
+    return "⚪", "Completed"
+
+
+def _build_card_orders_debts_header(*, title: str, card: CoffeeCard, purchaser_name: str) -> str:
+    indicator, status_name = _get_card_status_parts(card)
+    return (
+        f"{title}\n\n"
+        f"{card.name} - {indicator} {status_name}\n"
+        f"Purchaser: {purchaser_name}"
+    )
 
 
 handle_cards_list_input = build_text_input_handler(
@@ -257,11 +294,11 @@ handle_cards_list_input = build_text_input_handler(
 async def build_card_details_text(flow_state, api, user_id: int) -> str:
     card_id = flow_state.get(KEY_SELECTED_CARD_ID)
     if not isinstance(card_id, str) or not card_id:
-        return "❌ **Coffee Card Details**\n\nNo card selected."
+        return "❌ **Card Orders**\n\nNo card selected."
 
     card = await CoffeeCard.get(card_id)
     if not card:
-        return "❌ **Coffee Card Details**\n\nCard not found."
+        return "❌ **Card Orders**\n\nCard not found."
 
     purchaser_name = "(unknown)"
     try:
@@ -271,21 +308,23 @@ async def build_card_details_text(flow_state, api, user_id: int) -> str:
     except Exception:
         pass
 
-    status = "🟢 Active" if card.is_active else "⚪ Completed"
-    completed_line = ""
-    if not card.is_active and card.completed_at:
-        completed_line = f"Completed: {format_date(card.completed_at)}\n"
+    completed_value = "-"
+    if card.completed_at is not None:
+        completed_value = format_date(card.completed_at)
+
+    header = _build_card_orders_debts_header(
+        title="Card Orders",
+        card=card,
+        purchaser_name=purchaser_name,
+    )
 
     return (
-        "🔎 **Coffee Card Details**\n\n"
-        f"**{card.name}** — {status}\n"
-        f"Remaining: {card.remaining_coffees}/{card.total_coffees}\n"
-        f"Created: {format_date(card.created_at)}\n"
-        f"{completed_line}"
-        f"Cost per coffee: €{card.cost_per_coffee:.2f}\n"
-        f"Total cost: €{card.total_cost:.2f}\n"
-        f"Purchaser: {purchaser_name}\n\n"
-        "**Order History:**"
+        header
+        + "\n\n**Details**\n"
+        + f"Created: {format_date(card.created_at)}\n"
+        + f"Completed: {completed_value}\n"
+        + f"Cost: {format_money(card.total_cost)} (per coffee: {format_money(card.cost_per_coffee)})\n\n"
+        + "**Order History**"
     )
 
 
@@ -343,73 +382,6 @@ def _format_session_totals_lines(totals: Dict[str, int]) -> List[str]:
     return [f"   - {display_name}: {coffees}" for display_name, coffees in sorted_items]
 
 
-async def _find_orders_for_card(card: CoffeeCard) -> List[CoffeeOrder]:
-    orders_by_id: dict[str, CoffeeOrder] = {}
-
-    query_variants: List[dict[str, Any]] = [
-        {"coffee_cards.$id": card.id},
-        {"coffee_cards": card.id},
-        {"coffee_cards._id": card.id},
-    ]
-
-    for query in query_variants:
-        matched: List[CoffeeOrder] = (
-            await CoffeeOrder.find(query, fetch_links=True).sort("-order_date").to_list()
-        )  # type: ignore[arg-type]
-        for order in matched:
-            if order.id is None:
-                continue
-            orders_by_id[str(order.id)] = order
-
-    # Fallback: if card keeps an explicit order list, merge it too.
-    try:
-        await card.fetch_link("orders")
-    except Exception:
-        pass
-
-    for linked in card.orders:
-        if isinstance(linked, CoffeeOrder) and linked.id is not None:
-            orders_by_id.setdefault(str(linked.id), linked)
-
-    orders = sorted(orders_by_id.values(), key=lambda o: o.order_date, reverse=True)
-
-    return orders
-
-
-async def _find_orders_for_session(session: CoffeeSession) -> List[CoffeeOrder]:
-    if session.id is None:
-        return []
-
-    orders_by_id: dict[str, CoffeeOrder] = {}
-
-    query_variants: List[dict[str, Any]] = [
-        {"session.$id": session.id},
-        {"session": session.id},
-        {"session._id": session.id},
-    ]
-
-    for query in query_variants:
-        matched: List[CoffeeOrder] = (
-            await CoffeeOrder.find(query, fetch_links=False).sort("-order_date").to_list()
-        )  # type: ignore[arg-type]
-        for order in matched:
-            if order.id is None:
-                continue
-            orders_by_id[str(order.id)] = order
-
-    # Fallback: merge explicit session order list.
-    try:
-        await session.fetch_link("orders")
-    except Exception:
-        pass
-
-    for linked in session.orders:
-        if isinstance(linked, CoffeeOrder) and linked.id is not None:
-            orders_by_id.setdefault(str(linked.id), linked)
-
-    return sorted(orders_by_id.values(), key=lambda o: o.order_date, reverse=True)
-
-
 async def list_history_for_selected_card(flow_state, api, user_id: int) -> List[CardHistoryItem]:
     card_id = flow_state.get(KEY_SELECTED_CARD_ID)
     if not isinstance(card_id, str) or not card_id:
@@ -419,7 +391,7 @@ async def list_history_for_selected_card(flow_state, api, user_id: int) -> List[
     if not card or card.id is None:
         return []
 
-    orders_for_card = await _find_orders_for_card(card)
+    orders_for_card = await api.coffee_card_manager.find_orders_for_card(card)
 
     # Ensure we have names available for card orders.
     for order in orders_for_card:
@@ -445,7 +417,7 @@ async def list_history_for_selected_card(flow_state, api, user_id: int) -> List[
     timeline: List[tuple[datetime, str]] = []
 
     for session in sessions:
-        session_orders = await _find_orders_for_session(session)
+        session_orders = await api.coffee_card_manager.find_orders_for_session(session)
         if not session_orders:
             # Fallback: at least include the card orders we know belong to this session.
             session_orders = [
@@ -528,6 +500,121 @@ async def handle_card_details_button(data: str, flow_state, api, user_id: int) -
     return back_state
 
 
+async def build_card_debts_text(flow_state, api, user_id: int) -> str:
+    card_id = flow_state.get(KEY_SELECTED_CARD_ID)
+    if not isinstance(card_id, str) or not card_id:
+        return "❌ **Card Debts**\n\nNo card selected."
+
+    card = await CoffeeCard.get(card_id)
+    if not card:
+        return "❌ **Card Debts**\n\nCard not found."
+
+    purchaser_name = "(unknown)"
+    try:
+        await card.fetch_link("purchaser")
+        purchaser: TelegramUser = card.purchaser  # type: ignore[assignment]
+        purchaser_name = purchaser.display_name
+    except Exception:
+        pass
+
+    await _load_card_debts_overview(flow_state, api, card)
+
+    items: List[CardDebtItem] = flow_state.get(KEY_SELECTED_CARD_DEBTS_OVERVIEW_ITEMS, [])
+    total_amount = float(flow_state.get(KEY_SELECTED_CARD_DEBTS_OVERVIEW_TOTAL, 0.0))
+    total_paid = float(flow_state.get(KEY_SELECTED_CARD_DEBTS_OVERVIEW_PAID, 0.0))
+    total_outstanding = max(0.0, total_amount - total_paid)
+
+    header = _build_card_orders_debts_header(
+        title="Card Debts",
+        card=card,
+        purchaser_name=purchaser_name,
+    )
+
+    if card.is_active and not items:
+        return header + "\n\nNo debts yet. Debts are created when a card is closed."
+
+    if not items:
+        return header + "\n\nNo debts found for this card."
+
+    return (
+        header
+        + "\n\n**Total Debts**\n"
+        + f"Total: **{format_money(total_amount)}**\n"
+        + f"Paid: **{format_money(total_paid)}**\n"
+        + f"Outstanding: **{format_money(total_outstanding)}**\n\n"
+        + "**Debts (per user)**"
+    )
+
+
+@dataclass(frozen=True)
+class CardDebtItem:
+    debtor_name: str
+    total: float
+    paid: float
+
+
+async def _load_card_debts_overview(flow_state, api, card: CoffeeCard) -> None:
+    card_id = str(card.id) if card.id is not None else ""
+    cached_for = flow_state.get(KEY_SELECTED_CARD_VIEW_DATA_CARD_ID)
+    if cached_for == card_id and flow_state.has(KEY_SELECTED_CARD_DEBTS_OVERVIEW_ITEMS):
+        return
+
+    debts = await api.coffee_card_manager.find_debts_for_card(card)
+
+    by_debtor: Dict[str, Dict[str, Any]] = {}
+    for debt in debts:
+        debtor = debt.debtor
+        debtor_name = "(unknown)"
+        debtor_key = str(debt.id) if debt.id is not None else f"mem:{id(debt)}"
+        if isinstance(debtor, (TelegramUser, PassiveUser)):
+            debtor_name = debtor.display_name
+            debtor_key = debtor.stable_id
+
+        entry = by_debtor.get(debtor_key)
+        if entry is None:
+            entry = {"name": debtor_name, "total": 0.0, "paid": 0.0}
+            by_debtor[debtor_key] = entry
+
+        entry["total"] += float(debt.total_amount)
+        entry["paid"] += float(debt.paid_amount)
+
+    items = [
+        CardDebtItem(debtor_name=str(v["name"]) or "(unknown)", total=float(v["total"]), paid=float(v["paid"]))
+        for v in by_debtor.values()
+    ]
+    items.sort(key=lambda i: (-(i.total - i.paid), i.debtor_name.lower()))
+
+    total_amount = sum(i.total for i in items)
+    total_paid = sum(i.paid for i in items)
+
+    flow_state.set(KEY_SELECTED_CARD_VIEW_DATA_CARD_ID, card_id)
+    flow_state.set(KEY_SELECTED_CARD_DEBTS_OVERVIEW_ITEMS, items)
+    flow_state.set(KEY_SELECTED_CARD_DEBTS_OVERVIEW_TOTAL, total_amount)
+    flow_state.set(KEY_SELECTED_CARD_DEBTS_OVERVIEW_PAID, total_paid)
+
+
+async def list_debts_for_selected_card(flow_state, api, user_id: int) -> List[CardDebtItem]:
+    card_id = flow_state.get(KEY_SELECTED_CARD_ID)
+    if not isinstance(card_id, str) or not card_id:
+        return []
+
+    card = await CoffeeCard.get(card_id)
+    if not card:
+        return []
+
+    await _load_card_debts_overview(flow_state, api, card)
+    return flow_state.get(KEY_SELECTED_CARD_DEBTS_OVERVIEW_ITEMS, [])
+
+
+def format_card_debt_item(item: CardDebtItem, index: int) -> str:
+    outstanding = max(0.0, item.total - item.paid)
+    name = item.debtor_name or "(unknown)"
+    paid_text = format_money(item.paid)
+    total_text = format_money(item.total)
+    outstanding_text = format_money(outstanding)
+    return f"- **{name}**:\n`  `paid: {paid_text} / {total_text}`   `remaining: {outstanding_text}"
+
+
 def format_card_details(card: CoffeeCard, index: int) -> str:
     purchaser = cast(TelegramUser, card.purchaser)  # fetch_links=True
     status = "🟢 Active" if card.is_active else "⚪ Completed"
@@ -560,8 +647,8 @@ async def build_create_main_text(flow_state, api, user_id: int) -> str:
     return (
         "☕ **Create New Coffee Card**\n\n"
         f"**Total Coffees:** {total_coffees}\n"
-        f"**Cost per Coffee:** €{cost_per_coffee:.2f}\n"
-        f"**Total Cost:** €{total_cost:.2f}\n\n"
+        f"**Cost per Coffee:** {format_money(cost_per_coffee)}\n"
+        f"**Total Cost:** {format_money(total_cost)}\n\n"
         f"**Your PayPal Link:** {paypal_link}\n\n"
         "Adjust values or create the card."
     )
@@ -621,7 +708,7 @@ async def build_create_price_text(flow_state, api, user_id: int) -> str:
     current = float(flow_state.get(KEY_COST_PER_COFFEE, DEFAULT_COST_PER_COFFEE))
     return (
         "💰 **Cost per Coffee**\n\n"
-        f"Current value: **€{current:.2f}**\n\n"
+        f"Current value: **{format_money(current)}**\n\n"
         "Type the new price in EUR (examples: `0.8`, `0,80`, `€0,80`)."
     )
 
@@ -642,7 +729,7 @@ async def handle_create_price_input(input_text: str, flow_state, api, user_id: i
         flow_state.set(
             "create_price_error",
             "❌ **Too large**\n\n"
-            "Please enter a value up to **100 €**.",
+            f"Please enter a value up to **{format_money(100)}**.",
         )
         return STATE_CREATE_PRICE
 
@@ -658,8 +745,8 @@ async def build_create_confirm_text(flow_state, api, user_id: int) -> str:
     return (
         "✅ **Confirm Creation**\n\n"
         f"**Total Coffees:** {total_coffees}\n"
-        f"**Cost per Coffee:** €{cost_per_coffee:.2f}\n"
-        f"**Total Cost:** €{total_cost:.2f}\n\n"
+        f"**Cost per Coffee:** {format_money(cost_per_coffee)}\n"
+        f"**Total Cost:** {format_money(total_cost)}\n\n"
         "Create this coffee card now?"
     )
 
@@ -697,8 +784,8 @@ async def build_create_result_text(flow_state, api, user_id: int) -> str:
         "✅ **Coffee Card Created**\n\n"
         f"**Name:** {card.name}\n"
         f"**Total Coffees:** {card.total_coffees}\n"
-        f"**Cost per Coffee:** €{card.cost_per_coffee:.2f}\n"
-        f"**Total Cost:** €{card.total_cost:.2f}\n\n"
+        f"**Cost per Coffee:** {format_money(card.cost_per_coffee)}\n"
+        f"**Total Cost:** {format_money(card.total_cost)}\n\n"
         "The card is now active."
     )
 
@@ -1003,12 +1090,32 @@ def create_card_menu_flow() -> MessageFlow:
             state_id=STATE_CARD_DETAILS,
             state_type=StateType.BUTTON,
             text_builder=build_card_details_text,
+            buttons=[[ButtonCallback("💳 Debts", STATE_CARD_DEBTS)]],
             pagination_config=PaginationConfig(page_size=3, items_per_row=1, close_button_text="◁ Back"),
             pagination_items_builder=list_history_for_selected_card,
             pagination_item_formatter=format_history_item,
-            pagination_reset_on_enter=True,
+            pagination_reset_on_enter=False,
             exit_buttons=[],
             on_button_press=handle_card_details_button,
+            route_callback_to_state_id=True,
+            route_callback_allowlist=[STATE_CARD_DEBTS],
+        )
+    )
+
+    flow.add_state(
+        MessageDefinition(
+            state_id=STATE_CARD_DEBTS,
+            state_type=StateType.BUTTON,
+            text_builder=build_card_debts_text,
+            buttons=[[ButtonCallback("📜 Orders", STATE_CARD_DETAILS)]],
+            pagination_config=PaginationConfig(page_size=10, items_per_row=1, close_button_text="◁ Back"),
+            pagination_items_builder=list_debts_for_selected_card,
+            pagination_item_formatter=format_card_debt_item,
+            pagination_reset_on_enter=False,
+            exit_buttons=[],
+            on_button_press=handle_card_details_button,
+            route_callback_to_state_id=True,
+            route_callback_allowlist=[STATE_CARD_DETAILS],
         )
     )
 
