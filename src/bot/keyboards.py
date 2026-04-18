@@ -11,6 +11,7 @@ from telethon import Button, events
 from pydantic import BaseModel, Field
 
 from .message_flow_ids import CommonCallbacks
+from .message_flow_helpers import format_money
 
 if TYPE_CHECKING:
     from ..api.telethon_api import GroupState
@@ -205,7 +206,7 @@ class KeyboardManager:
         for card_name, amount, debt_id in debts:
             buttons.append([
                 Button.inline(
-                    f"💳 {card_name}: €{amount:.2f}", 
+                    f"💳 {card_name}: {format_money(amount)}",
                     f"credit_settle:{debt_id}"
                 )
             ])

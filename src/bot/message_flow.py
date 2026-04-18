@@ -672,6 +672,16 @@ class MessageFlow:
         items_text = "\n".join(text_parts)
         
         return buttons, items_text
+
+    @staticmethod
+    def _prepend_static_buttons(
+        base_buttons: List[List[ButtonCallback]],
+        extra_buttons: Optional[List[List[ButtonCallback]]],
+    ) -> List[List[ButtonCallback]]:
+        """Prepend static `MessageDefinition.buttons` above pagination rows."""
+        if not extra_buttons:
+            return base_buttons
+        return list(extra_buttons) + list(base_buttons)
     
     async def _handle_pagination_button(
         self,
@@ -736,6 +746,7 @@ class MessageFlow:
         button_callbacks: Optional[List[List[ButtonCallback]]] = None
         if current_def.pagination_config:
             button_callbacks, items_text = await self._build_pagination_keyboard(flow_state, current_def, api, user_id)
+            button_callbacks = self._prepend_static_buttons(button_callbacks, current_def.buttons)
             if items_text:
                 full_text = f"{full_text}\n\n{items_text}"
         elif current_def.keyboard_builder:
@@ -1025,6 +1036,7 @@ class MessageFlow:
                 button_callbacks, items_text = await self._build_pagination_keyboard(
                     flow_state, current_def, api, user_id
                 )
+                button_callbacks = self._prepend_static_buttons(button_callbacks, current_def.buttons)
                 # Append items to text
                 text = f"{text}\n\n{items_text}"
             elif current_def.keyboard_builder:

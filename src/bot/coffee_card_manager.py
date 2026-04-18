@@ -3,6 +3,8 @@ import asyncio
 from typing import List, Dict, Any, TYPE_CHECKING, Optional
 from datetime import datetime
 
+from beanie.odm.fields import Link as BeanieLink
+
 from src.exceptions.coffee_exceptions import InsufficientCoffeeError, UserNotFoundError
 
 from ..models.coffee_models import CoffeeCard, CoffeeOrder, CoffeeSession, ConsumerStats, UserDebt
@@ -16,6 +18,7 @@ from src.common.log import log_coffee_card_created, Logger
 from .keyboards import KeyboardManager
 from .message_flow import ButtonCallback
 from .message_flow_ids import DebtQuickConfirmCallbacks
+from .message_flow_helpers import format_money
 from ..services.gsheet_sync import request_gsheet_sync_after_action
 from ..database.snapshot_manager import get_current_pending_snapshot, pending_snapshot
 
@@ -44,6 +47,124 @@ class CoffeeCardManager:
 
     async def _update_available(self):
         self.available = sum(card.remaining_coffees for card in self.cards)
+
+
+    async def find_orders_for_card(self, card: CoffeeCard) -> List[CoffeeOrder]:
+        """Fetch all orders that used the given card (newest first).
+
+        Kept on the manager because it is DB access and used by multiple UIs.
+        """
+        if card.id is None:
+            return []
+
+        orders_by_id: Dict[str, CoffeeOrder] = {}
+
+        query_variants: List[Dict[str, Any]] = [
+            {"coffee_cards.$id": card.id},
+            {"coffee_cards": card.id},
+            {"coffee_cards._id": card.id},
+        ]
+
+        for query in query_variants:
+            matched: List[CoffeeOrder] = (
+                await CoffeeOrder.find(query, fetch_links=True).sort("-order_date").to_list()
+            )  # type: ignore[arg-type]
+            for order in matched:
+                if order.id is None:
+                    continue
+                orders_by_id[str(order.id)] = order
+
+        # Fallback: if card keeps an explicit order list, merge it too.
+        try:
+            await card.fetch_link("orders")
+        except Exception:
+            pass
+
+        for linked in card.orders:
+            if isinstance(linked, CoffeeOrder) and linked.id is not None:
+                orders_by_id.setdefault(str(linked.id), linked)
+
+        return sorted(orders_by_id.values(), key=lambda o: o.order_date, reverse=True)
+
+
+    async def find_orders_for_session(self, session: CoffeeSession) -> List[CoffeeOrder]:
+        """Fetch all orders for a session (newest first)."""
+        if session.id is None:
+            return []
+
+        orders_by_id: Dict[str, CoffeeOrder] = {}
+
+        query_variants: List[Dict[str, Any]] = [
+            {"session.$id": session.id},
+            {"session": session.id},
+            {"session._id": session.id},
+        ]
+
+        for query in query_variants:
+            matched: List[CoffeeOrder] = (
+                await CoffeeOrder.find(query, fetch_links=False).sort("-order_date").to_list()
+            )  # type: ignore[arg-type]
+            for order in matched:
+                if order.id is None:
+                    continue
+                orders_by_id[str(order.id)] = order
+
+        # Fallback: merge explicit session order list.
+        try:
+            await session.fetch_link("orders")
+        except Exception:
+            pass
+
+        for linked in session.orders:
+            if isinstance(linked, CoffeeOrder) and linked.id is not None:
+                orders_by_id.setdefault(str(linked.id), linked)
+
+        return sorted(orders_by_id.values(), key=lambda o: o.order_date, reverse=True)
+
+
+    async def find_debts_for_card(self, card: CoffeeCard) -> List[UserDebt]:
+        """Fetch all debts belonging to a card (latest updated first)."""
+        if card.id is None:
+            return []
+
+        debts_by_id: Dict[str, UserDebt] = {}
+
+        query_variants: List[Dict[str, Any]] = [
+            {"coffee_card.$id": card.id},
+            {"coffee_card": card.id},
+            {"coffee_card._id": card.id},
+        ]
+
+        for query in query_variants:
+            matched: List[UserDebt] = (
+                await UserDebt.find(query, fetch_links=True).sort("-updated_at").to_list()
+            )  # type: ignore[arg-type]
+            for debt in matched:
+                if debt.id is None:
+                    continue
+                debts_by_id[str(debt.id)] = debt
+
+        debts = sorted(debts_by_id.values(), key=lambda d: d.updated_at, reverse=True)
+
+        # Ensure debtor links are resolved even for historical DBRef variants.
+        for debt in debts:
+            try:
+                await debt.fetch_link("debtor")
+            except Exception:
+                pass
+
+            if isinstance(debt.debtor, BeanieLink) and debt.debtor.ref is not None:
+                ref = debt.debtor.ref
+                if ref.collection == TelegramUser.Settings.name:
+                    resolved = await TelegramUser.get(ref.id)
+                    if resolved is not None:
+                        debt.debtor = resolved  # type: ignore[assignment]
+                elif ref.collection == PassiveUser.Settings.name:
+                    resolved = await PassiveUser.get(ref.id)
+                    if resolved is not None:
+                        debt.debtor = resolved  # type: ignore[assignment]
+
+        return debts
 
 
 
@@ -188,8 +309,8 @@ class CoffeeCardManager:
                     "🆕 **New coffee card created**\n\n"
                     f"Card: **{card.name}**\n"
                     f"Total coffees: **{card.total_coffees}**\n"
-                    f"Cost per coffee: **€{card.cost_per_coffee:.2f}**\n"
-                    f"Total cost: **€{card.total_cost:.2f}**\n"
+                    f"Cost per coffee: **{format_money(card.cost_per_coffee)}**\n"
+                    f"Total cost: **{format_money(card.total_cost)}**\n"
                     f"Purchaser: **{purchaser_name}**"
                 )
                 for admin_id in admin_ids:
@@ -317,7 +438,7 @@ class CoffeeCardManager:
         # Build debt summary message for purchaser
         if debts:
             debt_summary = "\n".join([
-                f"• {d.debtor.display_name}: €{d.total_amount:.2f} ({d.total_coffees} coffees)"  # type: ignore
+                f"• {d.debtor.display_name}: {format_money(d.total_amount)} ({d.total_coffees} coffees)"  # type: ignore
                 for d in debts
             ])
             total_debt = sum(d.total_amount for d in debts)
@@ -331,7 +452,7 @@ class CoffeeCardManager:
         purchaser_message = (
             f"{notification_prefix}\n\n"
             f"📋 Card: **{card.name}**\n"
-            f"💰 Total to Collect: **€{total_debt:.2f}**\n\n"
+            f"💰 Total to Collect: **{format_money(total_debt)}**\n\n"
         )
         
         if debts:
@@ -375,7 +496,7 @@ class CoffeeCardManager:
                 f"💳 **Coffee Card Completed!**\n\n"
                 f"📋 Card: **{card.name}**\n"
                 f"☕ You drank: **{debt.total_coffees} coffees**\n"
-                f"💰 You owe: **€{debt.total_amount:.2f}** to: **{purchaser.display_name}**\n"
+                f"💰 You owe: **{format_money(debt.total_amount)}** to: **{purchaser.display_name}**\n"
             )
             
             # Add payment link with amount if available

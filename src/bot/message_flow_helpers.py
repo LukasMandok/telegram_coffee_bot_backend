@@ -29,6 +29,25 @@ def format_date(value: Any, *, fmt: str = "%d.%m.%Y %H:%M") -> str:
     return str(value)
 
 
+def format_money(
+    value: Any,
+    *,
+    currency_symbol: str = "€",
+    decimals: int = 2,
+) -> str:
+    """Format a numeric money-like value for message flows (e.g. '6.60 €')."""
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+    if abs(amount) < 0.0005:
+        amount = 0.0
+
+    amount = round(amount, decimals)
+    return f"{amount:.{decimals}f} {currency_symbol}"
+
+
 class GridLayout:
     """
     Helper for building grid-based button layouts.

@@ -12,6 +12,7 @@ from ..message_flow_helpers import (
     GridLayout,
     ListBuilder,
     NavigationButtons,
+    format_money,
     make_state,
 )
 from ..payment_flow import (
@@ -102,14 +103,14 @@ async def build_main_text(flow_state, api, user_id) -> str:
     items = []
     for creditor_name in sorted(creditor_summary.keys()):
         total_owed = creditor_summary[creditor_name]["total_owed"]
-        items.append((creditor_name, f"{total_owed:.2f} €"))
+        items.append((creditor_name, format_money(total_owed)))
 
     builder = ListBuilder()
     total_all = sum(info["total_owed"] for info in creditor_summary.values())
     return builder.build(
         title="💳 Your Debt Overview",
         items=items,
-        summary=f"Total Outstanding: {total_all:.2f} €",
+        summary=f"Total Outstanding: {format_money(total_all)}",
         align_values=True,
     )
 
@@ -123,7 +124,7 @@ async def build_main_keyboard(flow_state, api, user_id) -> List[List[ButtonCallb
     creditor_items = []
     for creditor_name in sorted(creditor_summary.keys()):
         total_owed = creditor_summary[creditor_name]["total_owed"]
-        creditor_items.append((f"💰 {creditor_name} ({total_owed:.2f} €)", f"creditor:{creditor_name}"))
+        creditor_items.append((f"💰 {creditor_name} ({format_money(total_owed)})", f"creditor:{creditor_name}"))
 
     return grid.build(items=creditor_items, footer_buttons=[NavigationButtons.close()])
 
@@ -162,7 +163,7 @@ async def build_creditor_debts_text(flow_state, api, user_id) -> str:
             "amount": outstanding,
             "debt": debt,
         }
-        card_items.append((card_name, f"{outstanding:.2f} €"))
+        card_items.append((card_name, format_money(outstanding)))
 
     flow_state.set(KEY_CREDITOR_DEBTS, creditor_debts)
 
@@ -170,9 +171,12 @@ async def build_creditor_debts_text(flow_state, api, user_id) -> str:
     total_staged = get_total_staged(flow_state)
 
     builder = ListBuilder()
-    summary = f"Total owed: {total_owed:.2f} €"
+    summary = f"Total owed: {format_money(total_owed)}"
     if total_staged > 0:
-        summary += f"\nStaged: {total_staged:.2f} €\nRemaining: {(total_owed - total_staged):.2f} €"
+        summary += (
+            f"\nStaged: {format_money(total_staged)}"
+            f"\nRemaining: {format_money(total_owed - total_staged)}"
+        )
 
     text = builder.build(
         title=f"Payments to {creditor_name}",
@@ -222,7 +226,7 @@ async def handle_creditor_debts_button(data: str, flow_state, api, user_id) -> O
 
         await api.message_manager.send_text(
             user_id,
-            f"✅ Marked {total_staged:.2f} € as paid to {creditor_name}",
+            f"✅ Marked {format_money(total_staged)} as paid to {creditor_name}",
             vanish=True,
             conv=True,
             delete_after=2,
@@ -244,8 +248,8 @@ async def handle_creditor_debts_button(data: str, flow_state, api, user_id) -> O
                     creditor_user.user_id,
                     (
                         f"💸 **Payment update**\n\n"
-                        f"{debt_user.display_name} marked **{total_staged:.2f} €** as paid to you.\n"
-                        f"Remaining owed by {debt_user.display_name}: **{remaining_owed:.2f} €**"
+                        f"{debt_user.display_name} marked **{format_money(total_staged)}** as paid to you.\n"
+                        f"Remaining owed by {debt_user.display_name}: **{format_money(remaining_owed)}**"
                     ),
                 )
 

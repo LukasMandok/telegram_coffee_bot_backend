@@ -18,6 +18,7 @@ from .message_flow_helpers import (
     GridLayout, ListBuilder, make_state,
     CommonCallbacks,
     NavigationButtons,
+    format_money,
 )
 from .payment_flow import (
     build_staged_payments_keyboard,
@@ -122,9 +123,9 @@ async def build_credit_main_text(flow_state, api, user_id) -> str:
                 groups[debtor_name] = []
                 group_totals[debtor_name] = 0.0
 
-            groups[debtor_name].append((card_name, f"{outstanding:.2f} €"))
+            groups[debtor_name].append((card_name, format_money(outstanding)))
             group_totals[debtor_name] += outstanding
-            group_summaries[debtor_name] = f"Subtotal: {group_totals[debtor_name]:.2f} €"
+            group_summaries[debtor_name] = f"Subtotal: {format_money(group_totals[debtor_name])}"
             total += outstanding
     else:
         for debt in all_credits:
@@ -136,9 +137,9 @@ async def build_credit_main_text(flow_state, api, user_id) -> str:
                 groups[card_name] = []
                 group_totals[card_name] = 0.0
 
-            groups[card_name].append((debtor_name, f"{outstanding:.2f} €"))
+            groups[card_name].append((debtor_name, format_money(outstanding)))
             group_totals[card_name] += outstanding
-            group_summaries[card_name] = f"Subtotal: {group_totals[card_name]:.2f} €"
+            group_summaries[card_name] = f"Subtotal: {format_money(group_totals[card_name])}"
             total += outstanding
     
     # Use ListBuilder for formatting
@@ -148,7 +149,7 @@ async def build_credit_main_text(flow_state, api, user_id) -> str:
         title=title,
         groups=groups,
         group_summaries=group_summaries,
-        overall_summary=f"Total Owed to You: {total:.2f} €",
+        overall_summary=f"Total Owed to You: {format_money(total)}",
         align_values=True  # Enable aligned formatting
     )
 
@@ -193,11 +194,11 @@ async def _send_debt_reminder_with_quick_confirm(
     card_name = debt.coffee_card.name if debt.coffee_card else "Unknown Card"
     notify_text = (
         "💳 **Payment Reminder**\n\n"
-        f"You owe **{outstanding:.2f} €** to {creditor_name}\n"
+        f"You owe **{format_money(outstanding)}** to {creditor_name}\n"
         f"from coffee card: **{card_name}**"
     )
     if creditor_paypal_link:
-        notify_text += f"\n\n💳 Pay now: {creditor_paypal_link}/{outstanding:.2f} €"
+        notify_text += f"\n\n💳 Pay now: {creditor_paypal_link}/{outstanding:.2f}EUR"
 
     reminder = await api.message_manager.send_user_notification(
         debtor_user_id,
@@ -292,7 +293,7 @@ async def build_notify_users_keyboard(flow_state, api, user_id) -> List[List[But
     notified_ids = set(flow_state.get(KEY_NOTIFIED_USER_IDS, []))
     items = [
         (
-            f"{'✅ ' if debtor_id in notified_ids else ''}{name} ({total:.2f} €)",
+            f"{'✅ ' if debtor_id in notified_ids else ''}{name} ({format_money(total)})",
             f"{CB_NOTIFY_USER_PREFIX}{debtor_id}",
         )
         for debtor_id, (name, total) in sorted(totals.items(), key=lambda it: it[1][0].lower())
@@ -363,7 +364,7 @@ async def build_debtors_list_text(flow_state, api, user_id) -> str:
     
     # Use ListBuilder
     builder = ListBuilder()
-    items = [(name, f"{total:.2f} €") for name, total in debtor_totals.items()]
+    items = [(name, format_money(total)) for name, total in debtor_totals.items()]
     return builder.build(
         title="Select a debtor to mark payments:",
         items=items,
@@ -384,7 +385,7 @@ async def build_debtors_list_keyboard(flow_state, api, user_id) -> List[List[But
     
     # Use GridLayout helper
     grid = GridLayout(items_per_row=2)
-    items = [(f"{name} ({total:.2f} €)", f"debtor:{name}") for name, total in sorted(debtor_totals.items())]
+    items = [(f"{name} ({format_money(total)})", f"debtor:{name}") for name, total in sorted(debtor_totals.items())]
 
     return grid.build(
         items=items,
@@ -437,11 +438,11 @@ async def build_debtor_debts_text(flow_state, api, user_id) -> str:
     
     # Build text
     text = f"**Payments from {debtor_name}**\n\n"
-    text += f"Total owed: **{total_owed:.2f} €**\n"
+    text += f"Total owed: **{format_money(total_owed)}**\n"
     
     if total_staged > 0:
-        text += f"Staged payments: **{total_staged:.2f} €**\n"
-        text += f"Remaining: **{(total_owed - total_staged):.2f} €**"
+        text += f"Staged payments: **{format_money(total_staged)}**\n"
+        text += f"Remaining: **{format_money(total_owed - total_staged)}**"
     
     return text
 
@@ -475,14 +476,14 @@ async def notify_debtors(
     remaining_line = (
         f"✅ You don't owe any more money to {creditor_name}."
         if remaining_owed <= EPS
-        else f"You still owe **{remaining_owed:.2f} €** to {creditor_name}."
+        else f"You still owe **{format_money(remaining_owed)}** to {creditor_name}."
     )
 
     await api.message_manager.send_user_notification(
         debtor_telegram_user_id,
         (
             "💸 **Payment update**\n\n"
-            f"{creditor_name} marked **{paid_amount:.2f} €** as paid.\n"
+            f"{creditor_name} marked **{format_money(paid_amount)}** as paid.\n"
             f"{remaining_line}"
         ),
     )
@@ -510,7 +511,7 @@ async def handle_debtor_debts_button(data: str, flow_state, api, user_id) -> Opt
         debtor_name = flow_state.get(KEY_SELECTED_DEBTOR, 'selected debtor')
         await api.message_manager.send_text(
             user_id,
-            f"✅ Marked {_total_staged:.2f} € as paid by {debtor_name}",
+            f"✅ Marked {format_money(_total_staged)} as paid by {debtor_name}",
             vanish=True,
             conv=True,
             delete_after=2,

@@ -8,7 +8,15 @@ from telethon import events
 
 from ..models.beanie_models import PassiveUser, TelegramUser
 from .message_flow import ButtonCallback
-from .message_flow_helpers import CommonCallbacks, GridLayout, InputDistributor, MoneyParser, NavigationButtons, StagingManager
+from .message_flow_helpers import (
+    CommonCallbacks,
+    GridLayout,
+    InputDistributor,
+    MoneyParser,
+    NavigationButtons,
+    StagingManager,
+    format_money,
+)
 from .message_flow_ids import DebtQuickConfirmCallbacks
 
 
@@ -48,9 +56,9 @@ async def build_staged_payments_keyboard(
         if staged_amount > 0 and remaining <= 0:
             text = f"{card_name} ✓"
         elif staged_amount > 0:
-            text = f"{card_name} ({remaining:.2f} €)"
+            text = f"{card_name} ({format_money(remaining)})"
         else:
-            text = f"{card_name} ({original:.2f} €)"
+            text = f"{card_name} ({format_money(original)})"
 
         items.append((text, f"pay_card:{item_id}"))
 
@@ -177,7 +185,7 @@ async def handle_staged_payments_input(
     if amount > total_owed:
         await api.message_manager.send_text(
             user_id,
-            f"❌ Amount cannot exceed total owed ({total_owed:.2f} €)",
+            f"❌ Amount cannot exceed total owed ({format_money(total_owed)})",
             vanish=True,
             conv=True,
             delete_after=2,
@@ -200,7 +208,7 @@ async def handle_staged_payments_input(
 
     await api.message_manager.send_text(
         user_id,
-        f"✅ Staged {amount:.2f} € payment across {len(distributed)} card(s)",
+        f"✅ Staged {format_money(amount)} payment across {len(distributed)} card(s)",
         vanish=True,
         conv=True,
         delete_after=2,
@@ -234,7 +242,7 @@ async def _notify_creditor_debt_quick_confirm(
             debt.creditor.user_id,
             (
                 "💸 **Payment update**\n\n"
-                f"{debt.debtor.display_name} marked **{paid_amount:.2f} €** as paid.\n"
+                f"{debt.debtor.display_name} marked **{format_money(paid_amount)}** as paid.\n"
                 f"Card: **{card_name}**"
             ),
         )
@@ -333,7 +341,7 @@ async def handle_debt_quick_confirm_callback(*, event: events.CallbackQuery.Even
                 sender_id,
                 (
                     f"ℹ️ This debt for {card_name} was already partially paid "
-                    f"(**{float(debt.paid_amount):.2f} €** of **{float(debt.total_amount):.2f} €**). "
+                    f"(**{format_money(float(debt.paid_amount))}** of **{format_money(float(debt.total_amount))}**). "
                     "Please use /debt to manage it."
                 ),
                 auto_delete=auto_delete_seconds,

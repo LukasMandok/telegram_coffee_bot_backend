@@ -15,6 +15,7 @@ from ..models.coffee_models import CoffeeCard, Payment, UserDebt, PaymentReason
 from ..models.beanie_models import TelegramUser, PassiveUser
 from ..dependencies.dependencies import get_repo
 from ..services.gsheet_sync import request_gsheet_sync_after_action
+from .message_flow_helpers import format_money
 
 
 class DebtManager:
@@ -495,7 +496,7 @@ class DebtManager:
                 created_at = now
 
             entry = (
-                f"- {card_name}: €{before_paid:.2f} → €{after_paid:.2f} / €{debt.total_amount:.2f} ({status_icon} {status_label})"
+                f"- {card_name}: {format_money(before_paid)} → {format_money(after_paid)} / {format_money(debt.total_amount)} ({status_icon} {status_label})"
             )
             changes_by_direction.setdefault(direction, []).append((created_at, entry))
 

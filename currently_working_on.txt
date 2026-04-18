@@ -13,17 +13,14 @@ remaining:
 
 
 Coffee Cards:
-- a button in the coffee card details to switch to debts, which shows the debts on the card for all users, and show how much of it is paid (also per user)
-- the Card Completed (All debtors have been notified) message is not necessary at all.
 - Royalty system (adjustable in the settings). either an adjustable amount of free coffee for the creditor or that he doesn't have to contribute to missing coffees. 
 
 Sessions / Order:
 - show payed by in an ongoing order and the name of the current coffee card
 - order should show the name of the currently active card
 - in the coffee order summary, add who gave the order/completed the session to the message
-- prevent users from joning the same session multiple times (this is porbably only possible because of a bug but still)
-- sessions should timout after 10 min if it is suspended and noone joins again (probably already implemented)
-
+XXX issues with the multiple participants and inactivity of sessions (see below) 
+- when a user joins the session, give the other users, which ar already in the session a short notification, that someone else also joined.
 
 
 Snapshots: 
@@ -49,6 +46,7 @@ Credit menu:
 
 General:
 - catch the Ctrl+C in the terminal, to make sure that the bot is closed properly
+- remove all brief notifications on button presses, in case the button changes
 
 Settings:
 - Settings for vanishing messages are currently not consistent between bot restarts. It looks like they are not correctly saved in the database or are overwritten by another place
@@ -79,9 +77,11 @@ not working:
 
 
 
+# next
+- enfore the paypal flow being carried out before the a user can create a new card, in case he doesnt have a paypal link setup yet.
 
 
-Google Spredsheet two-way syncing:
+### Google Spredsheet two-way syncing:
 
 Can you help me implement a two-way syncing.
 The idea behind this is, that users should be able to make changes in the google spreadsheet (only for the paid amount, all other cells should be protected).
@@ -90,5 +90,15 @@ it is important that this only affects paid amount so far.
 Also I need a mechanism, to make sure that changes of the paid amount in the bot are priotised over the changes in the spreadsheet, if they affect the same value.
 this means, that for paid amounts, the actual changed values should be forwarded to the syncing algorithm, so it does not overwrite them
 
-# next
-- enfore the paypal flow being carried out before the a user can create a new card, in case he doesnt have a paypal link setup yet.
+
+#### Multi-participant Sessions
+
+there are currently issues in how a session and group keyboard is handled, when multiple users joined.
+what i want is the following:
+- if the conversation on one participants times out doe to inactivity, he should get a notification that the conversation was closed due to inactivity and the conversation should always be cancled for him, so that there is no ongoind conversation anymore.
+- if the conversation times out for one participant it should not affect the others. 
+- if a conversation times out it should remain suspended in the background if there were modifications done (in case nothing was done, it should just close). After 10min of inactivity also a suspended conversation should be closed.
+what currently happens wrongly is:
+- conversations are not always correctly cancled if it times out while another user is still active
+- if a conversation times out for one user, it will also close for the other users, even if they are still active (and worst of all it doesnt even cancle the conversation for them). Instead the session and keyboard should stay open for the others.
+- suspended conversations stay active indefinetly and the user handeling of participants can get messed up. 
