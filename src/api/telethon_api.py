@@ -153,6 +153,25 @@ class TelethonAPI:
         self.add_handler(lambda event: self.command_manager.handle_digits_command(event), events.NewMessage(incoming=True, pattern=re.compile(r'^\d+$')))
         self.add_handler(lambda event: self.command_manager.handle_unknown_command(event))
 
+        async def _touch_callback_activity(event_obj: events.CallbackQuery.Event) -> None:
+            sender_id_raw = event_obj.sender_id
+            if sender_id_raw is None:
+                return
+
+            sender_id = int(sender_id_raw)
+            if self.conversation_manager.has_active_conversation(sender_id):
+                cb_id = getattr(event_obj, "id", None)
+                event_key = f"cb:{cb_id}" if cb_id is not None else None
+                self.conversation_manager.touch_conversation(
+                    sender_id,
+                    reason="callback_seen",
+                    event_key=event_key,
+                )
+
+        # Treat any callback press during an active conversation as activity.
+        # Do not stop propagation; real callback handlers can still run.
+        self.bot.add_event_handler(_touch_callback_activity, events.CallbackQuery())
+
         # Callback-query handlers (registered directly; do NOT use add_handler wrapper).
         self.bot.add_event_handler(
             self.exception_handler(self.command_manager.handle_debt_quick_confirm_callback),
@@ -297,6 +316,15 @@ class TelethonAPI:
             
             # Check if there's an active conversation for this user
             has_active_conversation = self.conversation_manager.has_conversation(sender_id)
+
+            if has_active_conversation:
+                msg_id = getattr(event_obj.message, "id", None)
+                event_key = f"msg:{msg_id}" if msg_id is not None else None
+                self.conversation_manager.touch_conversation(
+                    sender_id,
+                    reason="message_seen",
+                    event_key=event_key,
+                )
             
             # Only create a new conversation group if there's no active conversation
             # Otherwise, add to the existing conversation
@@ -308,7 +336,7 @@ class TelethonAPI:
             if has_active_conversation:
                 raw_text = (event_obj.message.message or "").strip()
                 if raw_text.startswith("/") and raw_text.lower() != "/cancel":
-                    raise events.StopPropagation
+                    return
 
             await handler(event_obj)
             

@@ -7,6 +7,7 @@ authentication, and group selection processes.
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING, Dict, Any, Callable, Optional, Union, Tuple, overload, Literal
 from functools import wraps
 from pydantic import BaseModel, Field, ValidationError
@@ -55,6 +56,14 @@ class ConversationState(BaseModel):
     timeout: int = Field(default=30, gt=0, description="Conversation timeout in seconds")
     conv: Optional[Conversation] = Field(default=None, description="Active Telethon conversation object")
     cancelled: bool = Field(default=False, description="Whether this conversation has been cancelled")
+    last_activity_ts: float = Field(
+        default_factory=time.monotonic,
+        description="Monotonic timestamp of last user interaction",
+    )
+    last_activity_event_key: Optional[str] = Field(
+        default=None,
+        description="Dedup key for last activity event (message/callback)",
+    )
     
     class Config:
         arbitrary_types_allowed = True  # Allow Telethon Conversation object
@@ -238,6 +247,11 @@ class ConversationManager:
         
         self.active_conversations[user_id] = conversation_state
         self.logger.info(f"Created conversation state for user {user_id}: {conversation_type}")
+
+        self.logger.trace(
+            f"inactivity_timeout_configured (user_id={user_id}, type={conversation_type}, timeout_s={timeout})",
+            extra_tag="CONV",
+        )
         
         return conversation_state
     
@@ -257,6 +271,42 @@ class ConversationManager:
             
             return True
         return False
+
+    def touch_conversation(
+        self,
+        user_id: int,
+        *,
+        reason: str,
+        timeout_seconds: Optional[int] = None,
+        event_key: Optional[str] = None,
+    ) -> None:
+        """Update last-activity timestamp for rolling inactivity timeouts."""
+        state = self.active_conversations.get(user_id)
+        if state is None:
+            return
+
+        if event_key is not None and state.last_activity_event_key == event_key:
+            return
+
+        now_ts = time.monotonic()
+        since_last_s = now_ts - state.last_activity_ts
+
+        state.last_activity_ts = now_ts
+        state.last_activity_event_key = event_key
+
+        if timeout_seconds is not None:
+            self.logger.trace(
+                (
+                    f"inactivity_timeout_reset (user_id={user_id}, reason={reason}, "
+                    f"timeout_s={timeout_seconds}, since_last_s={since_last_s:.1f})"
+                ),
+                extra_tag="CONV",
+            )
+        else:
+            self.logger.trace(
+                f"inactivity_timeout_reset (user_id={user_id}, reason={reason}, since_last_s={since_last_s:.1f})",
+                extra_tag="CONV",
+            )
     
     def get_conversation_state(self, user_id: int) -> Optional[ConversationState]:
         """
@@ -407,12 +457,39 @@ class ConversationManager:
             ConversationCancelledException: If the user sends /cancel
             TimeoutError: If no message is received within timeout
         """
-        # Only accept messages from the expected user. This prevents cross-talk
-        # if a conversation is ever opened against a shared chat.
-        message_event = await conv.wait_event(
-            events.NewMessage(incoming=True, from_users=user_id),
-            timeout=timeout,
-        )
+        while True:
+            state = self.active_conversations.get(user_id)
+            if state is not None:
+                remaining = (state.last_activity_ts + timeout) - time.monotonic()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError
+            else:
+                remaining = timeout
+
+            try:
+                # Only accept messages from the expected user. This prevents cross-talk
+                # if a conversation is ever opened against a shared chat.
+                message_event = await conv.wait_event(
+                    events.NewMessage(incoming=True, from_users=user_id),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                # If there was any user interaction since we started waiting,
+                # keep waiting and refresh the inactivity window.
+                state = self.active_conversations.get(user_id)
+                if state is not None and (time.monotonic() - state.last_activity_ts) < timeout:
+                    continue
+                raise
+
+            msg_id = getattr(message_event.message, "id", None)
+            event_key = f"msg:{msg_id}" if msg_id is not None else None
+            self.touch_conversation(
+                user_id,
+                reason="message_received",
+                timeout_seconds=timeout,
+                event_key=event_key,
+            )
+            break
         
         # Check if the received message is a cancel command
         message_text = message_event.message.message.strip()
@@ -470,25 +547,48 @@ class ConversationManager:
         Raises:
             TimeoutError: If no button response is received within timeout
         """
-        try:
-            button_event = await conv.wait_event(
-                KeyboardManager.get_keyboard_callback_filter(user_id),
-                timeout=timeout
-            )
-
-            data = button_event.data.decode('utf8')
-            self.logger.trace(f"callback_received (user_id={user_id}, data={data})", extra_tag="TELEGRAM")
-
-            if return_event:
-                # Don't answer yet - let caller send custom popup notification
-                return data, button_event
+        while True:
+            state = self.active_conversations.get(user_id)
+            if state is not None:
+                remaining = (state.last_activity_ts + timeout) - time.monotonic()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError
             else:
-                # Answer without notification by default for backward compatibility
-                await button_event.answer()
-                return data
-        except Exception as e:
-            # Let the caller handle the exception
-            raise e
+                remaining = timeout
+
+            try:
+                button_event = await conv.wait_event(
+                    KeyboardManager.get_keyboard_callback_filter(user_id),
+                    timeout=remaining
+                )
+            except asyncio.TimeoutError:
+                # If the user interacted but did not produce a matching callback,
+                # keep waiting and treat it as activity.
+                state = self.active_conversations.get(user_id)
+                if state is not None and (time.monotonic() - state.last_activity_ts) < timeout:
+                    continue
+                raise
+
+            cb_id = getattr(button_event, "id", None)
+            event_key = f"cb:{cb_id}" if cb_id is not None else None
+            self.touch_conversation(
+                user_id,
+                reason="callback_received",
+                timeout_seconds=timeout,
+                event_key=event_key,
+            )
+            break
+
+        data = button_event.data.decode('utf8')
+        self.logger.trace(f"callback_received (user_id={user_id}, data={data})", extra_tag="TELEGRAM")
+
+        if return_event:
+            # Don't answer yet - let caller send custom popup notification
+            return data, button_event
+        else:
+            # Answer without notification by default for backward compatibility
+            await button_event.answer()
+            return data
 
     async def send_keyboard_and_wait_response(self, conv: Conversation, user_id: int, message_text: str, keyboard, timeout: int = 60) -> tuple[Optional[str], Optional[Any]]:
         """
@@ -1000,7 +1100,7 @@ class ConversationManager:
                 password = password_event.message.message.strip()
                 await password_event.message.delete()  # Delete password for security
                 
-                authenticated = await users.check_password(password)
+                authenticated = await users.check_password(self.repo, password)
                 if authenticated:
                     await self.api.message_manager.send_text(
                         chat_id, 
