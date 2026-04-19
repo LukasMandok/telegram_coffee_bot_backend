@@ -26,6 +26,7 @@ from .conversation_flows.card_flow import create_card_menu_flow, create_close_ca
 from .conversation_flows.quick_order_flow import create_quick_order_flow, format_not_enough_coffees_text
 from .conversation_flows.snapshots_flow import create_snapshots_flow
 from .conversation_flows.users_flow import create_users_flow
+from .conversation_flows.session_flow import create_session_flow, KEY_SESSION_OBJ_ID
 from .message_flow_helpers import CommonFlowKeys, IntegerParser, MoneyParser
 
 from ..exceptions.coffee_exceptions import CoffeeSessionError, NoActiveCoffeeCardsError
@@ -334,8 +335,7 @@ class ConversationManager:
 
         if clear_latest_messages:
             try:
-                while self.api.message_manager.latest_messages:
-                    await self.api.message_manager.delete_oldest_message()
+                await self.api.message_manager.clear_user_messages(user_id)
             except Exception:
                 pass
         elif current_message is not None:
@@ -1008,113 +1008,28 @@ class ConversationManager:
             )
             return False
         
-        # Use GroupKeyboardManager to create and send the keyboard
-        message = await self.api.group_keyboard_manager.create_and_send_keyboard(
-            user_id, session, initial_page=0
-        )
-        
-        if not message:
-            await self.api.message_manager.send_text(
+        flow = create_session_flow(timeout_seconds=180)
+        try:
+            completed = await flow.run(
+                conv,
                 user_id,
-                "❌ Failed to create group selection interface",
-                True, True
+                self.api,
+                start_state="session_main",
+                initial_data={
+                    KEY_SESSION_OBJ_ID: session.id,
+                },
             )
-            return False
-            
-        submitted = False
-        canceled = False
-
-        while True:
-            button_data = await self.receive_button_response(conv, user_id, 180)
-            
-            if button_data is None:
-                break                   
-            if button_data == "group_submit":
-                # Disable the keyboard immediately to prevent double-submits.
-                try:
-                    await message.edit(message.text or message.message or "", buttons=None)
-                except Exception:
-                    pass
-                submitted = True
-                break
-            elif button_data == "group_cancel":
-                await message.edit("❌ **Cancelled**", buttons=None)
-                canceled = True
-                break
-            
-            elif "group_plus" in button_data:
-                name = button_data.split("_")[2]
-                # Update session and sync all keyboards
-                await self.api.session_manager.update_session_member_coffee(
-                    name, 'add'
-                )
-            elif "group_minus" in button_data:
-                name = button_data.split("_")[2]
-                # Update session and sync all keyboards
-                await self.api.session_manager.update_session_member_coffee(
-                    name, 'remove'
-                )
-            elif "group_reset" in button_data:
-                name = button_data.split("_")[2]
-                # Reset this member's count to 0 and sync keyboards
-                await self.api.group_keyboard_manager.handle_member_reset(session, name)
-            elif button_data == "group_show_archived":
-                # Toggle show_archived to reveal archived users
-                await self.api.group_keyboard_manager.handle_show_archived(session, user_id)
-            elif button_data == "group_info":
-                # Non-actionable label/indicator; ignore
-                pass
-                
-            elif "group_next" in button_data:
-                await self.api.group_keyboard_manager.handle_pagination(
-                    session, user_id, 'next'
-                )
-            elif "group_prev" in button_data:  
-                await self.api.group_keyboard_manager.handle_pagination(
-                    session, user_id, 'prev'
-                )
-                
-        if submitted:
-            # Use SessionManager to complete the session
+        finally:
+            # Best-effort cleanup: don't leave a stale keyboard reference around.
             try:
-                await self.api.session_manager.complete_session(user_id)
-                log_conversation_completed(user_id, "group_selection")
-                return True
+                if session.id is not None and bool(session.is_active):
+                    self.api.group_keyboard_manager.unregister_keyboard(user_id, str(session.id))
             except Exception:
-                return False
-            finally:
-                # Ensure we don't leave a stale keyboard reference around on failure paths.
-                self.api.group_keyboard_manager.unregister_keyboard(user_id, str(session.id))
+                pass
 
-        # Unregister the keyboard when conversation ends
-        self.api.group_keyboard_manager.unregister_keyboard(user_id, str(session.id))
-            
-        if canceled:
-            log_conversation_cancelled(user_id, "group_selection", "user_cancelled")
-
-            # Finalize cancel: remove this user from the session participants
-            # and if this was the last active participant, cancel the whole session.
-            try:
-                await self.api.session_manager.remove_participant(user_id)
-            except ValueError as e:
-                self.logger.error(f"Failed to remove participant {user_id} from session", exc=e)
-                # Check if any active participants/keyboards remain; cancel session if none
-            
-            try:
-                session_id = str(session.id)
-                kb_count = self.api.group_keyboard_manager.get_session_participant_count(session_id)
-                participants_remaining = len(session.participants)
-
-                if kb_count == 0 or participants_remaining == 0:
-                    await self.api.session_manager.cancel_session()
-
-            except Exception as e:
-                self.logger.error(f"Error finalizing cancel for participant {user_id}", exc=e)
-            
-            return False
-        
-        # Timeout or other exit
-        return False
+        if completed:
+            log_conversation_completed(user_id, "group_selection")
+        return completed
 
 
     @managed_conversation("quick_order", 45)

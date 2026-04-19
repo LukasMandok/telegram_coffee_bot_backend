@@ -251,6 +251,10 @@ class TelethonAPI:
         await cast(Any, self.bot).start(bot_token=self.config.bot_token)
         log_telegram_bot_started(self.config.api_id)
 
+        # Sessions should only live while the bot runs. On startup, cancel any leftover
+        # active sessions from previous runs (this also deletes cancelled sessions with no orders).
+        await self.session_manager.cancel_leftover_active_sessions_on_startup()
+
         # Set up bot commands in Telegram UI
         await self.setup_bot_commands()
         
@@ -300,7 +304,7 @@ class TelethonAPI:
             # Only create a new conversation group if there's no active conversation
             # Otherwise, add to the existing conversation
             new_conversation = not has_active_conversation
-            self.message_manager.add_latest_message(message_model, conv=True, new=new_conversation)
+            self.message_manager.add_latest_message(sender_id, message_model, conv=True, new=new_conversation)
             
             await handler(event_obj)
             

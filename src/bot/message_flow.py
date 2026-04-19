@@ -310,6 +310,25 @@ class MessageDefinition(BaseModel):
         description="Async function called on any button press, can override next state"
     )
 
+    on_timeout: Optional[Callable[..., Awaitable[Optional[str]]]] = Field(
+        default=None,
+        description=(
+            "Async function called when waiting for user input times out. "
+            "If provided, MessageFlow will NOT raise asyncio.TimeoutError; instead it will "
+            "call this handler. Return a state_id to navigate, '__exit__' to exit, or None to "
+            "apply default timeout behavior."
+        ),
+    )
+
+    on_render: Optional[Callable[..., Awaitable[None]]] = Field(
+        default=None,
+        description=(
+            "Async function called after the message for this state was rendered (sent/edited) "
+            "and flow_state.current_message is available. Useful for side-effects like registering "
+            "message ids for external sync systems."
+        ),
+    )
+
     route_callback_to_state_id: bool = Field(
         default=False,
         description=(
@@ -521,6 +540,24 @@ class MessageFlow:
     def __init__(self):
         self.states: Dict[str, MessageDefinition] = {}
         self.logger = Logger("MessageFlow")
+
+    @staticmethod
+    def _extract_callback_data(button: Any) -> Optional[str]:
+        """Best-effort extraction of callback data from either ButtonCallback or Telethon buttons."""
+        try:
+            if hasattr(button, "callback_data"):
+                value = getattr(button, "callback_data")
+                return str(value) if value is not None else None
+            if hasattr(button, "data"):
+                raw = getattr(button, "data")
+                if raw is None:
+                    return None
+                if isinstance(raw, (bytes, bytearray)):
+                    return raw.decode("utf-8")
+                return str(raw)
+        except Exception:
+            return None
+        return None
 
     def extend(self, other: "MessageFlow", *, overwrite: bool = False, skip_existing: bool = False) -> None:
         """Merge states from another flow.
@@ -757,10 +794,18 @@ class MessageFlow:
             button_callbacks = current_def.buttons
 
         if button_callbacks is not None:
-            cancel_keyboard = [
-                [Button.inline(btn.text, btn.callback_data) for btn in row]
-                for row in button_callbacks
-            ]
+            # Convert ButtonCallback objects to Telethon buttons, or accept a prebuilt Telethon keyboard.
+            if (
+                button_callbacks
+                and button_callbacks[0]
+                and hasattr(button_callbacks[0][0], "callback_data")
+            ):
+                cancel_keyboard = [
+                    [Button.inline(btn.text, btn.callback_data) for btn in row]  # type: ignore[attr-defined]
+                    for row in button_callbacks
+                ]
+            else:
+                cancel_keyboard = button_callbacks
         
         # Send or edit message
         action = current_def.action
@@ -861,8 +906,11 @@ class MessageFlow:
                             # Check button-specific callback handlers
                             for row in (button_callbacks or []):
                                 for btn in row:
-                                    if btn.callback_data == button_data and btn.callback_handler:
-                                        next_state = await btn.callback_handler(flow_state, api, user_id)
+                                    # Only ButtonCallback supports callback_handler.
+                                    if not hasattr(btn, "callback_handler"):
+                                        continue
+                                    if self._extract_callback_data(btn) == button_data and getattr(btn, "callback_handler"):
+                                        next_state = await btn.callback_handler(flow_state, api, user_id)  # type: ignore[misc]
                                         break
                                 if next_state is not None:
                                     break
@@ -1048,15 +1096,22 @@ class MessageFlow:
             self.logger.trace(f"State: {current_def.state_id}, buttons_value={current_def.buttons}, button_callbacks={button_callbacks}")
             self.logger.trace(f"State: {current_def.state_id}, exit_buttons={current_def.exit_buttons}")
             
-            # Convert ButtonCallback objects to Telethon buttons
-            # If button_callbacks is None, keep keyboard as None to remove buttons
+            # Convert ButtonCallback objects to Telethon buttons (or accept prebuilt Telethon keyboards).
+            # If button_callbacks is None -> remove buttons.
             if button_callbacks is None:
                 keyboard = None
-            else:
+            elif (
+                button_callbacks
+                and button_callbacks[0]
+                and hasattr(button_callbacks[0][0], "callback_data")
+            ):
                 keyboard = [
-                    [Button.inline(btn.text, btn.callback_data) for btn in row]
+                    [Button.inline(btn.text, btn.callback_data) for btn in row]  # type: ignore[attr-defined]
                     for row in button_callbacks
                 ]
+            else:
+                # Already a Telethon keyboard (List[List[telethon Button]])
+                keyboard = button_callbacks
             
             self.logger.trace(f"State: {current_def.state_id}, keyboard={'None' if keyboard is None else f'{len(keyboard)} rows'}, timeout={current_def.timeout}")
             
@@ -1089,17 +1144,54 @@ class MessageFlow:
                     await asyncio.sleep(current_def.timeout)
                 return True
             
-            # Send or edit message and wait for response
-            if action == MessageAction.SEND or flow_state.current_message is None:
-                data, message = await api.conversation_manager.send_keyboard_and_wait_response(
-                    conv, user_id, text, keyboard, current_def.timeout
+            # Send or edit message, then wait for response.
+            try:
+                if action == MessageAction.SEND or flow_state.current_message is None:
+                    if keyboard is None:
+                        message = await api.message_manager.send_text(user_id, text, True, True)
+                    else:
+                        message = await api.message_manager.send_keyboard(user_id, text, keyboard, True, True)
+                    flow_state.current_message = message
+                else:
+                    if keyboard is None:
+                        await api.message_manager.edit_message(flow_state.current_message, text, buttons=None)
+                    else:
+                        await api.message_manager.edit_message(flow_state.current_message, text, buttons=keyboard)
+                    message = flow_state.current_message
+
+                if current_def.on_render is not None:
+                    await current_def.on_render(flow_state, api, user_id)
+
+                if message is None:
+                    return False
+
+                data = await api.conversation_manager.receive_button_response(
+                    conv, user_id, timeout=current_def.timeout
                 )
-                flow_state.current_message = message
-            else:
-                data, message, _ = await api.conversation_manager.edit_keyboard_and_wait_response(
-                    conv, user_id, text, keyboard, flow_state.current_message, current_def.timeout
-                )
-                flow_state.current_message = message
+            except asyncio.TimeoutError:
+                if current_def.on_timeout is None:
+                    raise
+
+                next_state_id = await current_def.on_timeout(flow_state, api, user_id)
+                if next_state_id is None:
+                    # Default timeout behavior: remove the UI if possible, then exit.
+                    try:
+                        if flow_state.current_message:
+                            await flow_state.current_message.delete()
+                    except Exception:
+                        pass
+                    return False
+
+                if next_state_id == "__exit__":
+                    return False
+
+                if next_state_id == flow_state.current_state_id:
+                    continue
+
+                flow_state.previous_state_id = flow_state.current_state_id
+                flow_state.state_history.append(flow_state.current_state_id)
+                flow_state.current_state_id = next_state_id
+                continue
             
             self.logger.trace(f"Received button callback: data={data}")
             
@@ -1176,9 +1268,12 @@ class MessageFlow:
                     # Check button-specific callbacks
                     for row in (button_callbacks or []):
                         for btn in row:
-                            if btn.callback_data == data and btn.callback_handler:
+                            # Only ButtonCallback supports callback_handler.
+                            if not hasattr(btn, "callback_handler"):
+                                continue
+                            if self._extract_callback_data(btn) == data and getattr(btn, "callback_handler"):
                                 self.logger.trace(f"Found button-specific callback for {data}")
-                                next_state_id = await btn.callback_handler(flow_state, api, user_id)
+                                next_state_id = await btn.callback_handler(flow_state, api, user_id)  # type: ignore[misc]
                                 self.logger.trace(f"Button callback returned: {next_state_id}")
                                 break
                         if next_state_id:
@@ -1199,7 +1294,12 @@ class MessageFlow:
                     # If still None, check if we should stay in same state or use default
                     if next_state_id is None:
                         # If button was handled but no state returned, stay in current state
-                        all_button_callbacks = [btn.callback_data for row in button_callbacks for btn in row] if button_callbacks else []
+                        all_button_callbacks = []
+                        for row in (button_callbacks or []):
+                            for btn in row:
+                                cb = self._extract_callback_data(btn)
+                                if cb is not None:
+                                    all_button_callbacks.append(cb)
                         self.logger.trace(f"next_state_id still None, checking if button exists: all_callbacks={all_button_callbacks}")
                         if data in all_button_callbacks:
                             # Re-render same state

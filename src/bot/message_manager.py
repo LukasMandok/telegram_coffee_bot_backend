@@ -8,7 +8,7 @@ and managing message lifecycle for the coffee ordering bot.
 import asyncio
 
 from enum import Enum
-from typing import Any, Optional, List, Union, TYPE_CHECKING
+from typing import Any, Optional, List, Union, TYPE_CHECKING, Dict
 from pydantic import BaseModel
 
 from telethon import Button
@@ -43,7 +43,9 @@ class MessageManager:
             bot_client: Telethon TelegramClient instance
         """
         self.bot: "TelegramClient" = bot_client
-        self.latest_messages: List[Union["MessageModel", List["MessageModel"], Any]] = []
+        # Per-user vanish cache:
+        # user_id -> [MessageModel | [MessageModel] | Any]
+        self.latest_messages: Dict[int, List[Union["MessageModel", List["MessageModel"], Any]]] = {}
         self.logger = Logger("MessageManager")
 
     async def send_message(self, *args: Any, **kwargs: Any) -> 'types.Message':
@@ -138,7 +140,7 @@ class MessageManager:
             message_model = MessageModel.from_telegram_message(telegram_message)
             
             if vanish:
-                self.add_latest_message(message_model, conv)
+                self.add_latest_message(user_id, message_model, conv)
             
             # Auto-delete message after delay if requested
             if delete_after > 0:
@@ -195,7 +197,7 @@ class MessageManager:
             message_model = MessageModel.from_telegram_message(telegram_message)
             
             if vanish:
-                self.add_latest_message(message_model, conv)
+                self.add_latest_message(user_id, message_model, conv)
 
             # Count buttons for logging
             button_count = 0
@@ -291,6 +293,7 @@ class MessageManager:
     
     def add_latest_message(
         self, 
+        user_id: int,
         message: Union["MessageModel", Any],
         conv: bool = False, 
         new: bool = False
@@ -299,67 +302,92 @@ class MessageManager:
         Add a message to latest_messages, supporting conversation and new flags.
         
         Args:
+            user_id: Telegram user ID (used for per-user cleanup)
             message: The message to add (MessageModel or Telegram message object)
             conv: If True, add to existing conversation list
             new: If True, create a new conversation list
         """
+        if user_id not in self.latest_messages:
+            self.latest_messages[user_id] = []
+
+        queue = self.latest_messages[user_id]
+
         if new:
-            self.latest_messages.append([message])
+            queue.append([message])
             
         elif conv:
-            if len(self.latest_messages) > 0 and isinstance(self.latest_messages[-1], list):
-                self.latest_messages[-1].append(message)
+            if len(queue) > 0 and isinstance(queue[-1], list):
+                queue[-1].append(message)
             else:
-                self.latest_messages.append([message]) 
+                queue.append([message]) 
         else:
-            self.latest_messages.append(message)
+            queue.append(message)
         
         # Debug logging: Print structure after each addition
         structure = []
-        for m in self.latest_messages:
+        for m in queue:
             if isinstance(m, list):
                 structure.append(len(m))
             else:
                 structure.append(1)
-        self.logger.trace(f"Structure after add (new={new}, conv={conv}): {structure}", extra_tag="VANISH DEBUG")
+        self.logger.trace(
+            f"Structure after add (user_id={user_id}, new={new}, conv={conv}): {structure}",
+            extra_tag="VANISH DEBUG",
+        )
+
+    async def clear_user_messages(self, user_id: int) -> None:
+        """Delete and clear all cached vanish messages for a user (best-effort)."""
+        while self.latest_messages.get(user_id):
+            await self.delete_oldest_message(user_id)
     
-    async def delete_oldest_message(self) -> None:
+    async def delete_oldest_message(self, user_id: int) -> None:
         """
-        Delete the oldest message or list of messages from latest_messages.
+        Delete the oldest message or list of messages from a user's latest_messages.
         
         This method removes and deletes the oldest message(s) from the cache
         to prevent memory buildup and clean up old UI elements.
         """
-        if not self.latest_messages:
+        queue = self.latest_messages.get(user_id)
+        if not queue:
             return
         
         # Debug logging: Print structure before deletion
         structure_before = []
-        for m in self.latest_messages:
+        for m in queue:
             if isinstance(m, list):
                 structure_before.append(len(m))
             else:
                 structure_before.append(1)
-        self.logger.trace(f"Structure before delete: {structure_before}", extra_tag="VANISH DEBUG")
+        self.logger.trace(
+            f"Structure before delete (user_id={user_id}): {structure_before}",
+            extra_tag="VANISH DEBUG",
+        )
             
-        message = self.latest_messages.pop(0)
+        message = queue.pop(0)
         if isinstance(message, list):
             await asyncio.gather(*(m.delete() for m in message))
             self.logger.trace(f"Deleted list with {len(message)} messages", extra_tag="VANISH DEBUG")
         else:
             await message.delete()
             self.logger.trace(f"Deleted single message", extra_tag="VANISH DEBUG")
+
+        if not queue:
+            self.latest_messages.pop(user_id, None)
         
         # Debug logging: Print structure after deletion
         structure_after = []
-        for m in self.latest_messages:
+        queue_after = self.latest_messages.get(user_id, [])
+        for m in queue_after:
             if isinstance(m, list):
                 structure_after.append(len(m))
             else:
                 structure_after.append(1)
-        self.logger.trace(f"Structure after delete: {structure_after}", extra_tag="VANISH DEBUG")
+        self.logger.trace(
+            f"Structure after delete (user_id={user_id}): {structure_after}",
+            extra_tag="VANISH DEBUG",
+        )
     
-    def get_latest_messages_length(self) -> List[Union[int, bool]]:
+    def get_latest_messages_length(self, user_id: int) -> List[Union[int, bool]]:
         """
         Return a list of lengths/types for latest_messages for debugging/UI.
         
@@ -368,8 +396,9 @@ class MessageManager:
             - int: Length of a message list
             - bool: True for single messages
         """
+        queue = self.latest_messages.get(user_id, [])
         length = []
-        for m in self.latest_messages:
+        for m in queue:
             if isinstance(m, list):
                 length.append(len(m))
             else:
@@ -380,25 +409,35 @@ class MessageManager:
         """Background task to delete old messages after a timeout."""
         while True:
             await asyncio.sleep(10)
-            
-            if len(self.latest_messages) == 0:
-                continue
-            
-            i = 0
-            while i < len(self.latest_messages):
-                # delete older messages if list is longer than 3
-                if len(self.latest_messages) > 3:
-                    await self.delete_oldest_message()
+
+            # Process per-user queues independently.
+            for user_id, queue in list(self.latest_messages.items()):
+                if not queue:
+                    self.latest_messages.pop(user_id, None)
                     continue
-                
-                # Check for lists in the remaining messages and delete everything before a list 
-                if isinstance(self.latest_messages[i], list):
-                    for j in range(i):
-                        if j >= len(self.latest_messages) - 2:
+
+                i = 0
+                while i < len(queue):
+                    # delete older messages if list is longer than 3
+                    if len(queue) > 3:
+                        await self.delete_oldest_message(user_id)
+                        queue = self.latest_messages.get(user_id, [])
+                        if not queue:
                             break
-                        await self.delete_oldest_message()
-        
-                i += 1
+                        continue
+
+                    # If there is a conversation list, delete everything before it (keep last UI context)
+                    if isinstance(queue[i], list):
+                        for j in range(i):
+                            if j >= len(queue) - 2:
+                                break
+                            await self.delete_oldest_message(user_id)
+                            queue = self.latest_messages.get(user_id, [])
+                            if not queue:
+                                break
+                        break
+
+                    i += 1
     
     async def send_notification_to_all_users(
         self,

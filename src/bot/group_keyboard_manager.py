@@ -5,15 +5,26 @@ This module manages the active group keyboards for each session participant
 and handles keyboard creation, real-time updates, and pagination.
 """
 
-from typing import Dict, List, Optional, TYPE_CHECKING, Any
+from typing import Any, Dict, List, Optional, Protocol, TYPE_CHECKING
+from datetime import datetime
 from ..common.log import Logger
-from ..models.coffee_models import CoffeeSession
 from .telethon_models import GroupState
 from telethon import Button
 # from .keyboards import KeyboardManager
 
 if TYPE_CHECKING:
     from ..api.telethon_api import TelethonAPI
+
+
+class _SessionLike(Protocol):
+    id: Any
+    group_state: GroupState
+
+    async def save(self) -> None: ...
+
+    async def get_available_coffees(self) -> int: ...
+
+    async def get_total_coffees(self) -> int: ...
 
 
 class ActiveKeyboard:
@@ -44,7 +55,7 @@ class GroupKeyboardManager:
         # session_id -> {user_id -> ActiveKeyboard}
         self.active_keyboards: Dict[str, Dict[int, ActiveKeyboard]] = {}
     
-    async def _determine_flags_and_message(self, session: CoffeeSession) -> tuple[bool, bool, str]:
+    async def _determine_flags_and_message(self, session: _SessionLike) -> tuple[bool, bool, str]:
         """
         Determine warning flags and build complete message text based on coffee availability.
         
@@ -214,7 +225,7 @@ class GroupKeyboardManager:
         
         return keyboard_group
 
-    async def handle_member_reset(self, session: CoffeeSession, member_name: str) -> None:
+    async def handle_member_reset(self, session: _SessionLike, member_name: str) -> None:
         """
         Reset the specified member's coffee count to 0 and sync all keyboards.
 
@@ -242,13 +253,14 @@ class GroupKeyboardManager:
                     group_state.members[member_name].coffee_count = 0  # type: ignore[attr-defined]
                 except Exception:
                     return
+            await session.save()
 
             # Propagate update to all active keyboards for this session
             await self.sync_all_keyboards_for_session(session)
         except Exception as e:
             self.logger.error(f"Failed to reset count for '{member_name}': {e}", extra_tag="KEYBOARD", exc_info=e)
     
-    async def handle_show_archived(self, session: CoffeeSession, user_id: int) -> None:
+    async def handle_show_archived(self, session: _SessionLike, user_id: int) -> None:
         """
         Toggle the show_archived flag to reveal archived users.
         Keeps the user on their current page.
@@ -274,7 +286,7 @@ class GroupKeyboardManager:
         except Exception as e:
             self.logger.error(f"Failed to show archived users: {e}", extra_tag="KEYBOARD", exc_info=e)
     
-    async def create_and_send_keyboard(self, user_id: int, session: CoffeeSession, initial_page: int = 0) -> Optional[Any]:
+    async def create_and_send_keyboard(self, user_id: int, session: _SessionLike, initial_page: int = 0) -> Optional[Any]:
         """
         Create and send a group keyboard to a user, registering it for sync.
         
@@ -348,7 +360,7 @@ class GroupKeyboardManager:
     
 
     # TODO: this is sus
-    async def sync_all_keyboards_for_session(self, session: CoffeeSession) -> None:
+    async def sync_all_keyboards_for_session(self, session: _SessionLike) -> None:
         """
         Synchronize all active keyboards for a specific session.
         
@@ -391,7 +403,7 @@ class GroupKeyboardManager:
         
         self.logger.debug(f"Synced {len(keyboards_to_update)} keyboards for session {session_id}", extra_tag="KEYBOARD")
     
-    async def handle_pagination(self, session: CoffeeSession, user_id: int, direction: str) -> None:
+    async def handle_pagination(self, session: _SessionLike, user_id: int, direction: str) -> None:
         """
         Handle pagination changes for a specific participant.
         
@@ -434,7 +446,7 @@ class GroupKeyboardManager:
             if user_id in self.active_keyboards[str(session.id)]:
                 await self.sync_single_keyboard(session, user_id)
     
-    async def sync_single_keyboard(self, session: CoffeeSession, user_id: int) -> None:
+    async def sync_single_keyboard(self, session: _SessionLike, user_id: int) -> None:
         """
         Synchronize a single participant's keyboard.
         

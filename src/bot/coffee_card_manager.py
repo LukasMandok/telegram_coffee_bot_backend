@@ -1,6 +1,6 @@
 import asyncio
 
-from typing import List, Dict, Any, TYPE_CHECKING, Optional
+from typing import List, Dict, Any, TYPE_CHECKING, Optional, Protocol, Mapping
 from datetime import datetime
 
 from beanie.odm.fields import Link as BeanieLink
@@ -25,6 +25,20 @@ from ..database.snapshot_manager import get_current_pending_snapshot, pending_sn
 # Type-only imports - only needed for type annotations
 if TYPE_CHECKING:
     from ..database.base_repo import BaseRepository
+
+
+class _SessionGroupMemberLike(Protocol):
+    coffee_count: int
+
+
+class _SessionGroupStateLike(Protocol):
+    @property
+    def members(self) -> Mapping[str, _SessionGroupMemberLike]: ...
+
+
+class _SessionForAllocation(Protocol):
+    @property
+    def group_state(self) -> _SessionGroupStateLike: ...
 
 class CoffeeCardManager:
     """Instance manager for a set of coffee cards.
@@ -634,7 +648,7 @@ class CoffeeCardManager:
         request_gsheet_sync_after_action(reason="quick_order_completed")
         return order
     
-    def allocate_session_orders(self, session: CoffeeSession) -> Dict[str, List[CoffeeCard]]:
+    def allocate_session_orders(self, session: _SessionForAllocation) -> Dict[str, List[CoffeeCard]]:
         """
         Allocate coffee cards to each member's order in a session.
         

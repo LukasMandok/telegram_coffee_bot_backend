@@ -856,6 +856,9 @@ def make_state(
     on_input_received: Optional[_Callable[..., _Awaitable[Optional[str]]]] = None,
     # Button handler
     on_button_press: Optional[_Callable[..., _Awaitable[Optional[str]]]] = None,
+    # Timeout/render hooks
+    on_timeout: Optional[_Callable[..., _Awaitable[Optional[str]]]] = None,
+    on_render: Optional[_Callable[..., _Awaitable[None]]] = None,
 ):
     """Factory to build a MessageDefinition with smart defaults.
 
@@ -916,4 +919,6 @@ def make_state(
         input_validator=input_validator,
         on_input_received=on_input_received,
         on_button_press=on_button_press,
+        on_timeout=on_timeout,
+        on_render=on_render,
     )
