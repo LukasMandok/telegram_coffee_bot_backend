@@ -1,9 +1,8 @@
 from typing import TYPE_CHECKING, Optional
 from fastapi import Depends, HTTPException
 
-from ..common.log import log_user_login_attempt, log_user_login_success, log_admin_verification, Logger
+from ..common.log import Logger
 from ..dependencies.dependencies import get_repo, repo
-from ..common.log import log_database_error
 
 if TYPE_CHECKING:
     from ..database.base_repo import BaseRepository
@@ -21,13 +20,14 @@ async def get_all_users(repo: "BaseRepository"):
 
 @repo
 async def check_user(repo: "BaseRepository", user_id: int):
-    log_user_login_attempt(user_id)
+    logger.debug(f"check_user (user_id={user_id})", extra_tag="AUTH")
     user = await repo.find_user_by_id(user_id)
     
     if user:
-        log_user_login_success(user_id, user.username if hasattr(user, 'username') else None)
+        logger.debug(f"user_found (user_id={user_id}, username={user.username})", extra_tag="AUTH")
         return True
     else:
+        logger.debug(f"user_not_found (user_id={user_id})", extra_tag="AUTH")
         return False
 
 @repo
@@ -45,7 +45,7 @@ async def check_password(repo: "BaseRepository", password_input):
 async def is_admin(repo: "BaseRepository", id):
     """Check if a user is an admin by looking up their user_id in config."""
     is_admin_user = await repo.is_user_admin(id)
-    log_admin_verification(id, is_admin_user)
+    logger.debug(f"admin_check (user_id={id}, is_admin={is_admin_user})", extra_tag="AUTH")
     return is_admin_user
 
 
@@ -82,7 +82,11 @@ async def register_user(repo: "BaseRepository", user_id: int, username: str, fir
         return new_user
     
     except Exception as e:
-        log_database_error("register_user", str(e), {"user_id": user_id})
+        logger.error(
+            f"register_user failed (user_id={user_id}, username={username})",
+            extra_tag="DB",
+            exc=e,
+        )
         raise
 
 @repo
@@ -97,7 +101,11 @@ async def create_passive_user(repo: "BaseRepository", first_name: str, last_name
         return new_user
     
     except Exception as e:
-        log_database_error("create_passive_user", str(e), {"first_name": first_name, "last_name": last_name})
+        logger.error(
+            f"create_passive_user failed (first_name={first_name}, last_name={last_name})",
+            extra_tag="DB",
+            exc=e,
+        )
         raise
 
 @repo
@@ -106,7 +114,11 @@ async def find_passive_user_by_name(repo: "BaseRepository", first_name: str, las
     try:
         return await repo.find_passive_user_by_name(first_name, last_name)
     except Exception as e:
-        log_database_error("find_passive_user_by_name", str(e), {"first_name": first_name, "last_name": last_name})
+        logger.error(
+            f"find_passive_user_by_name failed (first_name={first_name}, last_name={last_name})",
+            extra_tag="DB",
+            exc=e,
+        )
         return None
 
 
@@ -126,5 +138,9 @@ async def convert_passive_to_telegram_user(repo: "BaseRepository", passive_user,
             paypal_link=paypal_link,
         )
     except Exception as e:
-        log_database_error("convert_passive_to_telegram_user", str(e), {"user_id": user_id})
+        logger.error(
+            f"convert_passive_to_telegram_user failed (user_id={user_id}, username={username})",
+            extra_tag="DB",
+            exc=e,
+        )
         raise

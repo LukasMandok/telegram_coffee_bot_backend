@@ -166,6 +166,10 @@ class LoggingSettings(BaseModel):
     show_time: bool = Field(default=False, description="Whether to show timestamp in logs")
     show_caller: bool = Field(default=False, description="Whether to show caller context [filename:function] in logs")
     show_class: bool = Field(default=True, description="Whether to show class name tags [ClassName] in logs")
+    module_overrides: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Per-module log overrides. Values are TRACE/DEBUG/INFO/WARNING/ERROR/CRITICAL/OFF",
+    )
     
     @field_validator('level')
     @classmethod
@@ -175,6 +179,20 @@ class LoggingSettings(BaseModel):
         if v_upper not in valid_levels:
             raise ValueError(f"level must be one of {valid_levels}")
         return v_upper
+
+    @field_validator("module_overrides")
+    @classmethod
+    def validate_module_overrides(cls, v: Dict[str, str]) -> Dict[str, str]:
+        if not v:
+            return {}
+        valid_states = {"TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "OFF"}
+        normalized: Dict[str, str] = {}
+        for key, value in v.items():
+            state = (value or "").strip().upper()
+            if state not in valid_states:
+                raise ValueError(f"Invalid module log override for '{key}': {value}")
+            normalized[str(key)] = state
+        return normalized
 
 
 class NotificationSettings(BaseModel):

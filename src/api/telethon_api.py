@@ -42,10 +42,6 @@ from telethon.tl.types import (
 from ..handlers import exceptions, users
 from ..bot.telethon_models import ( MessageModel, BotConfiguration )
 from ..bot.keyboards import KeyboardButton, KeyboardManager
-from ..common.log import (
-    log_telegram_bot_started, log_telegram_command, log_telegram_callback,
-    log_telegram_message_sent, log_telegram_api_error, log_unexpected_error
-)
 from ..common.log import Logger
 
 from ..bot.message_manager import MessageManager
@@ -231,11 +227,11 @@ class TelethonAPI:
             except Exception:
                 pass
 
-            print(
+            self.logger.info(
                 f"[BOT] Bot commands configured successfully (user_commands={len(user_commands)}, admin_commands={len(admin_commands)}, admins={len(admin_user_ids)})"
             )
         except Exception as e:
-            print(f"[BOT] Error setting bot commands: {e}")
+            self.logger.error("Failed to configure bot commands", exc=e)
     
     async def run(self) -> None:
         """
@@ -249,7 +245,7 @@ class TelethonAPI:
         # Telethon's type stubs don't always mark `start()` as awaitable,
         # but at runtime it must be awaited in an async app.
         await cast(Any, self.bot).start(bot_token=self.config.bot_token)
-        log_telegram_bot_started(self.config.api_id)
+        self.logger.info(f"Telegram bot started successfully with API ID: {self.config.api_id}")
 
         # Sessions should only live while the bot runs. On startup, cancel any leftover
         # active sessions from previous runs (this also deletes cancelled sessions with no orders).
@@ -332,13 +328,16 @@ class TelethonAPI:
                 try:
                     return await func(event, *args, **kwargs)
                 except exceptions.VerificationException as e:
-                    log_telegram_api_error("user_verification", str(e), sender_id)
+                    self.logger.warning(
+                        f"[TELEGRAM] user_verification failed for user_id={sender_id}: {e}",
+                        exc=e,
+                    )
                     await self.message_manager.send_text(sender_id, e.message, True, True)
                     raise events.StopPropagation
                     # return False
                     
                 except asyncio.TimeoutError as e:
-                    log_telegram_api_error("conversation_timeout", str(e), sender_id)
+                    self.logger.debug(f"[TELEGRAM] conversation_timeout for user_id={sender_id}")
                     await self.conversation_manager.handle_timeout_abort(
                         sender_id,
                         "telethon_handler",
@@ -347,17 +346,17 @@ class TelethonAPI:
                     raise events.StopPropagation
                     
             except AttributeError as e:
-                log_telegram_api_error("invalid_event", str(e))
+                self.logger.error(f"[TELEGRAM] invalid_event: {e}", exc=e)
                 # Prevent other handlers from handling this same event after an internal error
                 raise events.StopPropagation
             # except events.StopPropagation:
             #     raise
             except asyncio.TimeoutError as e:
-                log_telegram_api_error("timeout", str(e))
+                self.logger.debug(f"[TELEGRAM] handler timeout: {e}", exc=e)
             except errors.rpcerrorlist.FloodWaitError as e:
-                log_telegram_api_error("flood_wait", str(e))
+                self.logger.warning(f"[TELEGRAM] flood_wait: {e}", exc=e)
             except errors.rpcerrorlist.UserIsBlockedError as e:
-                log_telegram_api_error("user_blocked", str(e))
+                self.logger.info(f"[TELEGRAM] user_blocked: {e}", exc=e)
                 
         return wrapper
     ### SECTION: Message Management - Moved to bot/message_manager.py

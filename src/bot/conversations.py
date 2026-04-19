@@ -33,8 +33,8 @@ from .command_catalog import COMMAND_BY_CONTEXT
 from ..exceptions.coffee_exceptions import CoffeeSessionError, NoActiveCoffeeCardsError
 
 from ..common.log import (
-    log_telegram_callback, log_conversation_started, log_conversation_step, log_unexpected_error,
-    log_conversation_completed, log_conversation_timeout, log_conversation_cancelled, Logger
+    Logger,
+    get_known_loggers, LOG_STATE_SEQUENCE, LOG_STATE_ICON, format_log_state,
 )
 
 if TYPE_CHECKING:
@@ -112,7 +112,10 @@ def managed_conversation(conversation_type: str, timeout: int = 60, use_existing
                         result = await func(self, user_id, existing_conv, state, *args, **kwargs)
                         return result
                     except ConversationCancelledException:
-                        log_conversation_cancelled(user_id, conversation_type, reason="user_cancelled")
+                        self.logger.info(
+                            f"conversation_cancelled (user_id={user_id}, type={conversation_type}, reason=user_cancelled)",
+                            extra_tag="CONV",
+                        )
                         return False
                 else:
                     # Open a new Telethon conversation and pass it into the wrapped function
@@ -122,7 +125,10 @@ def managed_conversation(conversation_type: str, timeout: int = 60, use_existing
                             result = await func(self, user_id, conv, state, *args, **kwargs)
                             return result
                         except ConversationCancelledException:
-                            log_conversation_cancelled(user_id, conversation_type, reason="user_cancelled")
+                            self.logger.info(
+                                f"conversation_cancelled (user_id={user_id}, type={conversation_type}, reason=user_cancelled)",
+                                extra_tag="CONV",
+                            )
                             return False
             except asyncio.TimeoutError:
                 # Mark that a timeout occurred and handle cleanup centrally
@@ -135,7 +141,11 @@ def managed_conversation(conversation_type: str, timeout: int = 60, use_existing
                 return False
             except Exception as e:
                 # Log unexpected errors and return False to the caller
-                log_unexpected_error(f"managed_conversation_{conversation_type}", str(e), {"user_id": user_id})
+                self.logger.error(
+                    f"managed_conversation failed (type={conversation_type}, user_id={user_id})",
+                    extra_tag="CONV",
+                    exc=e,
+                )
                 return False
             finally:
                 # Only clean up if not timed out (let exception handler handle timeouts)
@@ -310,7 +320,10 @@ class ConversationManager:
             # Remove from active conversations (this will also show the persistent keyboard)
             self.remove_conversation_state(user_id)
 
-            log_conversation_cancelled(user_id, conversation_state.step, "user_cancelled")
+            self.logger.info(
+                f"conversation_cancelled (user_id={user_id}, step={conversation_state.step}, reason=user_cancelled)",
+                extra_tag="CONV",
+            )
             
             return True
         
@@ -326,10 +339,10 @@ class ConversationManager:
         clear_latest_messages: bool = False,
     ) -> None:
         """Apply consistent timeout handling: close stale UI, notify, and clear state."""
-        try:
-            log_conversation_timeout(user_id, context, "inactivity")
-        except Exception:
-            pass
+        self.logger.warning(
+            f"conversation_timeout (user_id={user_id}, context={context}, reason=inactivity)",
+            extra_tag="CONV",
+        )
 
         if clear_latest_messages:
             try:
@@ -452,7 +465,7 @@ class ConversationManager:
             )
 
             data = button_event.data.decode('utf8')
-            log_telegram_callback(user_id, data)
+            self.logger.trace(f"callback_received (user_id={user_id}, data={data})", extra_tag="TELEGRAM")
 
             if return_event:
                 # Don't answer yet - let caller send custom popup notification
@@ -664,7 +677,10 @@ class ConversationManager:
         
         if data == "No":
             await self.send_or_edit_message(user_id, "Register process aborted.", message_register, remove_buttons=True)
-            log_conversation_cancelled(user_id, "registration", "user_declined")
+            self.logger.info(
+                f"conversation_cancelled (user_id={user_id}, type=registration, reason=user_declined)",
+                extra_tag="CONV",
+            )
             return False
             
         await self.send_or_edit_message(user_id, "Start Register process.", message_register, remove_buttons=True)
@@ -677,7 +693,10 @@ class ConversationManager:
             return False
 
         # Get user information from Telegram
-        log_conversation_step(user_id, "registration", "fetching_user_info")
+        self.logger.trace(
+            f"conversation_step (user_id={user_id}, type=registration, step=fetching_user_info)",
+            extra_tag="CONV",
+        )
         user_entity = await self.api.bot.get_entity(user_id)
         username = getattr(user_entity, 'username', None)
         first_name = getattr(user_entity, 'first_name', None)
@@ -707,7 +726,10 @@ class ConversationManager:
             photo_id = None
         
         if first_name is None: 
-            log_conversation_step(user_id, "registration", "first_name_not_found")
+            self.logger.trace(
+                f"conversation_step (user_id={user_id}, type=registration, step=first_name_not_found)",
+                extra_tag="CONV",
+            )
             
             first_name_event = await self.send_text_and_wait_message(
                 conv, user_id, 
@@ -720,13 +742,19 @@ class ConversationManager:
             # combine lowercase first_name and last_name (if available) as username
             username = f"{first_name.lower()}_{last_name.lower()}" if last_name else first_name.lower()
         
-        log_conversation_step(user_id, "registration", f"user_info_retrieved: {first_name} (@{username})")
+        self.logger.trace(
+            f"conversation_step (user_id={user_id}, type=registration, step=user_info_retrieved: {first_name} (@{username}))",
+            extra_tag="CONV",
+        )
         
         # check if a user with this first_name already exists, and in this case require a last name 
         if last_name is None:
             # existing_user = await dep.get_repo().find_user_by_id(user_id)
             # if existing_user and existing_user.first_name.lower() == first_name.lower():
-            log_conversation_step(user_id, "registration", "user_with_first_name_exists")
+            self.logger.trace(
+                f"conversation_step (user_id={user_id}, type=registration, step=user_with_first_name_exists)",
+                extra_tag="CONV",
+            )
             last_name_event = await self.send_text_and_wait_message(
                 conv, user_id,
                 "Please provide you last name.",
@@ -737,7 +765,10 @@ class ConversationManager:
         
         # Check if a passive user with the same name already exists
         # TODO: maybe a search only for the last name 
-        log_conversation_step(user_id, "registration", "checking_for_existing_passive_user")
+        self.logger.trace(
+            f"conversation_step (user_id={user_id}, type=registration, step=checking_for_existing_passive_user)",
+            extra_tag="CONV",
+        )
         self.logger.debug(f"Checking for passive user with name: '{first_name}' '{last_name}'")
         existing_passive_user = await users.find_passive_user_by_name(
             first_name=first_name,
@@ -747,7 +778,10 @@ class ConversationManager:
         
         if existing_passive_user:
             # Ask if user wants to take over the passive user account
-            log_conversation_step(user_id, "registration", "passive_user_found")
+            self.logger.trace(
+                f"conversation_step (user_id={user_id}, type=registration, step=passive_user_found)",
+                extra_tag="CONV",
+            )
             data, message_takeover = await self.send_keyboard_and_wait_response(
                 conv,
                 user_id,
@@ -766,7 +800,10 @@ class ConversationManager:
             
             if data == "Yes":
                 await self.send_or_edit_message(user_id, "✅ Taking over existing user...", message_takeover, remove_buttons=True)
-                log_conversation_step(user_id, "registration", "converting_passive_to_telegram_user")
+                self.logger.trace(
+                    f"conversation_step (user_id={user_id}, type=registration, step=converting_passive_to_telegram_user)",
+                    extra_tag="CONV",
+                )
                 
                 try:
                     # Convert passive user to full user
@@ -781,7 +818,10 @@ class ConversationManager:
                         lang_code=lang_code
                     )
                     
-                    log_conversation_step(user_id, "registration", "passive_user_converted_successfully")
+                    self.logger.trace(
+                        f"conversation_step (user_id={user_id}, type=registration, step=passive_user_converted_successfully)",
+                        extra_tag="CONV",
+                    )
                     await self.api.message_manager.send_keyboard(
                         user_id,
                         (
@@ -796,7 +836,10 @@ class ConversationManager:
                         True,
                         True
                     )
-                    log_conversation_completed(user_id, "registration")
+                    self.logger.info(
+                        f"conversation_completed (user_id={user_id}, type=registration)",
+                        extra_tag="CONV",
+                    )
                     return True
                     
                 except Exception as e:
@@ -809,13 +852,19 @@ class ConversationManager:
                     return False
             else:
                 # User declined takeover
-                log_conversation_step(user_id, "registration", "user_declined_takeover")
+                self.logger.trace(
+                    f"conversation_step (user_id={user_id}, type=registration, step=user_declined_takeover)",
+                    extra_tag="CONV",
+                )
                 await self.send_or_edit_message(user_id, "❌ You declined the user takeover. Ask an admin, if you need help.", message_takeover, remove_buttons=True)
                 return False
         
         # Create the user in the database (normal registration or after declining takeover)
         try:
-            log_conversation_step(user_id, "registration", "creating_user_in_database")
+            self.logger.trace(
+                f"conversation_step (user_id={user_id}, type=registration, step=creating_user_in_database)",
+                extra_tag="CONV",
+            )
             new_user = await users.register_user(
                 user_id=user_id,
                 username=username,
@@ -826,7 +875,10 @@ class ConversationManager:
                 lang_code=lang_code
             )
             
-            log_conversation_step(user_id, "registration", "user_created_successfully")
+            self.logger.trace(
+                f"conversation_step (user_id={user_id}, type=registration, step=user_created_successfully)",
+                extra_tag="CONV",
+            )
             await self.api.message_manager.send_keyboard(
                 user_id,
                 (
@@ -841,7 +893,10 @@ class ConversationManager:
                 True
             )
             
-            log_conversation_completed(user_id, "registration")
+            self.logger.info(
+                f"conversation_completed (user_id={user_id}, type=registration)",
+                extra_tag="CONV",
+            )
             return True
             
         except DuplicateKeyError as e:
@@ -849,7 +904,10 @@ class ConversationManager:
             error_message = str(e)
             # TODO: remove this, does not matter
             if "phone_1 dup key" in error_message:
-                log_conversation_step(user_id, "registration", f"duplicate_phone_error: {str(e)}")
+                self.logger.trace(
+                    f"conversation_step (user_id={user_id}, type=registration, step=duplicate_phone_error: {str(e)})",
+                    extra_tag="CONV",
+                )
                 await self.api.message_manager.send_text(
                     user_id,
                     "❌ A user with your phone number is already registered. Please contact your admin.",
@@ -858,7 +916,10 @@ class ConversationManager:
                 )
             else:
                 # Handle other duplicate key errors (e.g., user_id, username)
-                log_conversation_step(user_id, "registration", f"duplicate_key_error: {str(e)}")
+                self.logger.trace(
+                    f"conversation_step (user_id={user_id}, type=registration, step=duplicate_key_error: {str(e)})",
+                    extra_tag="CONV",
+                )
                 await self.api.message_manager.send_text(
                     user_id,
                     "❌ This user account is already registered. Please contact your admin if you believe this is an error.",
@@ -866,11 +927,18 @@ class ConversationManager:
                     True
                 )
             
-            log_unexpected_error("user_registration", str(e), {"user_id": user_id})
+            self.logger.error(
+                f"user_registration failed (user_id={user_id})",
+                extra_tag="CONV",
+                exc=e,
+            )
             return False
             
         except Exception as e:
-            log_conversation_step(user_id, "registration", f"user_creation_failed: {str(e)}")
+            self.logger.trace(
+                f"conversation_step (user_id={user_id}, type=registration, step=user_creation_failed: {str(e)})",
+                extra_tag="CONV",
+            )
             await self.api.message_manager.send_text(
                 user_id,
                 "❌ Registration failed. Please try again later.",
@@ -878,7 +946,11 @@ class ConversationManager:
                 True
             )
             
-            log_unexpected_error("user_registration", str(e), {"user_id": user_id})
+            self.logger.error(
+                f"user_registration failed (user_id={user_id})",
+                extra_tag="CONV",
+                exc=e,
+            )
             return False
             
     async def request_authentication(self, conv) -> bool:
@@ -944,7 +1016,10 @@ class ConversationManager:
                         return False
                     
             except TimeoutError:
-                log_conversation_timeout(chat_id, "registration", "password_authentication")
+                self.logger.warning(
+                    f"conversation_timeout (user_id={chat_id}, type=registration, step=password_authentication)",
+                    extra_tag="CONV",
+                )
                 await self.api.message_manager.send_text(
                     chat_id,
                     "⏱️ Password entry timed out. Registration aborted.",
@@ -1031,7 +1106,10 @@ class ConversationManager:
                 pass
 
         if completed:
-            log_conversation_completed(user_id, "group_selection")
+            self.logger.info(
+                f"conversation_completed (user_id={user_id}, type=group_selection)",
+                extra_tag="CONV",
+            )
         return completed
 
 
@@ -2153,6 +2231,196 @@ class ConversationManager:
                 success = await self._settings_logging_format_flow(user_id, conv, message)
                 if not success:
                     return False
+
+            elif data == "log_modules":
+                if event:
+                    await event.answer()
+                success = await self._settings_logging_modules_flow(user_id, conv, message)
+                if not success:
+                    return False
+
+
+    async def _settings_logging_modules_flow(self, user_id: int, conv: Conversation, message) -> bool:
+        repo = get_repo()
+
+        per_page = 18
+        page = 0
+
+        # Current apply-state (changed via [<-] [State] [->])
+        db_log_settings = await repo.get_log_settings() or {}
+        global_level = (db_log_settings.get("log_level") or "INFO").upper()
+        if global_level not in LOG_STATE_SEQUENCE:
+            global_level = "INFO"
+
+        current_state_index = list(LOG_STATE_SEQUENCE).index(global_level) if global_level in LOG_STATE_SEQUENCE else 2
+
+        # Persisted overrides from DB
+        existing_overrides: Dict[str, str] = dict(db_log_settings.get("log_module_overrides", {}) or {})
+
+        # Staged (not yet applied) overrides; clicking again reverts.
+        pending_overrides: Dict[str, str] = {}
+
+        while True:
+            known_loggers = get_known_loggers()
+            module_count = len(known_loggers)
+            total_pages = max(1, (module_count + per_page - 1) // per_page)
+            if page < 0:
+                page = 0
+            if page >= total_pages:
+                page = total_pages - 1
+
+            start = page * per_page
+            end = min(start + per_page, module_count)
+            page_modules = known_loggers[start:end]
+
+            current_state = LOG_STATE_SEQUENCE[current_state_index]
+            current_state_icon = LOG_STATE_ICON.get(current_state, "")
+
+            lines = [
+                "🧩 **Module Logging**",
+                "",
+                f"**Global level:** {format_log_state(global_level)}",
+                f"**Apply state:** {format_log_state(current_state)}",
+                f"**Pending changes:** {len(pending_overrides)}",
+                "",
+                "Tap a module to stage that apply state.",
+                "Tap it again to revert the staged change.",
+                "",
+                f"Page {page + 1}/{total_pages} (showing {start + 1 if module_count else 0}-{end} of {module_count})",
+            ]
+
+            keyboard: list[list[Any]] = []
+
+            # Modules list (two columns)
+            for row_start in range(0, len(page_modules), 2):
+                row: list[Any] = []
+                for offset in (0, 1):
+                    i = row_start + offset
+                    if i >= len(page_modules):
+                        continue
+                    module_name, display_name = page_modules[i]
+
+                    if module_name in pending_overrides:
+                        state = pending_overrides[module_name]
+                        suffix = " *"
+                    elif module_name in existing_overrides:
+                        state = existing_overrides[module_name]
+                        suffix = ""
+                    else:
+                        state = global_level
+                        suffix = ""
+
+                    icon = LOG_STATE_ICON.get(state, "")
+                    label = f"{display_name} {icon}{suffix}".strip()
+                    row.append(Button.inline(label, f"m_{i}".encode("utf-8")))
+                if row:
+                    keyboard.append(row)
+
+            # State selector row (bottom, above pagination)
+            keyboard.append(
+                [
+                    Button.inline("⬅", b"state_prev"),
+                    Button.inline(f"{current_state}{current_state_icon}", b"noop"),
+                    Button.inline("➡", b"state_next"),
+                ]
+            )
+
+            nav_row: list[Any] = []
+            if total_pages > 1:
+                nav_row = [
+                    Button.inline("◀ Prev", b"page_prev"),
+                    Button.inline(f"{page + 1}/{total_pages}", b"noop"),
+                    Button.inline("Next ▶", b"page_next"),
+                ]
+            else:
+                nav_row = [Button.inline("1/1", b"noop")]
+            keyboard.append(nav_row)
+
+            keyboard.append(
+                [
+                    Button.inline(f"{self.settings_manager.ICON_BACK} Back", b"back"),
+                    Button.inline("✅ Apply", b"apply"),
+                ]
+            )
+
+            data, message, event = await self.edit_keyboard_and_wait_response(
+                conv, user_id, "\n".join(lines), keyboard, message, 120, return_event=True
+            )
+
+            if data is None or data == "back":
+                if event:
+                    await event.answer()
+                return True
+
+            if data == "noop":
+                if event:
+                    await event.answer()
+                continue
+
+            if data == "state_prev":
+                if event:
+                    await event.answer()
+                # Left arrow: less verbose (towards OFF)
+                current_state_index = (current_state_index + 1) % len(LOG_STATE_SEQUENCE)
+                continue
+
+            if data == "state_next":
+                if event:
+                    await event.answer()
+                # Right arrow: more verbose (towards TRACE)
+                current_state_index = (current_state_index - 1) % len(LOG_STATE_SEQUENCE)
+                continue
+
+            if data == "page_prev":
+                if event:
+                    await event.answer()
+                page -= 1
+                continue
+
+            if data == "page_next":
+                if event:
+                    await event.answer()
+                page += 1
+                continue
+
+            if data == "apply":
+                if event:
+                    await event.answer()
+
+                new_overrides = dict(existing_overrides)
+                for module_name, state in pending_overrides.items():
+                    new_overrides[module_name] = state
+
+                success = await repo.update_log_settings(log_module_overrides=new_overrides)
+                if not success:
+                    await self.api.message_manager.send_text(
+                        user_id,
+                        "❌ Failed to apply module logging settings.",
+                        vanish=False,
+                        conv=False,
+                        delete_after=3,
+                    )
+                    continue
+
+                return True
+
+            if data.startswith("m_"):
+                if event:
+                    await event.answer()
+                try:
+                    idx = int(data.split("_", 1)[1])
+                except ValueError:
+                    continue
+
+                if idx < 0 or idx >= len(page_modules):
+                    continue
+
+                module_name, _display_name = page_modules[idx]
+                if module_name in pending_overrides:
+                    pending_overrides.pop(module_name, None)
+                else:
+                    pending_overrides[module_name] = LOG_STATE_SEQUENCE[current_state_index]
+                continue
 
     async def _settings_logging_format_flow(self, user_id: int, conv: Conversation, message) -> bool:
         """

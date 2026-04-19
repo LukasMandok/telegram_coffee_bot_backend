@@ -15,7 +15,7 @@ from telethon import Button
 
 from .telethon_models import MessageModel
 from ..dependencies.dependencies import get_repo
-from ..common.log import log_telegram_message_sent, log_telegram_keyboard_sent, log_telegram_api_error, log_telegram_message_deleted, Logger
+from ..common.log import Logger
 
 if TYPE_CHECKING:
     from telethon import TelegramClient, types
@@ -154,10 +154,11 @@ class MessageManager:
                 # Start deletion task in background
                 asyncio.create_task(delete_after_delay())
 
-            log_telegram_message_sent(user_id, "text", text[:50] if text else "")
+            preview = (text or "").replace("\n", " ")[:50]
+            self.logger.trace(f"[TELEGRAM] message_sent (user_id={user_id}, type=text, preview='{preview}')")
             return message_model
         except Exception as e:
-            log_telegram_api_error("send_message", str(e), user_id)
+            self.logger.warning(f"[TELEGRAM] send_message failed (user_id={user_id})", exc=e)
             return None
     
     async def send_keyboard(
@@ -199,16 +200,18 @@ class MessageManager:
             if vanish:
                 self.add_latest_message(user_id, message_model, conv)
 
-            # Count buttons for logging
             button_count = 0
-            if keyboard_layout:
-                if hasattr(keyboard_layout, '__len__'):
-                    button_count = len(keyboard_layout)
-                    
-            log_telegram_keyboard_sent(user_id, "inline_keyboard", button_count)
+            try:
+                button_count = len(keyboard_layout) if keyboard_layout else 0
+            except TypeError:
+                button_count = 0
+
+            self.logger.trace(
+                f"[TELEGRAM] keyboard_sent (user_id={user_id}, type=inline_keyboard, buttons={button_count})"
+            )
             return message_model
         except Exception as e:
-            log_telegram_api_error("send_keyboard", str(e), user_id)
+            self.logger.warning(f"[TELEGRAM] send_keyboard failed (user_id={user_id})", exc=e)
             return None
 
     async def send_user_notification(
@@ -285,10 +288,15 @@ class MessageManager:
                 link_preview=link_preview,
             )
             message_model = MessageModel.from_telegram_message(telegram_message)
-            log_telegram_keyboard_sent(user_id, "inline_keyboard", len(keyboard_layout))
+            self.logger.trace(
+                f"[TELEGRAM] keyboard_sent (user_id={user_id}, type=inline_keyboard, buttons={len(keyboard_layout)})"
+            )
             return message_model
         except Exception as e:
-            log_telegram_api_error("send_user_notification_keyboard", str(e), user_id)
+            self.logger.warning(
+                f"[TELEGRAM] send_user_notification_keyboard failed (user_id={user_id})",
+                exc=e,
+            )
             return None
     
     def add_latest_message(
@@ -571,7 +579,7 @@ class MessageManager:
             )
             return True
         except Exception as e:
-            log_telegram_api_error("send_popup_notification", str(e), None)
+            self.logger.warning("[TELEGRAM] send_popup_notification failed", exc=e)
             return False
 
     async def send_notification(

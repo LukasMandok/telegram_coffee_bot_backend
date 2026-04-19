@@ -13,16 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, TYPE_CHECKING, Tuple, cast
 
-from ..common.log import (
-    INFO,
-    Logger,
-    log_coffee_session_cancelled,
-    log_coffee_session_participant_added,
-    log_coffee_session_participant_removed,
-    log_coffee_session_started,
-    log_unexpected_error,
-    logger as root_logger,
-)
+from ..common.log import Logger
 from ..database.snapshot_manager import pending_snapshot
 from ..exceptions.coffee_exceptions import (
     CoffeeSessionError,
@@ -206,14 +197,11 @@ class SessionManager:
                 if msg is not None:
                     self.session_notifications[session_id].append(msg)
         except Exception as exc:
-            log_unexpected_error(
-                operation="notify_members_new_session",
-                error=str(exc),
-                context={
-                    "initiator_id": initiator_user_id,
-                    "session_id": session_id,
-                    "member_count": len(group_state.members),
-                },
+            self.logger.error(
+                "Failed notifying members about new session "
+                f"(session_id={session_id}, initiator_id={initiator_user_id}, member_count={len(group_state.members)})",
+                extra_tag="SESSION",
+                exc=exc,
             )
 
         return session
@@ -228,7 +216,10 @@ class SessionManager:
             raise SessionNotActiveError()
 
         if any(int(p.user_id) == int(user.user_id) for p in target_session.participants if p.user_id is not None):
-            log_coffee_session_participant_added(str(target_session.id), int(user.user_id), False)
+            self.logger.debug(
+                f"Participant already in session (session_id={target_session.id}, user_id={user.user_id})",
+                extra_tag="SESSION",
+            )
             return
 
         joiner_user_id = int(user.user_id)
@@ -241,7 +232,10 @@ class SessionManager:
         ]
 
         target_session.participants.append(user)
-        log_coffee_session_participant_added(str(target_session.id), int(user.user_id), True)
+        self.logger.debug(
+            f"Participant added (session_id={target_session.id}, user_id={user.user_id})",
+            extra_tag="SESSION",
+        )
         self._cancel_delayed_cancel_task(str(target_session.id))
 
         if recipient_user_ids:
@@ -254,14 +248,11 @@ class SessionManager:
                             delete_after=5,
                     )
             except Exception as exc:
-                log_unexpected_error(
-                    operation="notify_members_join_session",
-                    error=str(exc),
-                    context={
-                        "session_id": str(target_session.id),
-                        "joiner_user_id": joiner_user_id,
-                        "recipient_count": len(recipient_user_ids),
-                    },
+                self.logger.error(
+                    "Failed notifying participants about join "
+                    f"(session_id={target_session.id}, joiner_user_id={joiner_user_id}, recipient_count={len(recipient_user_ids)})",
+                    extra_tag="SESSION",
+                    exc=exc,
                 )
 
     
@@ -285,14 +276,20 @@ class SessionManager:
         removed = len(target_session.participants) != before
 
         if removed:
-            log_coffee_session_participant_removed(str(target_session.id), int(user.user_id), True)
+            self.logger.debug(
+                f"Participant removed (session_id={target_session.id}, user_id={user.user_id})",
+                extra_tag="SESSION",
+            )
             if len(target_session.participants) == 0:
                 try:
                     await self.cancel_or_delay_cancel_if_inactive(target_session)
                 except Exception:
                     pass
         else:
-            log_coffee_session_participant_removed(str(target_session.id), int(user.user_id), False)
+            self.logger.debug(
+                f"Participant was not part of session (session_id={target_session.id}, user_id={user.user_id})",
+                extra_tag="SESSION",
+            )
 
         return bool(removed)
         
@@ -320,11 +317,9 @@ class SessionManager:
         if active_session is not None and bool(active_session.is_active):
             try:
                 if len(active_session.participants) == 0 and active_session.group_state.get_total_coffees() > 0:
-                    root_logger.log(
-                        INFO,
-                        "[SESSION] Re-opened suspended session %s: user_id=%s",
-                        str(active_session.id),
-                        user_id,
+                    self.logger.debug(
+                        f"Re-opened suspended session (session_id={active_session.id}, user_id={user_id})",
+                        extra_tag="SESSION",
                     )
             except Exception:
                 pass
@@ -346,7 +341,10 @@ class SessionManager:
 
         try:
             card_names = [card.name for card in active_cards]
-            log_coffee_session_started(str(new_session.id), int(user_id), card_names, level=INFO)
+            self.logger.info(
+                f"Session started (session_id={new_session.id}, initiator_id={user_id}, cards={card_names})",
+                extra_tag="SESSION",
+            )
         except Exception:
             pass
 
@@ -507,10 +505,7 @@ class SessionManager:
                     
         except Exception as e:
             # Centralized stacktrace logging for unexpected errors in auto-complete
-            log_unexpected_error(
-                operation="auto_complete_filled_cards",
-                error=str(e)
-            )
+            self.logger.error("Failed auto-completing filled cards", extra_tag="ORDER", exc=e)
             # Don't fail the session completion if auto-complete fails
     
     @pending_snapshot(
@@ -607,11 +602,10 @@ class SessionManager:
         
         except Exception as exc:
             self.session.is_active = True
-            # Only truly unexpected errors get a stacktrace
-            log_unexpected_error(
-                operation="create_orders",
-                error=str(exc),
-                context={"session_id": session_id}
+            self.logger.error(
+                f"Unexpected error building allocations (session_id={session_id})",
+                extra_tag="ORDER",
+                exc=exc,
             )
 
             # Cancel all active conversations for this session to prevent timeout errors
@@ -719,10 +713,10 @@ class SessionManager:
             raise CoffeeSessionError()
         except Exception as exc:
             self.session.is_active = True
-            log_unexpected_error(
-                operation="commit_session",
-                error=str(exc),
-                context={"session_id": session_id},
+            self.logger.error(
+                f"Commit failed (session_id={session_id})",
+                extra_tag="ORDER",
+                exc=exc,
             )
             try:
                 if persisted_session is not None:
@@ -767,10 +761,10 @@ class SessionManager:
                     f"**{initiator_display_name}** has ordered **{group_member_data.coffee_count}** {coffee_word} for you.\n",
                 )
         except Exception as exc:
-            log_unexpected_error(
-                operation="notify_non_participants",
-                error=str(exc),
-                context={"session_id": session_id},
+            self.logger.error(
+                f"Failed notifying non-participants (session_id={session_id})",
+                extra_tag="SESSION",
+                exc=exc,
             )
 
         # Orders created successfully - session completion is final now.
@@ -823,10 +817,10 @@ class SessionManager:
                 exclude_disabled=True,
             )
         except Exception as exc:
-            log_unexpected_error(
-                operation="build_or_send_session_summary",
-                error=str(exc),
-                context={"session_id": session_id}
+            self.logger.error(
+                f"Failed building/sending session summary (session_id={session_id})",
+                extra_tag="SESSION",
+                exc=exc,
             )
 
         # Auto-complete cards after session completion + summary notifications.
@@ -858,7 +852,10 @@ class SessionManager:
         target_session.is_active = False
 
         if reason is not None:
-            log_coffee_session_cancelled(session_id=session_id, reason=reason, level=INFO)
+            self.logger.info(
+                f"Session cancelled (session_id={session_id}, reason={reason})",
+                extra_tag="SESSION",
+            )
 
         # Notify all participants with active keyboards
         if notify_participants and session_id in self.api.group_keyboard_manager.active_keyboards:

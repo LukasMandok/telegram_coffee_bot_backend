@@ -13,6 +13,7 @@ from telethon import Button, events
 from telethon.tl.custom import Conversation
 from ..dependencies.dependencies import get_repo
 from ..common.log import log_settings
+from ..common.log import LOG_STATE_ICON, format_log_state
 
 logger = logging.getLogger(__name__)
 
@@ -57,16 +58,8 @@ class SettingsManager:
                 log_settings.show_class = db_log_settings.get("log_show_class", True)
                 log_settings.level = db_log_settings.get("log_level", "INFO")
 
-                # Update root logger level
-                level_map = {
-                    'TRACE': 5,
-                    'DEBUG': logging.DEBUG,
-                    'INFO': logging.INFO,
-                    'WARNING': logging.WARNING,
-                    'ERROR': logging.ERROR,
-                    'CRITICAL': logging.CRITICAL
-                }
-                logging.root.setLevel(level_map.get(log_settings.level, logging.INFO))
+                # Module overrides are enforced by a dynamic filter.
+                log_settings.module_overrides = dict(db_log_settings.get("log_module_overrides", {}) or {})
 
                 logger.info(
                     f"Initialized log settings: level={log_settings.level}, "
@@ -399,7 +392,8 @@ class SettingsManager:
         time_status = "✅ On" if log_settings.get("log_show_time", True) else "❌ Off"
         caller_status = "✅ On" if log_settings.get("log_show_caller", True) else "❌ Off"
         class_status = "✅ On" if log_settings.get("log_show_class", True) else "❌ Off"
-        log_level = log_settings.get("log_level", "INFO")
+        log_level = (log_settings.get("log_level", "INFO") or "INFO").upper()
+        log_level_label = format_log_state(log_level) if log_level in LOG_STATE_ICON else log_level
         
         # Generate example log based on current settings
         example_parts = []
@@ -415,7 +409,7 @@ class SettingsManager:
         
         return (
             "📊 **Logging Settings**\n\n"
-            f"**Log Level:** {log_level}\n"
+            f"**Log Level:** {log_level_label}\n"
             f"**Time Display:** {time_status}\n"
             f"**Caller Display:** {caller_status}\n"
             f"**Class Name Display:** {class_status}\n\n"
@@ -429,6 +423,7 @@ class SettingsManager:
         return [
             [Button.inline("📊 Logging Level", b"log_level")],
             [Button.inline("🎨 Logging Format", b"log_format")],
+            [Button.inline("🧩 Module Logging", b"log_modules")],
             [Button.inline(f"{self.ICON_BACK} Back", b"back")]
         ]
     
@@ -554,26 +549,29 @@ class SettingsManager:
         Returns:
             Formatted text for log level options
         """
+        current_level = (current_level or "INFO").upper()
+        current_level_label = format_log_state(current_level) if current_level in LOG_STATE_ICON else current_level
+
         return (
             "📊 **Log Level**\n\n"
             "Controls the minimum severity of log messages to display.\n\n"
-            f"**Current level:** {current_level}\n\n"
+            f"**Current level:** {current_level_label}\n\n"
             "**Options:**\n"
-            "• **TRACE** - Most verbose, shows all details\n"
-            "• **DEBUG** - Development information\n"
-            "• **INFO** - General information (recommended)\n"
-            "• **WARNING** - Warnings only\n"
-            "• **ERROR** - Errors only\n"
-            "• **CRITICAL** - Critical errors only\n\n"
+            f"• **{format_log_state('TRACE')}** - Most verbose, shows all details\n"
+            f"• **{format_log_state('DEBUG')}** - Development information\n"
+            f"• **{format_log_state('INFO')}** - General information (recommended)\n"
+            f"• **{format_log_state('WARNING')}** - Warnings only\n"
+            f"• **{format_log_state('ERROR')}** - Errors only\n"
+            f"• **{format_log_state('CRITICAL')}** - Critical errors only\n\n"
             "Choose your preferred log level:"
         )
     
     def get_log_level_options_keyboard(self) -> InlineKeyboard:
         """Generate the log level options keyboard."""
         return [
-            [Button.inline("TRACE", b"TRACE"), Button.inline("DEBUG", b"DEBUG")],
-            [Button.inline("INFO", b"INFO"), Button.inline("WARNING", b"WARNING")],
-            [Button.inline("ERROR", b"ERROR"), Button.inline("CRITICAL", b"CRITICAL")],
+            [Button.inline(format_log_state("TRACE"), b"TRACE"), Button.inline(format_log_state("DEBUG"), b"DEBUG")],
+            [Button.inline(format_log_state("INFO"), b"INFO"), Button.inline(format_log_state("WARNING"), b"WARNING")],
+            [Button.inline(format_log_state("ERROR"), b"ERROR"), Button.inline(format_log_state("CRITICAL"), b"CRITICAL")],
             [Button.inline(f"{self.ICON_BACK} Back", b"back")]
         ]
 

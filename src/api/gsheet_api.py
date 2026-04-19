@@ -7,18 +7,10 @@ from gspread.utils import ValueInputOption
 import threading
 
 from ..config import app_config
-from ..common.log import (
-    log_gsheet_sync_started, 
-    log_gsheet_sync_completed, 
-    log_gsheet_sync_failed,
-    log_gsheet_api_initialized,
-    log_gsheet_api_initialization_failed,
-    log_gsheet_worksheet_created,
-    log_gsheet_backup_completed,
-    log_gsheet_backup_failed,
-    log_gsheet_summary_created,
-    log_gsheet_summary_creation_failed
-)
+from ..common.log import Logger
+
+
+logger = Logger("GsheetAPI")
 
 credentials_info = {
     "type": "service_account",
@@ -54,6 +46,7 @@ class GsheetAPI:
         # Avoid re-initialization when GsheetAPI() is called multiple times.
         if getattr(self, "_initialized", False):
             return
+        self.logger = logger
         try:
             credentials = service_account.Credentials.from_service_account_info(
                 credentials_info,
@@ -61,10 +54,10 @@ class GsheetAPI:
             )
             self.client = gspread.authorize(credentials)
             self.spreadsheet = self.client.open_by_key(app_config.GSHEET_SSID)
-            log_gsheet_api_initialized()
+            self.logger.info("Google Sheets API initialized", extra_tag="GSHEET")
             self._initialized = True
         except Exception as e:
-            log_gsheet_api_initialization_failed(f"{type(e).__name__}: {e!r}")
+            self.logger.error("Google Sheets API initialization failed", extra_tag="GSHEET", exc=e)
             raise
 
     def ping(self) -> Dict[str, Any]:
@@ -106,11 +99,12 @@ class GsheetAPI:
             worksheet = self.spreadsheet.worksheet(title)
         except gspread.WorksheetNotFound:
             worksheet = self.spreadsheet.add_worksheet(title=title, rows=1000, cols=20)
-            log_gsheet_worksheet_created(title)
+            self.logger.info(f"Worksheet created (title={title})", extra_tag="GSHEET")
         return worksheet
     
     async def sync_users_to_sheet(self, users: List[Dict[str, Any]]) -> bool:
         """Sync user data to Google Sheets."""
+        self.logger.debug("Sync started: Users", extra_tag="GSHEET")
         try:
             worksheet = self._get_or_create_worksheet("Users")
             
@@ -145,17 +139,17 @@ class GsheetAPI:
                     user.get('is_admin', False)
                 ]
                 worksheet.insert_row(row, i)
-            
-            log_gsheet_sync_completed("Users", len(users))
+
+            self.logger.info(f"Sync completed: Users (records={len(users)})", extra_tag="GSHEET")
             return True
             
         except Exception as e:
-            log_gsheet_sync_failed("Users", str(e))
+            self.logger.error("Sync failed: Users", extra_tag="GSHEET", exc=e)
             return False
     
     async def sync_coffee_cards_to_sheet(self, cards: List[Dict[str, Any]]) -> bool:
         """Sync coffee card data to Google Sheets."""
-        log_gsheet_sync_started("Coffee Cards")
+        self.logger.debug("Sync started: Coffee Cards", extra_tag="GSHEET")
         try:
             worksheet = self._get_or_create_worksheet("Coffee Cards")
             
@@ -182,17 +176,17 @@ class GsheetAPI:
                 ]
                 worksheet.insert_row(row, i)
             
-            log_gsheet_sync_completed("Coffee Cards", len(cards))
+            self.logger.info(f"Sync completed: Coffee Cards (records={len(cards)})", extra_tag="GSHEET")
             return True
             
         except Exception as e:
-            log_gsheet_sync_failed("Coffee Cards", str(e))
+            self.logger.error("Sync failed: Coffee Cards", extra_tag="GSHEET", exc=e)
             return False
     
     
     async def sync_coffee_orders_to_sheet(self, orders: List[Dict[str, Any]]) -> bool:
         """Sync coffee order data to Google Sheets."""
-        log_gsheet_sync_started("Coffee Orders")
+        self.logger.debug("Sync started: Coffee Orders", extra_tag="GSHEET")
         try:
             worksheet = self._get_or_create_worksheet("Coffee Orders")
             
@@ -217,16 +211,16 @@ class GsheetAPI:
                 ]
                 worksheet.insert_row(row, i)
             
-            log_gsheet_sync_completed("Coffee Orders", len(orders))
+            self.logger.info(f"Sync completed: Coffee Orders (records={len(orders)})", extra_tag="GSHEET")
             return True
             
         except Exception as e:
-            log_gsheet_sync_failed("Coffee Orders", str(e))
+            self.logger.error("Sync failed: Coffee Orders", extra_tag="GSHEET", exc=e)
             return False
     
     async def sync_debts_to_sheet(self, debts: List[Dict[str, Any]]) -> bool:
         """Sync debt data to Google Sheets."""
-        log_gsheet_sync_started("User Debts")
+        self.logger.debug("Sync started: User Debts", extra_tag="GSHEET")
         try:
             worksheet = self._get_or_create_worksheet("User Debts")
             
@@ -251,16 +245,16 @@ class GsheetAPI:
                 ]
                 worksheet.insert_row(row, i)
             
-            log_gsheet_sync_completed("Debts", len(debts))
+            self.logger.info(f"Sync completed: Debts (records={len(debts)})", extra_tag="GSHEET")
             return True
             
         except Exception as e:
-            log_gsheet_sync_failed("Debts", str(e))
+            self.logger.error("Sync failed: Debts", extra_tag="GSHEET", exc=e)
             return False
     
     async def sync_payments_to_sheet(self, payments: List[Dict[str, Any]]) -> bool:
         """Sync payment data to Google Sheets."""
-        log_gsheet_sync_started("Payments")
+        self.logger.debug("Sync started: Payments", extra_tag="GSHEET")
         try:
             worksheet = self._get_or_create_worksheet("Payments")
             
@@ -286,11 +280,11 @@ class GsheetAPI:
                 ]
                 worksheet.insert_row(row, i)
             
-            log_gsheet_sync_completed("Payments", len(payments))
+            self.logger.info(f"Sync completed: Payments (records={len(payments)})", extra_tag="GSHEET")
             return True
             
         except Exception as e:
-            log_gsheet_sync_failed("Payments", str(e))
+            self.logger.error("Sync failed: Payments", extra_tag="GSHEET", exc=e)
             return False
     
     async def create_summary_sheet(self, statistics: Dict[str, Any]) -> bool:
@@ -319,15 +313,16 @@ class GsheetAPI:
                 
                 row += 1  # Empty row between categories
             
-            log_gsheet_summary_created()
+            self.logger.info("Summary sheet created", extra_tag="GSHEET")
             return True
             
         except Exception as e:
-            log_gsheet_summary_creation_failed(str(e))
+            self.logger.error("Summary sheet creation failed", extra_tag="GSHEET", exc=e)
             return False
     
     async def backup_all_data(self, data: Dict[str, Any]) -> bool:
         """Backup all data to Google Sheets."""
+        self.logger.debug("Backup started", extra_tag="GSHEET")
         try:
             success_count = 0
             total_operations = 0
@@ -362,9 +357,12 @@ class GsheetAPI:
                 if await self.create_summary_sheet(data['statistics']):
                     success_count += 1
             
-            log_gsheet_backup_completed(success_count, total_operations)
+            self.logger.info(
+                f"Backup completed (success={success_count}/{total_operations})",
+                extra_tag="GSHEET",
+            )
             return success_count == total_operations
             
         except Exception as e:
-            log_gsheet_backup_failed(str(e))
+            self.logger.error("Backup failed", extra_tag="GSHEET", exc=e)
             return False

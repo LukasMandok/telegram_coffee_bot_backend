@@ -10,12 +10,14 @@ from src.config import app_config
 from src.api.telethon_api import TelethonAPI
 from src.routers import users, admin, coffee
 from src.dependencies.dependencies import get_repo
-from src.common.log import log_app_startup, log_app_shutdown, log_database_connected, log_database_connection_failed, log_database_error
+from src.common.log import Logger
 from src.temp_debug_setup import run_debug_setup_if_enabled
 from src.bot.settings_manager import SettingsManager
 from src.services.gsheet_sync import run_periodic_gsheet_sync, warmup_gsheet_api
 from src.services.weekly_snapshots import run_periodic_weekly_full_snapshots
 # from .middlewares.middleware import SecurityMiddleware
+
+logger = Logger("Main")
 
 mongodb = get_repo()
 # mongodb = MongoRepository(settings.DATABASE_URL)
@@ -30,7 +32,7 @@ telethon_api = TelethonAPI(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    log_app_startup()
+    logger.info("Coffee Bot application starting up...", extra_tag="APP")
 
     gsheet_stop_event = asyncio.Event()
     gsheet_task: asyncio.Task[None] | None = None
@@ -58,8 +60,8 @@ async def lifespan(app: FastAPI):
             )
         
     except Exception as e:
-        log_database_connection_failed(str(e))
-        raise e
+        logger.error("Startup failed", extra_tag="APP", exc=e)
+        raise
     
     yield 
     
@@ -73,9 +75,9 @@ async def lifespan(app: FastAPI):
             await weekly_snapshot_task
 
         await mongodb.close()
-        log_app_shutdown()
+        logger.info("Coffee Bot application shutting down...", extra_tag="APP")
     except Exception as e:
-        log_database_error("shutdown", str(e))
+        logger.error("Shutdown failed", extra_tag="APP", exc=e)
     
     # mongodb.connect()
     # yield 
@@ -107,7 +109,7 @@ async def main() -> None:
         raise RuntimeError("DATABASE_URL is not set")
 
     await mongodb.connect(database_url)
-    log_database_connected(database_url)
+    logger.info(f"Connected to MongoDB (uri={database_url})", extra_tag="DB")
 
     await asyncio.gather(run_fastapi(), run_telethon())
 

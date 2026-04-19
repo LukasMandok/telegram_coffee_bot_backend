@@ -4,13 +4,14 @@ import logging
 from beanie import init_beanie
 from typing import Optional, Dict, Any
 from datetime import datetime
+import traceback
 
 from .base_repo import BaseRepository, EffectiveNotificationPolicy
 from ..models import beanie_models as models
 from ..models.coffee_models import CoffeeCard, CoffeeOrder, Payment, UserDebt, CoffeeSession
 from ..common.log import (
-    log_database_connected, log_database_connection_failed, log_database_error, log_database_disconnected,
-    log_user_registration, log_performance_metric, log_app_shutdown, log_setup_database_defaults, Logger
+    Logger,
+    log_settings,
 )
 
 from ..config import app_config
@@ -75,16 +76,16 @@ class BeanieRepository(BaseRepository):
             self.snapshot_manager = SnapshotManager(self.db)
             
         except Exception as e:
-            log_database_connection_failed(str(e))
+            self.logger.error("MongoDB connection failed", extra_tag="DB", exc=e)
             raise
 
     async def close(self):
         try:
             if self.client:
                 await self.client.close()
-            log_database_disconnected()
+            self.logger.info("Disconnected from MongoDB", extra_tag="DB")
         except Exception as e:
-            log_database_error("close_connection", str(e))
+            self.logger.error("close_connection failed", extra_tag="DB", exc=e)
 
     async def setup_defaults(self):
         # Clear existing data to start fresh (temporary fix for development)
@@ -109,8 +110,11 @@ class BeanieRepository(BaseRepository):
         await password_doc.insert()
         await new_config.insert()
         await app_settings.insert()
-        
-        log_setup_database_defaults([int(app_config.DEFAULT_ADMIN)])
+
+        self.logger.info(
+            f"Default database values set up (admins={[int(app_config.DEFAULT_ADMIN)]})",
+            extra_tag="DB",
+        )
         self.logger.info("Default configuration and settings created successfully")
 
     # ---------------------------
@@ -123,7 +127,7 @@ class BeanieRepository(BaseRepository):
                 await self.client.admin.command('ping')
             # Database ping success logged in connect method
         except Exception as e:
-            log_database_error("ping", str(e))
+            self.logger.error("ping failed", extra_tag="DB", exc=e)
 
 
     async def get_collection(self, collection_name):
@@ -169,11 +173,11 @@ class BeanieRepository(BaseRepository):
                 passive_users = await models.PassiveUser.find_all().to_list()
             
             all_users = telegram_users + passive_users
-            log_performance_metric("find_all_users", len(all_users), "records")
+            self.logger.trace(f"find_all_users ({len(all_users)} records)", extra_tag="PERF")
             return all_users
 
         except Exception as e:
-            log_database_error("find_all_users", str(e))
+            self.logger.error("find_all_users failed", extra_tag="DB", exc=e)
             return []
     
     async def find_all_telegram_users(self, exclude_archived: bool = False, exclude_disabled: bool = False):
@@ -200,12 +204,12 @@ class BeanieRepository(BaseRepository):
                 telegram_users = await models.TelegramUser.find(query).to_list()
             else:
                 telegram_users = await models.TelegramUser.find_all().to_list()
-            
-            log_performance_metric("find_all_telegram_users", len(telegram_users), "records")
+
+            self.logger.trace(f"find_all_telegram_users ({len(telegram_users)} records)", extra_tag="PERF")
             return telegram_users
 
         except Exception as e:
-            log_database_error("find_all_telegram_users", str(e))
+            self.logger.error("find_all_telegram_users failed", extra_tag="DB", exc=e)
             return []
         
 
@@ -254,7 +258,7 @@ class BeanieRepository(BaseRepository):
             admins = await self.get_admins()
             return user_id in admins if admins else False
         except Exception as e:
-            log_database_error("is_user_admin", str(e), {"user_id": user_id})
+            self.logger.error(f"is_user_admin failed (user_id={user_id})", extra_tag="DB", exc=e)
             return False
     
     async def create_telegram_user(
@@ -273,7 +277,7 @@ class BeanieRepository(BaseRepository):
             # Check if user already exists
             existing_user = await self.find_user_by_id(user_id)
             if existing_user:
-                log_database_error("create_user", f"User with ID {user_id} already exists")
+                self.logger.warning(f"create_telegram_user skipped (user_id={user_id} already exists)", extra_tag="DB")
                 return existing_user
 
             display_name = await self._generate_unique_display_name(first_name, last_name)
@@ -297,11 +301,18 @@ class BeanieRepository(BaseRepository):
             new_user.lang_code = lang_code
             
             await new_user.insert()
-            log_user_registration(user_id, username)
+            self.logger.info(
+                f"User registered (user_id={user_id}, username={username})",
+                extra_tag="USER",
+            )
             return new_user
             
         except Exception as e:
-            log_database_error("create_telegram_user", str(e), {"user_id": user_id, "username": username})
+            self.logger.error(
+                f"create_telegram_user failed (user_id={user_id}, username={username})",
+                extra_tag="DB",
+                exc=e,
+            )
             raise
 
     # TODO: implement this for multiple users with the same forname to check all last names against each other
@@ -406,7 +417,11 @@ class BeanieRepository(BaseRepository):
             # This is expected when user already exists - don't log as error
             raise
         except Exception as e:
-            log_database_error("create_passive_user", str(e), {"first_name": first_name, "last_name": last_name})
+            self.logger.error(
+                f"create_passive_user failed (first_name={first_name}, last_name={last_name})",
+                extra_tag="DB",
+                exc=e,
+            )
             raise
 
     async def find_passive_user_by_name(self, first_name: str, last_name: Optional[str] = None) -> models.PassiveUser | None:
@@ -420,7 +435,11 @@ class BeanieRepository(BaseRepository):
             
             return result
         except Exception as e:
-            log_database_error("find_passive_user_by_name", str(e), {"first_name": first_name, "last_name": last_name})
+            self.logger.error(
+                f"find_passive_user_by_name failed (first_name={first_name}, last_name={last_name})",
+                extra_tag="DB",
+                exc=e,
+            )
             return None
 
     # TODO: this has to ckecked later, that the depbts and all other information correctly transfer.
@@ -470,11 +489,18 @@ class BeanieRepository(BaseRepository):
             # Delete the passive user
             await passive_user.delete()
 
-            log_user_registration(user_id, username)
+            self.logger.info(
+                f"User registered (user_id={user_id}, username={username})",
+                extra_tag="USER",
+            )
             return new_telegram_user
             
         except Exception as e:
-            log_database_error("convert_passive_to_telegram_user", str(e), {"user_id": user_id, "passive_user_id": str(passive_user.id)})
+            self.logger.error(
+                f"convert_passive_to_telegram_user failed (user_id={user_id}, passive_user_id={passive_user.id})",
+                extra_tag="DB",
+                exc=e,
+            )
             raise
 
     ### Configuration ###
@@ -496,7 +522,7 @@ class BeanieRepository(BaseRepository):
                 return config.admins
             return []
         except Exception as e:
-            log_database_error("get_admins", str(e))
+            self.logger.error("get_admins failed", extra_tag="DB", exc=e)
             return []
 
 
@@ -515,7 +541,7 @@ class BeanieRepository(BaseRepository):
             ) or []
             return [user for user in telegram_users if int(user.user_id) in admin_id_set]
         except Exception as e:
-            log_database_error("get_admin_users", str(e))
+            self.logger.error("get_admin_users failed", extra_tag="DB", exc=e)
             return []
 
     async def get_registered_admins(self) -> list[int]:
@@ -526,7 +552,7 @@ class BeanieRepository(BaseRepository):
                 return []
             return [int(admin.user_id) for admin in admin_users if admin.user_id is not None]
         except Exception as e:
-            log_database_error("get_registered_admins", str(e))
+            self.logger.error("get_registered_admins failed", extra_tag="DB", exc=e)
             return []
 
     async def add_admin(self, user_id: int) -> bool:
@@ -544,7 +570,7 @@ class BeanieRepository(BaseRepository):
                     return True
             return False
         except Exception as e:
-            log_database_error("add_admin", str(e), {"user_id": user_id})
+            self.logger.error(f"add_admin failed (user_id={user_id})", extra_tag="DB", exc=e)
             return False
 
     async def remove_admin(self, user_id: int) -> bool:
@@ -558,7 +584,7 @@ class BeanieRepository(BaseRepository):
                 return True
             return False
         except Exception as e:
-            log_database_error("remove_admin", str(e), {"user_id": user_id})
+            self.logger.error(f"remove_admin failed (user_id={user_id})", extra_tag="DB", exc=e)
             return False
 
     async def get_log_settings(self) -> Optional[Dict[str, Any]]:
@@ -570,11 +596,12 @@ class BeanieRepository(BaseRepository):
                     "log_level": app_settings.logging.level,
                     "log_show_time": app_settings.logging.show_time,
                     "log_show_caller": app_settings.logging.show_caller,
-                    "log_show_class": app_settings.logging.show_class
+                    "log_show_class": app_settings.logging.show_class,
+                    "log_module_overrides": dict(getattr(app_settings.logging, "module_overrides", {}) or {}),
                 }
             return None
         except Exception as e:
-            log_database_error("get_log_settings", str(e))
+            self.logger.error("get_log_settings failed", extra_tag="DB", exc=e)
             return None
 
     async def update_log_settings(self, **kwargs) -> bool:
@@ -591,8 +618,6 @@ class BeanieRepository(BaseRepository):
             True if successful, False otherwise
         """
         try:
-            from ..common.log import log_settings
-            
             settings = await models.AppSettings.find_one()
             if not settings:
                 # Create default settings if they don't exist
@@ -603,16 +628,7 @@ class BeanieRepository(BaseRepository):
             if "log_level" in kwargs:
                 settings.logging.level = kwargs["log_level"].upper()
                 log_settings.level = settings.logging.level
-                # Update the root logger level
-                level_map = {
-                    'TRACE': 5,
-                    'DEBUG': logging.DEBUG,
-                    'INFO': logging.INFO,
-                    'WARNING': logging.WARNING,
-                    'ERROR': logging.ERROR,
-                    'CRITICAL': logging.CRITICAL
-                }
-                logging.root.setLevel(level_map.get(settings.logging.level, logging.INFO))
+                # Root logger stays at TRACE; dynamic filter handles thresholds.
                 
             if "log_show_time" in kwargs:
                 settings.logging.show_time = kwargs["log_show_time"]
@@ -625,12 +641,17 @@ class BeanieRepository(BaseRepository):
             if "log_show_class" in kwargs:
                 settings.logging.show_class = kwargs["log_show_class"]
                 log_settings.show_class = settings.logging.show_class
+
+            if "log_module_overrides" in kwargs:
+                overrides = kwargs["log_module_overrides"] or {}
+                settings.logging.module_overrides = dict(overrides)
+                log_settings.module_overrides = dict(settings.logging.module_overrides)
             
             await settings.save()
             self.logger.info(f"Updated log settings: {kwargs}")
             return True
         except Exception as e:
-            log_database_error("update_log_settings", str(e), {"settings": kwargs})
+            self.logger.error(f"update_log_settings failed (settings={kwargs})", extra_tag="DB", exc=e)
             return False
 
     async def get_notification_settings(self) -> Optional[Dict[str, Any]]:
@@ -644,7 +665,7 @@ class BeanieRepository(BaseRepository):
                 }
             return None
         except Exception as e:
-            log_database_error("get_notification_settings", str(e))
+            self.logger.error("get_notification_settings failed", extra_tag="DB", exc=e)
             return None
 
     async def get_effective_notification_settings(
@@ -722,7 +743,7 @@ class BeanieRepository(BaseRepository):
             self.logger.info(f"Updated notification settings: {kwargs}")
             return True
         except Exception as e:
-            log_database_error("update_notification_settings", str(e), {"settings": kwargs})
+            self.logger.error(f"update_notification_settings failed (settings={kwargs})", extra_tag="DB", exc=e)
             return False
 
     async def get_debt_settings(self) -> Optional[models.DebtSettings]:
@@ -735,7 +756,7 @@ class BeanieRepository(BaseRepository):
 
             return app_settings.debt
         except Exception as e:
-            log_database_error("get_debt_settings", str(e))
+            self.logger.error("get_debt_settings failed", extra_tag="DB", exc=e)
             return None
 
     async def update_debt_settings(self, **kwargs) -> bool:
@@ -756,7 +777,7 @@ class BeanieRepository(BaseRepository):
             self.logger.info(f"Updated debt settings: {kwargs}")
             return True
         except Exception as e:
-            log_database_error("update_debt_settings", str(e), {"settings": kwargs})
+            self.logger.error(f"update_debt_settings failed (settings={kwargs})", extra_tag="DB", exc=e)
             return False
 
     async def get_gsheet_settings(self) -> Optional[models.GsheetSettings]:
@@ -768,7 +789,7 @@ class BeanieRepository(BaseRepository):
                 await app_settings.insert()
             return app_settings.gsheet
         except Exception as e:
-            log_database_error("get_gsheet_settings", str(e))
+            self.logger.error("get_gsheet_settings failed", extra_tag="DB", exc=e)
             return None
 
     async def update_gsheet_settings(self, **kwargs) -> bool:
@@ -795,7 +816,7 @@ class BeanieRepository(BaseRepository):
             self.logger.info(f"Updated gsheet settings: {kwargs}")
             return True
         except Exception as e:
-            log_database_error("update_gsheet_settings", str(e), {"settings": kwargs})
+            self.logger.error(f"update_gsheet_settings failed (settings={kwargs})", extra_tag="DB", exc=e)
             return False
 
     async def get_snapshot_settings(self) -> Optional[models.SnapshotSettings]:
@@ -807,7 +828,7 @@ class BeanieRepository(BaseRepository):
                 await app_settings.insert()
             return app_settings.snapshots
         except Exception as e:
-            log_database_error("get_snapshot_settings", str(e))
+            self.logger.error("get_snapshot_settings failed", extra_tag="DB", exc=e)
             return None
 
     async def update_snapshot_settings(self, **kwargs) -> bool:
@@ -837,7 +858,7 @@ class BeanieRepository(BaseRepository):
             self.logger.info(f"Updated snapshot settings: {kwargs}")
             return True
         except Exception as e:
-            log_database_error("update_snapshot_settings", str(e), {"settings": kwargs})
+            self.logger.error(f"update_snapshot_settings failed (settings={kwargs})", extra_tag="DB", exc=e)
             return False
 
     ### User Settings ###
@@ -853,17 +874,24 @@ class BeanieRepository(BaseRepository):
                     await settings.insert()
                     self.logger.info(f"Created default settings for user {user_id}", extra_tag="SETTINGS")
                 except Exception as create_error:
-                    self.logger.error(f"Error creating settings for user {user_id}: {create_error}", extra_tag="SETTINGS", exc_info=create_error)
+                    self.logger.error(
+                        f"Error creating settings for user {user_id}: {create_error}",
+                        extra_tag="SETTINGS",
+                        exc=create_error,
+                    )
                     # If creation failed, try to find it again (might have been created by another request)
                     settings = await models.UserSettings.find_one(models.UserSettings.user_id == user_id)
                     if not settings:
                         raise create_error
             return settings
         except Exception as e:
-            import traceback
-            self.logger.error(f"Exception in get_user_settings for user {user_id}: {e}", extra_tag="SETTINGS", exc_info=e)
+            self.logger.error(
+                f"Exception in get_user_settings for user {user_id}: {e}",
+                extra_tag="SETTINGS",
+                exc=e,
+            )
             self.logger.debug(f"Traceback: {traceback.format_exc()}", extra_tag="SETTINGS")
-            log_database_error("get_user_settings", str(e), {"user_id": user_id})
+            self.logger.error(f"get_user_settings failed (user_id={user_id})", extra_tag="DB", exc=e)
             return None
 
     async def update_user_settings(self, user_id: int, **kwargs) -> Optional[models.UserSettings]:
@@ -882,6 +910,6 @@ class BeanieRepository(BaseRepository):
             self.logger.info(f"Updated settings for user {user_id}: {kwargs}", extra_tag="SETTINGS")
             return settings
         except Exception as e:
-            log_database_error("update_user_settings", str(e), {"user_id": user_id, "kwargs": kwargs})
+            self.logger.error(f"update_user_settings failed (user_id={user_id}, kwargs={kwargs})", extra_tag="DB", exc=e)
             return None
 

@@ -10,12 +10,7 @@ from .command_catalog import BOT_COMMANDS, get_all_commands, get_user_commands
 from .keyboards import KeyboardManager
 from ..handlers import users
 from ..dependencies import dependencies as dep
-from ..common.log import (
-    log_telegram_command,
-    log_user_login_success,
-    log_user_login_failed,
-    Logger,
-)
+from ..common.log import Logger
 
 from ..services.gsheet_sync import sync_all_cards_once
 
@@ -74,7 +69,7 @@ class CommandManager:
             event: The NewMessage event containing /start command
         """
         user_id = event.sender_id
-        log_telegram_command(user_id, "/start", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/start)")
 
         # Check if user is already registered
         if await users.check_user(user_id):
@@ -97,7 +92,7 @@ class CommandManager:
             event: The NewMessage event containing /cancel command
         """
         user_id = event.sender_id
-        log_telegram_command(user_id, "/cancel", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/cancel)")
         
         # Check if user has an active conversation
         if self.api.conversation_manager.has_active_conversation(user_id):
@@ -133,7 +128,7 @@ class CommandManager:
         """
         user_id = event.sender_id
         button_text = event.message.message
-        log_telegram_command(user_id, f"button:{button_text}", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=button:{button_text})")
         
         # Map button text to commands
         if button_text == "Place Order":
@@ -155,26 +150,31 @@ class CommandManager:
         # get the message and cut off the /password part
         message = event.message.message
         user_id = event.sender_id
-        log_telegram_command(user_id, "/password", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/password)")
         
         try:
             password = message.split(" ")[1]
             
             password_correct = await users.check_password(password)
             if password_correct:
-                log_user_login_success(user_id)
+                self.logger.debug(f"[AUTH] password_verified (user_id={user_id})")
             else:
-                log_user_login_failed(user_id, "incorrect_password")
+                self.logger.warning(
+                    f"[AUTH] password_verification_failed (user_id={user_id}, reason=incorrect_password)"
+                )
             
         # TODO: improve exceptions
         except Exception as e:
-            log_user_login_failed(user_id, f"password_not_provided: {str(e)}")
+            self.logger.warning(
+                f"[AUTH] password_verification_failed (user_id={user_id}, reason=password_not_provided)",
+                exc=e,
+            )
 
     @dep.verify_admin
     async def handle_sync_command(self, event: events.NewMessage.Event) -> None:
         """Admin command to trigger a one-shot export to Google Sheets."""
         user_id = event.sender_id
-        log_telegram_command(user_id, "/sync", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/sync)")
 
         await self.api.message_manager.send_text(
             user_id,
@@ -210,7 +210,7 @@ class CommandManager:
             event: The NewMessage event containing /order command
         """
         user_id = event.sender_id
-        log_telegram_command(user_id, "/order", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/order)")
 
         # Check if user already has an active conversation
         if await self._check_and_notify_active_conversation(user_id):
@@ -228,7 +228,7 @@ class CommandManager:
             event: The NewMessage event containing /new_card command
         """
         user_id = event.sender_id
-        log_telegram_command(user_id, "/new_card", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/new_card)")
 
         # Check if user already has an active conversation
         if await self._check_and_notify_active_conversation(user_id):
@@ -241,7 +241,7 @@ class CommandManager:
     async def handle_card_command(self, event: events.NewMessage.Event) -> None:
         """Handle the /cards command to show the coffee card menu."""
         user_id = event.sender_id
-        log_telegram_command(user_id, "/cards", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/cards)")
 
         # Check if user already has an active conversation
         if await self._check_and_notify_active_conversation(user_id):
@@ -258,7 +258,7 @@ class CommandManager:
             event: The NewMessage event containing /paypal command
         """
         user_id = event.sender_id
-        log_telegram_command(user_id, "/paypal", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/paypal)")
 
         # Check if user already has an active conversation
         if await self._check_and_notify_active_conversation(user_id):
@@ -279,7 +279,7 @@ class CommandManager:
     async def handle_snapshots_command(self, event: events.NewMessage.Event) -> None:
         """Admin command to manage snapshots via a MessageFlow conversation."""
         user_id = event.sender_id
-        log_telegram_command(user_id, "/snapshots", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/snapshots)")
 
         if await self._check_and_notify_active_conversation(user_id):
             return
@@ -290,7 +290,7 @@ class CommandManager:
     async def handle_users_command(self, event: events.NewMessage.Event) -> None:
         """Admin command to manage users via a MessageFlow conversation."""
         user_id = event.sender_id
-        log_telegram_command(user_id, "/users", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/users)")
 
         if await self._check_and_notify_active_conversation(user_id):
             return
@@ -395,7 +395,7 @@ class CommandManager:
     async def handle_complete_session_command(self, event: events.NewMessage.Event) -> None:
         """Handle the /complete_session command to finalize a coffee session."""
         user_id = event.sender_id
-        log_telegram_command(user_id, "/complete_session", getattr(event, "chat_id", None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/complete_session)")
 
         try:
             session = await self.api.session_manager.get_active_session()
@@ -457,7 +457,7 @@ class CommandManager:
             event: The NewMessage event containing /cancel_session command
         """
         user_id = event.sender_id
-        log_telegram_command(user_id, "/cancel_session", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/cancel_session)")
         
         try:            
             session = await self.api.session_manager.get_user_active_session(user_id)
@@ -481,15 +481,6 @@ class CommandManager:
                 f"Coffee session `{session.id}` has been cancelled.",
                 True, True
             )
-            
-            # Also notify the user who cancelled (in case they have no orders)
-            if user_id not in session.coffee_counts:
-                await self.api.message_manager.send_text(
-                    user_id,
-                    f"❌ **Session Cancelled**\n"
-                    f"Coffee session `{session.id}` has been cancelled.",
-                    True, True
-                )
                 
         except Exception as e:
             await self.api.message_manager.send_text(
@@ -507,7 +498,7 @@ class CommandManager:
             event: The NewMessage event containing /close_card command
         """
         user_id = event.sender_id
-        log_telegram_command(user_id, "/close_card", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/close_card)")
         
         # Check if user already has an active conversation
         if await self._check_and_notify_active_conversation(user_id):
@@ -545,7 +536,7 @@ class CommandManager:
             event: The NewMessage event containing /debt command
         """
         user_id = event.sender_id
-        log_telegram_command(user_id, "/debt", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/debt)")
         
         # Check if user already has an active conversation
         if await self._check_and_notify_active_conversation(user_id):
@@ -563,7 +554,7 @@ class CommandManager:
             event: The NewMessage event containing /credit command
         """
         user_id = event.sender_id
-        log_telegram_command(user_id, "/credit", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/credit)")
         
         # Check if user already has an active conversation
         if await self._check_and_notify_active_conversation(user_id):
@@ -581,7 +572,7 @@ class CommandManager:
             event: The NewMessage event containing /settings command
         """
         user_id = event.sender_id
-        log_telegram_command(user_id, "/settings", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/settings)")
         
         # Check if user already has an active conversation
         if await self._check_and_notify_active_conversation(user_id):
@@ -598,7 +589,7 @@ class CommandManager:
             event: The NewMessage event containing /help command
         """
         user_id = event.sender_id
-        log_telegram_command(user_id, "/help", getattr(event, 'chat_id', None))
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/help)")
         
         help_text = (
             "🤖 **Coffee Bot Commands**\n\n"

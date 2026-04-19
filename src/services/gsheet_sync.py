@@ -14,7 +14,7 @@ from beanie import Link as BeanieLink
 from gspread.utils import ValueInputOption
 
 from src.api.gsheet_api import GsheetAPI
-from src.common.log import Logger, log_gsheet_sync_failed, log_gsheet_sync_started
+from src.common.log import Logger
 from src.config import app_config
 from src.models.coffee_models import CoffeeCard, UserDebt
 from src.models.beanie_models import PassiveUser, TelegramUser
@@ -816,7 +816,7 @@ def _reorder_card_worksheets(*, api: GsheetAPI, card_titles: List[str]) -> None:
 
 async def sync_all_cards_once() -> None:
     async with _SYNC_LOCK:
-        log_gsheet_sync_started("Coffee Cards")
+        logger.info("Gsheet sync started: Coffee Cards", extra_tag="GSHEET")
 
         start_ts = time.perf_counter()
         logger.debug("Sync snapshot: start")
@@ -934,7 +934,11 @@ async def run_periodic_gsheet_sync(*, stop_event: asyncio.Event) -> None:
             interval_seconds = max(30, int(gsheet_settings.sync_period_minutes) * 60)
         except Exception as exc:
             # Fallback to env-based defaults if DB/settings are unavailable
-            log_gsheet_sync_failed("Coffee Cards", f"Failed to load gsheet settings: {type(exc).__name__}: {exc!r}")
+            logger.error(
+                f"Gsheet sync failed: Coffee Cards - failed to load gsheet settings ({type(exc).__name__}: {exc!r})",
+                extra_tag="GSHEET",
+                exc=exc,
+            )
             enabled = bool(getattr(app_config, "GSHEET_SYNC_ENABLED", False))
             interval_seconds = max(30, int(getattr(app_config, "GSHEET_SYNC_INTERVAL_SECONDS", 600)))
 
@@ -942,7 +946,11 @@ async def run_periodic_gsheet_sync(*, stop_event: asyncio.Event) -> None:
             try:
                 await sync_all_cards_once()
             except Exception as exc:
-                log_gsheet_sync_failed("Coffee Cards", f"{type(exc).__name__}: {exc!r}")
+                logger.error(
+                    f"Gsheet sync failed: Coffee Cards ({type(exc).__name__}: {exc!r})",
+                    extra_tag="GSHEET",
+                    exc=exc,
+                )
 
         try:
             # When disabled, still poll periodically so enabling it via admin UI works without restart.

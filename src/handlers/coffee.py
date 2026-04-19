@@ -24,17 +24,10 @@ from ..exceptions.coffee_exceptions import (
     InvalidCoffeeCountError, InsufficientCoffeeError, SessionNotActiveError,
     CoffeeCardNotFoundError, UserNotFoundError
 )
-from ..exceptions.coffee_exceptions import (
-    InvalidCoffeeCountError, InsufficientCoffeeError, SessionNotActiveError,
-    CoffeeCardNotFoundError, UserNotFoundError
-)
-from ..common.log import (
-    log_coffee_card_created, log_coffee_card_activated, log_coffee_card_deactivated, 
-    log_coffee_card_depleted, log_coffee_order_created, log_coffee_order_failed,
-    log_individual_coffee_order, log_coffee_session_started, log_coffee_session_participant_added,
-    log_coffee_session_updated, log_coffee_session_completed, log_coffee_session_cancelled,
-    log_debt_created, log_payment_recorded, log_unexpected_error
-)
+from ..common.log import get_logger
+
+
+logger = get_logger(__name__)
 
 # Type-only imports - only needed for type annotations
 if TYPE_CHECKING:
@@ -86,8 +79,15 @@ async def create_coffee_order(
     order = orders[0]
 
     request_gsheet_sync_after_action(reason="quick_order_completed")
-    
-    log_coffee_order_created(str(order.id), consumer_id, initiator_id, quantity, card.name)
+
+    logger.debug(
+        "[ORDER] Coffee order created: order_id=%s, consumer_id=%s, initiator_id=%s, quantity=%d, card='%s'",
+        str(order.id),
+        consumer_id,
+        initiator_id,
+        quantity,
+        card.name,
+    )
 
     # Create/update debt if consumer != card purchaser
     await card.fetch_link("purchaser")

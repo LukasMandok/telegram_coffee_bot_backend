@@ -14,7 +14,7 @@ from ..models.beanie_models import TelegramUser, PassiveUser
 from ..dependencies.dependencies import repo, get_repo
 from ..utils.beanie_utils import requires_beanie
 
-from src.common.log import log_coffee_card_created, Logger
+from src.common.log import Logger
 from .keyboards import KeyboardManager
 from .message_flow import ButtonCallback
 from .message_flow_ids import DebtQuickConfirmCallbacks
@@ -311,7 +311,6 @@ class CoffeeCardManager:
         )
 
         await card.insert()
-        log_coffee_card_created(card_name, total_coffees, purchaser_id, cost_per_coffee)
         self.logger.info(
             f"Coffee card created: name='{card_name}', total_coffees={total_coffees}, "
             f"cost_per_coffee=€{cost_per_coffee:.2f}, purchaser={purchaser.display_name} (id={purchaser_id})"

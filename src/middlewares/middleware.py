@@ -2,7 +2,10 @@ from typing import Any
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from src.common.log import log_api_request, log_user_login_failed, log_auth_route_bypassed, log_auth_token_received
+from src.common.log import Logger
+
+
+logger = Logger("SecurityMiddleware")
 
 # NOTE: This one is not used
 class SecurityMiddleware(BaseHTTPMiddleware):
@@ -11,14 +14,14 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             request: Request,
             call_next: RequestResponseEndpoint
         ) -> Response:
-        
-        log_api_request(request.scope['path'], request.method)
+
+        logger.trace(f"request {request.method} {request.scope['path']}", extra_tag="API")
         
         ### ISSUE: This is anoying and not flexible enough
         if (request.scope['path'] in ['/users/login', '/docs', '/openapi.json']):
         # or request.scope['path'].startswith('/docs')):
-            
-            log_auth_route_bypassed(request.scope['path'])
+
+            logger.debug(f"auth_bypassed (route={request.scope['path']})", extra_tag="AUTH")
             return await call_next(request)
         
         if request.scope['path'] != '/':
@@ -26,7 +29,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             headers = [True for x in required_headers if x in request.headers]
             
             if len(headers) < len(required_headers):
-                log_user_login_failed(0, f"Missing required headers: {required_headers}")
+                logger.warning(f"auth_failed (missing_headers={required_headers})", extra_tag="AUTH")
                 return JSONResponse(
                     status_code=409,
                     content={'error': f'Header {required_headers} is missing'}
@@ -34,7 +37,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             token = request.headers['token']
             # TODO: validate token
 
-            log_auth_token_received()
+            logger.trace("auth_token_received", extra_tag="AUTH")
         response = await call_next(request)
         return response 
     

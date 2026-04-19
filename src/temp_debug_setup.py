@@ -19,10 +19,12 @@ Environment Variables:
 
 import asyncio
 import os
+import sys
 from typing import List, Tuple
 from .handlers import users as handlers
 from .dependencies.dependencies import get_repo
-from .common.log import log_database_error, Logger
+from .common.log import Logger, log_settings
+from .config import app_config
 from .models import beanie_models as models
 
 logger = Logger("DebugSetup")
@@ -30,6 +32,7 @@ logger = Logger("DebugSetup")
 # Predefined list of passive users to create for debugging/testing
 DEBUG_PASSIVE_USERS: List[Tuple[str, str]] = [
     ("Lukas", "Mandok"),
+    ("Borys", "Oppenländer"),
     ("Heiko", "Augustin"),
     ("David", "Immig"),
     ("David", "Fritz"),
@@ -97,11 +100,10 @@ async def setup_debug_passive_users() -> None:
             logger.debug(f"Skipped {first_name} {last_name}: {str(e)}")
             existing_count += 1
         except Exception as e:
-            logger.error(f"Failed to create {first_name} {last_name}: {str(e)}", exc_info=e)
-            log_database_error(
-                "debug_setup_passive_user", 
-                str(e), 
-                {"first_name": first_name, "last_name": last_name}
+            logger.error(
+                f"Failed to create passive user (first_name={first_name}, last_name={last_name})",
+                extra_tag="DB",
+                exc=e,
             )
             failed_count += 1
     
@@ -153,11 +155,10 @@ async def cleanup_debug_passive_users() -> None:
             removed_count += 1
             
         except Exception as e:
-            logger.error(f"Failed to remove {first_name} {last_name}: {str(e)}", exc_info=e)
-            log_database_error(
-                "debug_cleanup_passive_user", 
-                str(e), 
-                {"first_name": first_name, "last_name": last_name}
+            logger.error(
+                f"Failed to remove passive user (first_name={first_name}, last_name={last_name})",
+                extra_tag="DB",
+                exc=e,
             )
             failed_count += 1
     
@@ -174,9 +175,6 @@ def is_debug_mode() -> bool:
     Returns:
         bool: True if debug mode is enabled, False otherwise
     """
-    import os
-    from .config import app_config
-    
     # Check for debug mode in environment variables and app_config
     return (
         os.getenv("DEBUG_MODE", "").lower() in ["true", "1", "yes"] or
@@ -197,9 +195,6 @@ async def initialize_log_settings() -> None:
         None
     """
     try:
-        from .common.log import log_settings
-        import logging
-        
         repo = get_repo()
         db_log_settings = await repo.get_log_settings()
         
@@ -209,24 +204,16 @@ async def initialize_log_settings() -> None:
             log_settings.show_caller = db_log_settings.get("log_show_caller", False)
             log_settings.show_class = db_log_settings.get("log_show_class", True)
             log_settings.level = db_log_settings.get("log_level", "TRACE")
-            
-            # Update root logger level
-            level_map = {
-                'TRACE': 5,
-                'DEBUG': logging.DEBUG,
-                'INFO': logging.INFO,
-                'WARNING': logging.WARNING,
-                'ERROR': logging.ERROR,
-                'CRITICAL': logging.CRITICAL
-            }
-            logging.root.setLevel(level_map.get(log_settings.level, logging.INFO))
-            
-            logger.info(f"Initialized log settings: level={log_settings.level}, time={log_settings.show_time}, caller={log_settings.show_caller}, class={log_settings.show_class}")
+
+            logger.info(
+                f"Initialized log settings: level={log_settings.level}, time={log_settings.show_time}, "
+                f"caller={log_settings.show_caller}, class={log_settings.show_class}"
+            )
         else:
             logger.warning("No log settings found in database, using defaults")
             
     except Exception as e:
-        logger.error(f"Failed to initialize log settings: {str(e)}", exc_info=e)
+        logger.error("Failed to initialize log settings", extra_tag="LOG", exc=e)
 
 
 async def run_debug_setup_if_enabled() -> None:
@@ -266,8 +253,6 @@ if __name__ == "__main__":
     """
     Allow running this module directly for manual testing.
     """
-    import sys
-    
     if len(sys.argv) > 1 and sys.argv[1] == "cleanup":
         # Run cleanup
         asyncio.run(cleanup_debug_passive_users())
