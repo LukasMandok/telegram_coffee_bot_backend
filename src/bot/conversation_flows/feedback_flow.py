@@ -180,6 +180,11 @@ async def _notify_submitter_and_owner(
 
     owner_id = await api.conversation_manager.repo.get_owner_user_id()
 
+    actor_display_name: str | None = None
+    if actor_user_id is not None:
+        actor = await _get_telegram_user_doc(api, actor_user_id)
+        actor_display_name = str(actor_user_id) if actor is None else str(actor.display_name)
+
     recipient_map: dict[int, str] = {}
 
     if submitter_text and submitter_id is not None:
@@ -189,8 +194,16 @@ async def _notify_submitter_and_owner(
         # If owner == submitter and we already have submitter text, keep that.
         recipient_map.setdefault(owner_id, owner_text)
 
+    # Never notify the user who performed the action.
+    if actor_user_id is not None:
+        recipient_map.pop(actor_user_id, None)
+
     for recipient_id, text in recipient_map.items():
-        await api.message_manager.send_user_notification(recipient_id, text)
+        final_text = text
+        if actor_display_name is not None and final_text:
+            title_line, sep, rest = final_text.partition("\n")
+            final_text = f"{title_line} (by {actor_display_name}){sep}{rest}"
+        await api.message_manager.send_user_notification(recipient_id, final_text)
 
 
 def _format_priority(value: Any) -> str:
@@ -1217,6 +1230,7 @@ async def handle_add_comment_input(input_text: str, flow_state, api: Any, user_i
     await feedback.save()
 
     base = _format_feedback_title_and_type(feedback)
+    comment_section = f"\n\nComment:\n{message}"
     await _notify_submitter_and_owner(
         api,
         feedback=feedback,
@@ -1224,10 +1238,12 @@ async def handle_add_comment_input(input_text: str, flow_state, api: Any, user_i
         submitter_text=(
             "💬 **New comment on your feedback**\n"
             f"{base}"
+            f"{comment_section}"
         ),
         owner_text=(
             "💬 **New comment added**\n"
             f"{base}"
+            f"{comment_section}"
         ),
     )
 

@@ -36,9 +36,6 @@ Credit menu:
 
 General:
 - catch the Ctrl+C in the terminal, to make sure that the bot is closed properly
-- if the user is supposed to enter something prevent the commands from being interpreted at all, even if the entered stuff does have an backslash
-- inactivity timeout is currently a timeout for the whole conversation, but it should be reset if the user does interactis with the conversation
-
 - unify certain repeating code snippets as functions 
 - add an option to message flows, which allow actions on initiation, submit and cancel -> so I can so gsheet synchronizations on sumbit and start backups on initiation save them on submit and delete them on cancel 
 
