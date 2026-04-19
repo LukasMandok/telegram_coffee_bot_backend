@@ -9,6 +9,7 @@ import traceback
 from .base_repo import BaseRepository, EffectiveNotificationPolicy
 from ..models import beanie_models as models
 from ..models.coffee_models import CoffeeCard, CoffeeOrder, Payment, UserDebt, CoffeeSession
+from ..models.feedback_models import Feedback
 from ..common.log import (
     Logger,
     log_settings,
@@ -62,6 +63,7 @@ class BeanieRepository(BaseRepository):
                 models.SnapshotMeta,
                 models.SnapshotHistory,
                 models.SnapshotDataChunk,
+                Feedback,
                 # Coffee models
                 CoffeeCard,
                 CoffeeOrder,

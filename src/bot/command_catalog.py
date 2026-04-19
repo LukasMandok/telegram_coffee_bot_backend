@@ -26,6 +26,7 @@ COMMAND_BY_CONTEXT: dict[str, str] = {
     "users": "/users",
     "add_passive_user": "/users",
     "settings": "/settings",
+    "feedback": "/feedback",
 }
 
 
@@ -39,6 +40,7 @@ BOT_COMMANDS: list[tuple[str, str, bool]] = [
     ("new_card", "Create a new coffee card that you paid for", False),
     ("close_card", "Close the last active coffee card", False),
     ("settings", "Adjust your personal preferences", True),
+    ("feedback", "Send feedback or view your feedback", True),
     ("paypal", "Setup your paypal.me link", False),
     ("sync", "(Admin) Export current state to Google Sheets", False),
     ("snapshots", "(Admin) Create and restore snapshots", False),

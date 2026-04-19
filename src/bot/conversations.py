@@ -26,6 +26,7 @@ from .conversation_flows.card_flow import create_card_menu_flow, create_close_ca
 from .conversation_flows.quick_order_flow import create_quick_order_flow, format_not_enough_coffees_text
 from .conversation_flows.snapshots_flow import create_snapshots_flow
 from .conversation_flows.users_flow import create_users_flow
+from .conversation_flows.feedback_flow import create_feedback_flow
 from .conversation_flows.session_flow import create_session_flow, KEY_SESSION_OBJ_ID
 from .message_flow_helpers import CommonFlowKeys, IntegerParser, MoneyParser
 from .command_catalog import COMMAND_BY_CONTEXT
@@ -1263,6 +1264,12 @@ class ConversationManager:
     async def users_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
         """Admin users menu (MessageFlow-based)."""
         flow = create_users_flow()
+        return await flow.run(conv, user_id, self.api, start_state="main")
+
+    @managed_conversation("feedback", 600)
+    async def feedback_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
+        """Feedback menu (`/feedback`) (MessageFlow-based)."""
+        flow = create_feedback_flow()
         return await flow.run(conv, user_id, self.api, start_state="main")
     
     @managed_conversation("close_card", 60)

@@ -546,6 +546,18 @@ class CommandManager:
         await self.api.conversation_manager.debt_conversation(user_id)
 
     @dep.verify_user
+    async def handle_feedback_command(self, event: events.NewMessage.Event) -> None:
+        """Handle the /feedback command to create and manage feedback."""
+        user_id = event.sender_id
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/feedback)")
+
+        # Check if user already has an active conversation
+        if await self._check_and_notify_active_conversation(user_id):
+            return
+
+        await self.api.conversation_manager.feedback_conversation(user_id)
+
+    @dep.verify_user
     async def handle_credit_command(self, event: events.NewMessage.Event) -> None:
         """
         Handle the /credit command to show credit overview (money owed to the user).

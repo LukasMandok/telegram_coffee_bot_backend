@@ -136,6 +136,7 @@ class TelethonAPI:
         self.add_handler(lambda event: self.command_manager.handle_debt_command(event), "/debt")
         self.add_handler(lambda event: self.command_manager.handle_credit_command(event), "/credit")
         self.add_handler(lambda event: self.command_manager.handle_settings_command(event), "/settings")
+        self.add_handler(lambda event: self.command_manager.handle_feedback_command(event), "/feedback")
         self.add_handler(lambda event: self.command_manager.handle_sync_command(event), "/sync")
         self.add_handler(lambda event: self.command_manager.handle_snapshots_command(event), "/snapshots")
         self.add_handler(lambda event: self.command_manager.handle_users_command(event), "/users")
