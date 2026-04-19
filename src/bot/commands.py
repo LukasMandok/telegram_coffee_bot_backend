@@ -129,6 +129,9 @@ class CommandManager:
         user_id = event.sender_id
         button_text = event.message.message
         self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=button:{button_text})")
+
+        if self.api.conversation_manager.has_active_conversation(user_id):
+            return
         
         # Map button text to commands
         if button_text == "Place Order":

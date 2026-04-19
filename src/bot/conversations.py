@@ -132,6 +132,15 @@ def managed_conversation(conversation_type: str, timeout: int = 60, use_existing
                             )
                             return False
             except asyncio.TimeoutError:
+                # Telethon raises TimeoutError for both real timeouts and a cancelled
+                # conversation (e.g. when /cancel triggers conv.cancel()).
+                if state.cancelled:
+                    self.logger.info(
+                        f"conversation_cancelled (user_id={user_id}, type={conversation_type}, reason=user_cancelled)",
+                        extra_tag="CONV",
+                    )
+                    return False
+
                 # Mark that a timeout occurred and handle cleanup centrally
                 timed_out = True
                 await self.handle_timeout_abort(

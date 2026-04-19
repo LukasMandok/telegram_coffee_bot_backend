@@ -302,7 +302,14 @@ class TelethonAPI:
             # Otherwise, add to the existing conversation
             new_conversation = not has_active_conversation
             self.message_manager.add_latest_message(sender_id, message_model, conv=True, new=new_conversation)
-            
+
+            # If the user is currently in a conversation, treat anything that looks
+            # like a Telegram command as plain input. Only /cancel stays active.
+            if has_active_conversation:
+                raw_text = (event_obj.message.message or "").strip()
+                if raw_text.startswith("/") and raw_text.lower() != "/cancel":
+                    raise events.StopPropagation
+
             await handler(event_obj)
             
             # print("stop propagation")
