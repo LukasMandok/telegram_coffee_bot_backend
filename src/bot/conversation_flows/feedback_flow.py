@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from ..message_flow import ButtonCallback, MessageDefinition, MessageFlow, StateType, TextLengthValidator
 from ..message_flow_helpers import CommonCallbacks, NavigationButtons, format_date
@@ -147,13 +147,7 @@ async def _can_view_feedback(api: Any, user_id: int, feedback: Feedback) -> bool
     if submitter is None:
         return False
 
-    return bool(submitter.user_id == int(user_id))
-
-
-async def _can_delete_feedback(api: Any, user_id: int, feedback: Feedback) -> bool:
-    if await _is_admin(api, user_id):
-        return True
-    return await _can_view_feedback(api, user_id, feedback)
+    return submitter.user_id == int(user_id)
 
 
 async def _notify_no_permission(api: Any, user_id: int) -> None:
@@ -193,8 +187,42 @@ def _format_feedback_type(value: Any) -> str:
 
 
 def _get_bool(flow_state, key: str, default: bool) -> bool:
-    raw = flow_state.get(key, default)
-    return bool(raw) if isinstance(raw, bool) else bool(raw)
+    return bool(flow_state.get(key, default))
+
+
+async def _get_viewer_context(api: Any, user_id: int, feedback: Feedback) -> tuple[bool, str, Optional[TelegramUser]]:
+    submitter = await _get_feedback_submitter(feedback)
+    is_admin = await _is_admin(api, int(user_id))
+    viewer_is_submitter = submitter is not None and submitter.user_id == int(user_id)
+    viewer_side = "admin" if is_admin and not viewer_is_submitter else "submitter"
+    return is_admin, viewer_side, submitter
+
+
+def _build_comments_nav_row(
+    *,
+    current_page: int,
+    total_pages: int,
+    make_handler: Callable[[int], Any],
+) -> List[ButtonCallback]:
+    if total_pages <= 1:
+        return []
+
+    row: List[ButtonCallback] = []
+    if current_page > 1:
+        row.append(ButtonCallback("◀️ Newer", CB_COMMENTS_NEWER, callback_handler=make_handler(-1)))
+
+    row.append(
+        ButtonCallback(
+            f"{current_page}/{total_pages}",
+            CB_COMMENTS_INFO,
+            callback_handler=make_handler(0),
+        )
+    )
+
+    if current_page < total_pages:
+        row.append(ButtonCallback("Older ▶️", CB_COMMENTS_OLDER, callback_handler=make_handler(1)))
+
+    return row
 
 
 def _get_enabled_status_values(flow_state) -> List[str]:
@@ -283,18 +311,6 @@ def _needs_attention_for_side(feedback: Feedback, *, side: str) -> bool:
     return False
 
 
-def _render_comments_for_viewer(feedback: Feedback, *, viewer_side: str, limit: int = 10) -> str:
-    # Keep legacy behavior: just show the newest comments within a generous line budget.
-    # This helper is no longer used for paging UI.
-    text, _, _ = _render_comments_page(
-        feedback,
-        viewer_side=viewer_side,
-        page=1,
-        line_limit=max(25, int(limit) * 3),
-    )
-    return text
-
-
 def _render_comments_page(
     feedback: Feedback,
     *,
@@ -326,7 +342,7 @@ def _render_comments_page(
     for comment in reversed(comments):  # newest -> oldest
         needed = _comment_line_count(comment)
         if current and (current_lines + needed) > int(line_limit):
-            pages.append(list(reversed(current)))  # show oldest->newest inside page
+            pages.append(list(current))  # keep newest->oldest within page
             current = []
             current_lines = 0
 
@@ -334,7 +350,7 @@ def _render_comments_page(
         current_lines += needed
 
     if current:
-        pages.append(list(reversed(current)))
+        pages.append(list(current))
 
     total_pages = max(1, len(pages))
     current_page = max(1, min(int(page), total_pages))
@@ -365,7 +381,7 @@ async def _submitter_has_unread_admin_comment(api: Any, user_id: int) -> bool:
         "submitter.$id": telegram_user.id,
         "comments": {"$elemMatch": {"author_is_admin": True, "viewed": False}},
     }
-    return bool(await Feedback.find(query, fetch_links=False).count() > 0)
+    return (await Feedback.find(query, fetch_links=False).count()) > 0
 
 
 async def _admin_has_attention_for_type(api: Any, feedback_type: FeedbackType) -> bool:
@@ -378,19 +394,17 @@ async def _admin_has_attention_for_type(api: Any, feedback_type: FeedbackType) -
             {"comments": {"$elemMatch": {"author_is_admin": False, "viewed": False}}},
         ],
     }
-    return bool(await Feedback.find(query, fetch_links=False).count() > 0)
+    return (await Feedback.find(query, fetch_links=False).count()) > 0
 
 
 async def build_main_text(flow_state, api: Any, user_id: int) -> str:
     telegram_user = await _get_telegram_user_doc(api, int(user_id))
-    submitted = 0
-    if telegram_user is not None and telegram_user.id is not None:
-        submitted = await Feedback.find({"submitter.$id": telegram_user.id}, fetch_links=False).count()
-        
-    return (
-        "🗣️ **Feedback**\n\n"
-        f"Submitted feedback: **{submitted}**"
+    submitted = (
+        await Feedback.find({"submitter.$id": telegram_user.id}, fetch_links=False).count()
+        if telegram_user is not None and telegram_user.id is not None
+        else 0
     )
+    return "🗣️ **Feedback**\n\n" f"Submitted feedback: **{submitted}**"
 
 
 async def select_create(flow_state, api: Any, user_id: int) -> Optional[str]:
@@ -613,9 +627,10 @@ async def list_all_feedback(flow_state, api: Any, user_id: int, *, only_type: Fe
         for doc in docs
         if doc.id is not None
     ]
+
+
 def build_feedback_list_button(
     item: FeedbackListItem,
-    idx: int,
     *,
     return_state: str,
     show_type_icon: bool,
@@ -636,7 +651,7 @@ def build_feedback_list_button(
 
 
 async def build_list_my_text(flow_state, api: Any, user_id: int) -> str:
-    return "📄 **My feedback**\n\nSelect an entry:" 
+    return "📄 **My feedback**\n\nSelect an entry:"
 
 
 async def build_list_admin_bugs_text(flow_state, api: Any, user_id: int) -> str:
@@ -766,12 +781,11 @@ async def _build_feedback_list_keyboard(
     )
 
     # Items (single column)
-    for idx, item in enumerate(page_items, start=start):
+    for item in page_items:
         rows.append(
             [
                 build_feedback_list_button(
                     item,
-                    idx,
                     return_state=return_state,
                     show_type_icon=show_type_icon,
                 )
@@ -881,12 +895,8 @@ async def build_details_text(flow_state, api: Any, user_id: int) -> str:
     if not can_view:
         return "❌ You don't have permission to view this feedback."
 
-    submitter = await _get_feedback_submitter(feedback)
-    submitter_text = "-" if submitter is None else f"{submitter.display_name}"
-
-    viewer_is_admin = await _is_admin(api, int(user_id))
-    viewer_is_submitter = submitter is not None and submitter.user_id == int(user_id)
-    viewer_side = "admin" if viewer_is_admin and not viewer_is_submitter else "submitter"
+    _, viewer_side, submitter = await _get_viewer_context(api, int(user_id), feedback)
+    submitter_text = "-" if submitter is None else str(submitter.display_name)
 
     title_prefix = "🟡 " if (viewer_side == "admin" and feedback.title_updated) else ""
     desc_prefix = "🟡 " if (viewer_side == "admin" and feedback.description_updated) else ""
@@ -973,10 +983,9 @@ async def build_details_keyboard(flow_state, api: Any, user_id: int) -> List[Lis
     if not can_view:
         return [[ButtonCallback("◁ Back", CommonCallbacks.BACK)]]
 
-    submitter = await _get_feedback_submitter(feedback)
-    viewer_is_submitter = submitter is not None and submitter.user_id == int(user_id)
-    is_admin = await _is_admin(api, int(user_id))
-    viewer_side = "admin" if is_admin and not viewer_is_submitter else "submitter"
+    viewer_id = int(user_id)
+    is_admin, viewer_side, submitter = await _get_viewer_context(api, viewer_id, feedback)
+    viewer_is_submitter = submitter is not None and submitter.user_id == viewer_id
 
     def _change_comments_page(key: str, delta: int) -> Any:
         async def _handler(inner_flow_state, inner_api: Any, inner_user_id: int) -> Optional[str]:
@@ -995,40 +1004,25 @@ async def build_details_keyboard(flow_state, api: Any, user_id: int) -> List[Lis
     )
     flow_state.set(KEY_DETAILS_COMMENTS_PAGE, current_comment_page)
 
-    comment_nav_row: List[ButtonCallback] = []
-    if total_comment_pages > 1:
-        if current_comment_page > 1:
-            comment_nav_row.append(
-                ButtonCallback(
-                    "◀️ Newer",
-                    CB_COMMENTS_NEWER,
-                    callback_handler=_change_comments_page(KEY_DETAILS_COMMENTS_PAGE, -1),
-                )
-            )
-        comment_nav_row.append(
-            ButtonCallback(
-                f"{current_comment_page}/{total_comment_pages}",
-                CB_COMMENTS_INFO,
-                callback_handler=_change_comments_page(KEY_DETAILS_COMMENTS_PAGE, 0),
-            )
-        )
-        if current_comment_page < total_comment_pages:
-            comment_nav_row.append(
-                ButtonCallback(
-                    "Older ▶️",
-                    CB_COMMENTS_OLDER,
-                    callback_handler=_change_comments_page(KEY_DETAILS_COMMENTS_PAGE, 1),
-                )
-            )
+    comment_nav_row = _build_comments_nav_row(
+        current_page=current_comment_page,
+        total_pages=total_comment_pages,
+        make_handler=lambda delta: _change_comments_page(KEY_DETAILS_COMMENTS_PAGE, int(delta)),
+    )
 
     if is_admin:
         add_comment_row = [ButtonCallback("💬 Add comment", CB_DETAILS_COMMENT), *comment_nav_row]
+
+        admin_action_row: List[ButtonCallback] = [
+            ButtonCallback("🧭 Status", CB_ADMIN_STATUS),
+            ButtonCallback("⭐ Priority", CB_ADMIN_PRIORITY),
+        ]
+        if viewer_is_submitter:
+            admin_action_row.append(ButtonCallback("✏️ Edit", CB_DETAILS_EDIT))
+        admin_action_row.append(ButtonCallback("🗑 Delete", CB_DETAILS_DELETE))
+
         buttons: List[List[ButtonCallback]] = [
-            [
-                ButtonCallback("🧭 Status", CB_ADMIN_STATUS),
-                ButtonCallback("⭐ Priority", CB_ADMIN_PRIORITY),
-                ButtonCallback("🗑 Delete", CB_DETAILS_DELETE),
-            ],
+            admin_action_row,
             add_comment_row,
             [ButtonCallback("◁ Back", CommonCallbacks.BACK)],
         ]
@@ -1072,10 +1066,7 @@ async def build_add_comment_text(flow_state, api: Any, user_id: int) -> str:
     if feedback is None:
         return "💬 **Add comment**\n\nWrite your message:"
 
-    submitter = await _get_feedback_submitter(feedback)
-    viewer_is_admin = await _is_admin(api, int(user_id))
-    viewer_is_submitter = submitter is not None and submitter.user_id == int(user_id)
-    viewer_side = "admin" if viewer_is_admin and not viewer_is_submitter else "submitter"
+    _, viewer_side, _ = await _get_viewer_context(api, int(user_id), feedback)
 
     comments_page = _get_int(flow_state, KEY_ADD_COMMENT_COMMENTS_PAGE, 1)
     comments_text, total_pages, current_page = _render_comments_page(
@@ -1099,10 +1090,7 @@ async def build_add_comment_keyboard(flow_state, api: Any, user_id: int) -> List
     if feedback is None:
         return [[ButtonCallback("◁ Back", CommonCallbacks.BACK)]]
 
-    submitter = await _get_feedback_submitter(feedback)
-    viewer_is_admin = await _is_admin(api, int(user_id))
-    viewer_is_submitter = submitter is not None and submitter.user_id == int(user_id)
-    viewer_side = "admin" if viewer_is_admin and not viewer_is_submitter else "submitter"
+    _, viewer_side, _ = await _get_viewer_context(api, int(user_id), feedback)
 
     def _change_comments_page(delta: int) -> Any:
         async def _handler(inner_flow_state, inner_api: Any, inner_user_id: int) -> Optional[str]:
@@ -1122,15 +1110,13 @@ async def build_add_comment_keyboard(flow_state, api: Any, user_id: int) -> List
     flow_state.set(KEY_ADD_COMMENT_COMMENTS_PAGE, current_comment_page)
 
     rows: List[List[ButtonCallback]] = []
-    if total_comment_pages > 1:
-        nav_row: List[ButtonCallback] = []
-        if current_comment_page > 1:
-            nav_row.append(ButtonCallback("◀️ Newer", CB_COMMENTS_NEWER, callback_handler=_change_comments_page(-1)))
-        nav_row.append(ButtonCallback(f"{current_comment_page}/{total_comment_pages}", CB_COMMENTS_INFO, callback_handler=_change_comments_page(0)))
-        if current_comment_page < total_comment_pages:
-            nav_row.append(ButtonCallback("Older ▶️", CB_COMMENTS_OLDER, callback_handler=_change_comments_page(1)))
-        if nav_row:
-            rows.append(nav_row)
+    nav_row = _build_comments_nav_row(
+        current_page=current_comment_page,
+        total_pages=total_comment_pages,
+        make_handler=lambda delta: _change_comments_page(int(delta)),
+    )
+    if nav_row:
+        rows.append(nav_row)
 
     rows.append([ButtonCallback("◁ Back", CommonCallbacks.BACK)])
     return rows
@@ -1172,7 +1158,7 @@ async def handle_add_comment_input(input_text: str, flow_state, api: Any, user_i
         FeedbackComment(
             author_user_id=int(user_id),
             author_display_name=author_name,
-            author_is_admin=bool(author_is_admin),
+            author_is_admin=author_is_admin,
             message=message,
             created_at=_now(),
             viewed=False,
@@ -1180,7 +1166,7 @@ async def handle_add_comment_input(input_text: str, flow_state, api: Any, user_i
     )
 
     # Mark feedback as "updated" for admin inbox when submitter writes.
-    if not bool(author_is_admin):
+    if not author_is_admin:
         feedback.viewed_by_admin = False
 
     feedback.updated_at = _now()
@@ -1260,7 +1246,7 @@ async def build_user_edit_title_text(flow_state, api: Any, user_id: int) -> str:
     feedback_id = str(flow_state.get(KEY_SELECTED_FEEDBACK_ID, "")).strip()
     feedback = await _get_feedback(api, feedback_id)
     old_title = "-" if feedback is None else feedback.title
-    return f"Current title:\n{old_title}\n\nEnter new title:" 
+    return f"Current title:\n{old_title}\n\nEnter new title:"
 
 
 async def handle_user_edit_title_input(input_text: str, flow_state, api: Any, user_id: int) -> Optional[str]:
@@ -1283,7 +1269,7 @@ async def build_user_edit_description_text(flow_state, api: Any, user_id: int) -
     feedback_id = str(flow_state.get(KEY_SELECTED_FEEDBACK_ID, "")).strip()
     feedback = await _get_feedback(api, feedback_id)
     old_desc = "-" if feedback is None else feedback.description
-    return f"Current description:\n{old_desc}\n\nEnter new description:" 
+    return f"Current description:\n{old_desc}\n\nEnter new description:"
 
 
 async def handle_user_edit_description_input(input_text: str, flow_state, api: Any, user_id: int) -> Optional[str]:
@@ -1320,7 +1306,7 @@ async def handle_user_priority_selected(priority: int, flow_state, api: Any, use
 
 
 async def build_admin_change_status_text(flow_state, api: Any, user_id: int) -> str:
-    return "Select new status:" 
+    return "Select new status:"
 
 
 async def build_admin_change_status_keyboard(flow_state, api: Any, user_id: int) -> List[List[ButtonCallback]]:
@@ -1358,7 +1344,7 @@ async def build_admin_change_status_keyboard(flow_state, api: Any, user_id: int)
 
 
 async def build_admin_change_priority_text(flow_state, api: Any, user_id: int) -> str:
-    return "Select new priority (1-5):" 
+    return "Select new priority (1-5):"
 
 
 async def handle_admin_priority_selected(priority: int, flow_state, api: Any, user_id: int) -> Optional[str]:
@@ -1412,7 +1398,7 @@ async def handle_delete_confirm_button(data: str, flow_state, api: Any, user_id:
         )
         return STATE_DETAILS
 
-    if not await _can_delete_feedback(api, int(user_id), feedback):
+    if not await _can_view_feedback(api, int(user_id), feedback):
         await _notify_no_permission(api, int(user_id))
         return STATE_DETAILS
 
@@ -1442,12 +1428,19 @@ def create_feedback_flow() -> MessageFlow:
     flow = MessageFlow()
 
     async def _main_keyboard(flow_state, api: Any, user_id: int) -> List[List[ButtonCallback]]:
-        is_admin = await _is_admin(api, int(user_id))
-        submitter_attention = await _submitter_has_unread_admin_comment(api, int(user_id))
+        viewer_id = int(user_id)
+        is_admin = await _is_admin(api, viewer_id)
+        submitter_attention = await _submitter_has_unread_admin_comment(api, viewer_id)
 
-        view_my_label = "📄 My feedback"
-        if submitter_attention:
-            view_my_label = f"⚠️ {view_my_label}"
+        telegram_user = await _get_telegram_user_doc(api, viewer_id)
+        my_feedback_count = (
+            await Feedback.find({"submitter.$id": telegram_user.id}, fetch_links=False).count()
+            if telegram_user is not None and telegram_user.id is not None
+            else 0
+        )
+
+        view_my_label_base = f"📄 My feedback ({my_feedback_count})"
+        view_my_label = f"⚠️ {view_my_label_base}" if submitter_attention else view_my_label_base
 
         rows: List[List[ButtonCallback]] = [
             [
@@ -1460,19 +1453,25 @@ def create_feedback_flow() -> MessageFlow:
             features_attention = await _admin_has_attention_for_type(api, FeedbackType.FEATURE_REQUEST)
             general_attention = await _admin_has_attention_for_type(api, FeedbackType.GENERAL)
 
-            bugs_label = "🪲 Bugs"
-            if bugs_attention:
-                bugs_label = f"⚠️ {bugs_label}"
-            features_label = "✨ Features"
-            if features_attention:
-                features_label = f"⚠️ {features_label}"
-            general_label = "💬 General"
-            if general_attention:
-                general_label = f"⚠️ {general_label}"
+            bugs_count = await Feedback.find({"type": FeedbackType.BUG.value}, fetch_links=False).count()
+            features_count = await Feedback.find({"type": FeedbackType.FEATURE_REQUEST.value}, fetch_links=False).count()
+            general_count = await Feedback.find({"type": FeedbackType.GENERAL.value}, fetch_links=False).count()
 
-            rows.append([ButtonCallback(bugs_label, CB_VIEW_BUGS, callback_handler=open_admin_bugs_list), 
-                         ButtonCallback(features_label, CB_VIEW_FEATURES, callback_handler=open_admin_features_list),
-                         ButtonCallback(general_label, CB_VIEW_GENERAL, callback_handler=open_admin_general_list)])
+            bugs_label_base = f"🪲 Bugs ({bugs_count})"
+            features_label_base = f"✨ Features ({features_count})"
+            general_label_base = f"💬 General ({general_count})"
+
+            bugs_label = f"⚠️ {bugs_label_base}" if bugs_attention else bugs_label_base
+            features_label = f"⚠️ {features_label_base}" if features_attention else features_label_base
+            general_label = f"⚠️ {general_label_base}" if general_attention else general_label_base
+
+            rows.append(
+                [
+                    ButtonCallback(bugs_label, CB_VIEW_BUGS, callback_handler=open_admin_bugs_list),
+                    ButtonCallback(features_label, CB_VIEW_FEATURES, callback_handler=open_admin_features_list),
+                    ButtonCallback(general_label, CB_VIEW_GENERAL, callback_handler=open_admin_general_list),
+                ]
+            )
             
         rows.append(NavigationButtons.close())
         return rows
