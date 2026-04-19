@@ -109,11 +109,11 @@ def _now() -> datetime:
 
 
 async def _is_admin(api: Any, user_id: int) -> bool:
-    return await api.conversation_manager.repo.is_user_admin(int(user_id))
+    return await api.conversation_manager.repo.is_user_admin(user_id)
 
 
 async def _get_telegram_user_doc(api: Any, user_id: int):
-    return await api.conversation_manager.repo.find_user_by_id(int(user_id))
+    return await api.conversation_manager.repo.find_user_by_id(user_id)
 
 
 async def _get_feedback(api: Any, feedback_id: str) -> Optional[Feedback]:
@@ -147,17 +147,50 @@ async def _can_view_feedback(api: Any, user_id: int, feedback: Feedback) -> bool
     if submitter is None:
         return False
 
-    return submitter.user_id == int(user_id)
+    return submitter.user_id == user_id
 
 
 async def _notify_no_permission(api: Any, user_id: int) -> None:
     await api.message_manager.send_text(
-        int(user_id),
+        user_id,
         "❌ You don't have permission to do that.",
         vanish=True,
         conv=True,
         delete_after=3,
     )
+
+
+def _format_feedback_title_and_type(feedback: Feedback) -> str:
+    return (
+        f"Type: `{_format_feedback_type(feedback.type)}`\n"
+        f"Title: **{feedback.title}**"
+    )
+
+
+async def _notify_submitter_and_owner(
+    api: Any,
+    *,
+    feedback: Feedback,
+    actor_user_id: int | None,
+    submitter_text: str | None,
+    owner_text: str | None,
+) -> None:
+    submitter = await _get_feedback_submitter(feedback)
+    submitter_id = submitter.user_id if submitter is not None else None
+
+    owner_id = await api.conversation_manager.repo.get_owner_user_id()
+
+    recipient_map: dict[int, str] = {}
+
+    if submitter_text and submitter_id is not None:
+        recipient_map[submitter_id] = submitter_text
+
+    if owner_text and (actor_user_id is None or owner_id != actor_user_id):
+        # If owner == submitter and we already have submitter text, keep that.
+        recipient_map.setdefault(owner_id, owner_text)
+
+    for recipient_id, text in recipient_map.items():
+        await api.message_manager.send_user_notification(recipient_id, text)
 
 
 def _format_priority(value: Any) -> str:
@@ -192,8 +225,8 @@ def _get_bool(flow_state, key: str, default: bool) -> bool:
 
 async def _get_viewer_context(api: Any, user_id: int, feedback: Feedback) -> tuple[bool, str, Optional[TelegramUser]]:
     submitter = await _get_feedback_submitter(feedback)
-    is_admin = await _is_admin(api, int(user_id))
-    viewer_is_submitter = submitter is not None and submitter.user_id == int(user_id)
+    is_admin = await _is_admin(api, user_id)
+    viewer_is_submitter = submitter is not None and submitter.user_id == user_id
     viewer_side = "admin" if is_admin and not viewer_is_submitter else "submitter"
     return is_admin, viewer_side, submitter
 
@@ -373,7 +406,7 @@ def _render_comments_page(
 
 
 async def _submitter_has_unread_admin_comment(api: Any, user_id: int) -> bool:
-    telegram_user = await _get_telegram_user_doc(api, int(user_id))
+    telegram_user = await _get_telegram_user_doc(api, user_id)
     if telegram_user is None or telegram_user.id is None:
         return False
 
@@ -398,7 +431,7 @@ async def _admin_has_attention_for_type(api: Any, feedback_type: FeedbackType) -
 
 
 async def build_main_text(flow_state, api: Any, user_id: int) -> str:
-    telegram_user = await _get_telegram_user_doc(api, int(user_id))
+    telegram_user = await _get_telegram_user_doc(api, user_id)
     submitted = (
         await Feedback.find({"submitter.$id": telegram_user.id}, fetch_links=False).count()
         if telegram_user is not None and telegram_user.id is not None
@@ -479,7 +512,7 @@ async def handle_create_description_input(input_text: str, flow_state, api: Any,
     raw_type = str(flow_state.get(KEY_CREATE_TYPE, "")).strip()
     if raw_type == FeedbackType.GENERAL.value:
         flow_state.set(KEY_CREATE_PRIORITY, None)
-        return await save_new_feedback(flow_state, api, int(user_id))
+        return await save_new_feedback(flow_state, api, user_id)
 
     return STATE_CREATE_PRIORITY
 
@@ -490,7 +523,7 @@ async def build_priority_keyboard(
 ) -> List[List[ButtonCallback]]:
     def _make(priority: int):
         async def _handler(flow_state, api: Any, user_id: int) -> Optional[str]:
-            return await on_selected(int(priority), flow_state, api, int(user_id))
+            return await on_selected(priority, flow_state, api, user_id)
 
         return _handler
 
@@ -518,7 +551,7 @@ async def save_new_feedback(flow_state, api: Any, user_id: int) -> Optional[str]
     feedback_type = FeedbackType(raw_type) if raw_type else None
     if feedback_type is None:
         await api.message_manager.send_text(
-            int(user_id),
+            user_id,
             "❌ Missing feedback type.",
             vanish=True,
             conv=True,
@@ -526,10 +559,10 @@ async def save_new_feedback(flow_state, api: Any, user_id: int) -> Optional[str]
         )
         return STATE_CREATE_TYPE
 
-    telegram_user = await _get_telegram_user_doc(api, int(user_id))
+    telegram_user = await _get_telegram_user_doc(api, user_id)
     if telegram_user is None:
         await api.message_manager.send_text(
-            int(user_id),
+            user_id,
             "❌ Could not find your user in the database.",
             vanish=True,
             conv=True,
@@ -562,6 +595,17 @@ async def save_new_feedback(flow_state, api: Any, user_id: int) -> Optional[str]
 
     await feedback.insert()
 
+    await _notify_submitter_and_owner(
+        api,
+        feedback=feedback,
+        actor_user_id=user_id,
+        submitter_text=None,
+        owner_text=(
+            "🆕 **New feedback created**\n"
+            f"{_format_feedback_title_and_type(feedback)}"
+        ),
+    )
+
     flow_state.set(KEY_SELECTED_FEEDBACK_ID, str(feedback.id))
     flow_state.set(KEY_RETURN_STATE, STATE_MAIN)
 
@@ -570,11 +614,11 @@ async def save_new_feedback(flow_state, api: Any, user_id: int) -> Optional[str]
 
 async def handle_create_priority_selected(priority: int, flow_state, api: Any, user_id: int) -> Optional[str]:
     flow_state.set(KEY_CREATE_PRIORITY, int(priority))
-    return await save_new_feedback(flow_state, api, int(user_id))
+    return await save_new_feedback(flow_state, api, user_id)
 
 
 async def list_my_feedback(flow_state, api: Any, user_id: int) -> List[FeedbackListItem]:
-    telegram_user = await _get_telegram_user_doc(api, int(user_id))
+    telegram_user = await _get_telegram_user_doc(api, user_id)
     if telegram_user is None or telegram_user.id is None:
         return []
 
@@ -603,7 +647,7 @@ async def list_my_feedback(flow_state, api: Any, user_id: int) -> List[FeedbackL
 
 
 async def list_all_feedback(flow_state, api: Any, user_id: int, *, only_type: FeedbackType | None = None) -> List[FeedbackListItem]:
-    if not await _is_admin(api, int(user_id)):
+    if not await _is_admin(api, user_id):
         return []
 
     statuses = _get_enabled_status_values(flow_state)
@@ -655,19 +699,19 @@ async def build_list_my_text(flow_state, api: Any, user_id: int) -> str:
 
 
 async def build_list_admin_bugs_text(flow_state, api: Any, user_id: int) -> str:
-    if not await _is_admin(api, int(user_id)):
+    if not await _is_admin(api, user_id):
         return "❌ Admin only.\n\nGo back."
     return "**🪲 Bugs**\n\nSelect an entry:"
 
 
 async def build_list_admin_features_text(flow_state, api: Any, user_id: int) -> str:
-    if not await _is_admin(api, int(user_id)):
+    if not await _is_admin(api, user_id):
         return "❌ Admin only.\n\nGo back."
     return "**✨ Features**\n\nSelect an entry:"
 
 
 async def build_list_admin_general_text(flow_state, api: Any, user_id: int) -> str:
-    if not await _is_admin(api, int(user_id)):
+    if not await _is_admin(api, user_id):
         return "❌ Admin only.\n\nGo back."
     return "**💬 General feedback**\n\nSelect an entry:"
 
@@ -838,7 +882,7 @@ async def _build_feedback_list_keyboard(
 
 
 async def build_list_my_keyboard(flow_state, api: Any, user_id: int) -> List[List[ButtonCallback]]:
-    items = await list_my_feedback(flow_state, api, int(user_id))
+    items = await list_my_feedback(flow_state, api, user_id)
     return await _build_feedback_list_keyboard(
         flow_state=flow_state,
         state_id=STATE_LIST_MY,
@@ -850,7 +894,7 @@ async def build_list_my_keyboard(flow_state, api: Any, user_id: int) -> List[Lis
 
 
 async def build_list_admin_bugs_keyboard(flow_state, api: Any, user_id: int) -> List[List[ButtonCallback]]:
-    items = await list_all_feedback(flow_state, api, int(user_id), only_type=FeedbackType.BUG)
+    items = await list_all_feedback(flow_state, api, user_id, only_type=FeedbackType.BUG)
     return await _build_feedback_list_keyboard(
         flow_state=flow_state,
         state_id=STATE_LIST_ADMIN_BUGS,
@@ -862,7 +906,7 @@ async def build_list_admin_bugs_keyboard(flow_state, api: Any, user_id: int) -> 
 
 
 async def build_list_admin_features_keyboard(flow_state, api: Any, user_id: int) -> List[List[ButtonCallback]]:
-    items = await list_all_feedback(flow_state, api, int(user_id), only_type=FeedbackType.FEATURE_REQUEST)
+    items = await list_all_feedback(flow_state, api, user_id, only_type=FeedbackType.FEATURE_REQUEST)
     return await _build_feedback_list_keyboard(
         flow_state=flow_state,
         state_id=STATE_LIST_ADMIN_FEATURES,
@@ -874,7 +918,7 @@ async def build_list_admin_features_keyboard(flow_state, api: Any, user_id: int)
 
 
 async def build_list_admin_general_keyboard(flow_state, api: Any, user_id: int) -> List[List[ButtonCallback]]:
-    items = await list_all_feedback(flow_state, api, int(user_id), only_type=FeedbackType.GENERAL)
+    items = await list_all_feedback(flow_state, api, user_id, only_type=FeedbackType.GENERAL)
     return await _build_feedback_list_keyboard(
         flow_state=flow_state,
         state_id=STATE_LIST_ADMIN_GENERAL,
@@ -891,11 +935,11 @@ async def build_details_text(flow_state, api: Any, user_id: int) -> str:
     if feedback is None:
         return "❌ Feedback not found."
 
-    can_view = await _can_view_feedback(api, int(user_id), feedback)
+    can_view = await _can_view_feedback(api, user_id, feedback)
     if not can_view:
         return "❌ You don't have permission to view this feedback."
 
-    _, viewer_side, submitter = await _get_viewer_context(api, int(user_id), feedback)
+    _, viewer_side, submitter = await _get_viewer_context(api, user_id, feedback)
     submitter_text = "-" if submitter is None else str(submitter.display_name)
 
     title_prefix = "🟡 " if (viewer_side == "admin" and feedback.title_updated) else ""
@@ -937,14 +981,14 @@ async def mark_comments_viewed_on_open(flow_state, api: Any, user_id: int) -> No
     if feedback is None:
         return
 
-    if not await _can_view_feedback(api, int(user_id), feedback):
+    if not await _can_view_feedback(api, user_id, feedback):
         return
 
     submitter = await _get_feedback_submitter(feedback)
     if submitter is None:
         return
 
-    viewer_id = int(user_id)
+    viewer_id = user_id
     viewer_is_submitter = submitter.user_id == viewer_id
     viewer_is_admin = await _is_admin(api, viewer_id)
 
@@ -979,11 +1023,11 @@ async def build_details_keyboard(flow_state, api: Any, user_id: int) -> List[Lis
     if feedback is None:
         return [[ButtonCallback("◁ Back", CommonCallbacks.BACK)]]
 
-    can_view = await _can_view_feedback(api, int(user_id), feedback)
+    can_view = await _can_view_feedback(api, user_id, feedback)
     if not can_view:
         return [[ButtonCallback("◁ Back", CommonCallbacks.BACK)]]
 
-    viewer_id = int(user_id)
+    viewer_id = user_id
     is_admin, viewer_side, submitter = await _get_viewer_context(api, viewer_id, feedback)
     viewer_is_submitter = submitter is not None and submitter.user_id == viewer_id
 
@@ -1066,7 +1110,7 @@ async def build_add_comment_text(flow_state, api: Any, user_id: int) -> str:
     if feedback is None:
         return "💬 **Add comment**\n\nWrite your message:"
 
-    _, viewer_side, _ = await _get_viewer_context(api, int(user_id), feedback)
+    _, viewer_side, _ = await _get_viewer_context(api, user_id, feedback)
 
     comments_page = _get_int(flow_state, KEY_ADD_COMMENT_COMMENTS_PAGE, 1)
     comments_text, total_pages, current_page = _render_comments_page(
@@ -1090,7 +1134,7 @@ async def build_add_comment_keyboard(flow_state, api: Any, user_id: int) -> List
     if feedback is None:
         return [[ButtonCallback("◁ Back", CommonCallbacks.BACK)]]
 
-    _, viewer_side, _ = await _get_viewer_context(api, int(user_id), feedback)
+    _, viewer_side, _ = await _get_viewer_context(api, user_id, feedback)
 
     def _change_comments_page(delta: int) -> Any:
         async def _handler(inner_flow_state, inner_api: Any, inner_user_id: int) -> Optional[str]:
@@ -1126,7 +1170,7 @@ async def handle_add_comment_input(input_text: str, flow_state, api: Any, user_i
     message = (input_text or "").strip()
     if not message:
         await api.message_manager.send_text(
-            int(user_id),
+            user_id,
             "❌ Comment cannot be empty.",
             vanish=True,
             conv=True,
@@ -1138,7 +1182,7 @@ async def handle_add_comment_input(input_text: str, flow_state, api: Any, user_i
     feedback = await _get_feedback(api, feedback_id)
     if feedback is None:
         await api.message_manager.send_text(
-            int(user_id),
+            user_id,
             "❌ Feedback not found.",
             vanish=True,
             conv=True,
@@ -1146,17 +1190,17 @@ async def handle_add_comment_input(input_text: str, flow_state, api: Any, user_i
         )
         return STATE_DETAILS
 
-    if not await _can_view_feedback(api, int(user_id), feedback):
-        await _notify_no_permission(api, int(user_id))
+    if not await _can_view_feedback(api, user_id, feedback):
+        await _notify_no_permission(api, user_id)
         return STATE_DETAILS
 
-    author = await _get_telegram_user_doc(api, int(user_id))
+    author = await _get_telegram_user_doc(api, user_id)
     author_name = str(user_id) if author is None else str(author.display_name)
-    author_is_admin = await _is_admin(api, int(user_id))
+    author_is_admin = await _is_admin(api, user_id)
 
     feedback.comments.append(
         FeedbackComment(
-            author_user_id=int(user_id),
+            author_user_id=user_id,
             author_display_name=author_name,
             author_is_admin=author_is_admin,
             message=message,
@@ -1171,6 +1215,21 @@ async def handle_add_comment_input(input_text: str, flow_state, api: Any, user_i
 
     feedback.updated_at = _now()
     await feedback.save()
+
+    base = _format_feedback_title_and_type(feedback)
+    await _notify_submitter_and_owner(
+        api,
+        feedback=feedback,
+        actor_user_id=user_id,
+        submitter_text=(
+            "💬 **New comment on your feedback**\n"
+            f"{base}"
+        ),
+        owner_text=(
+            "💬 **New comment added**\n"
+            f"{base}"
+        ),
+    )
 
     return STATE_DETAILS
 
@@ -1187,8 +1246,8 @@ async def build_user_edit_menu_keyboard(flow_state, api: Any, user_id: int) -> L
 
     # Only submitter can edit (admins are view-only here).
     submitter = await _get_feedback_submitter(feedback)
-    if submitter is None or submitter.user_id != int(user_id):
-        await _notify_no_permission(api, int(user_id))
+    if submitter is None or submitter.user_id != user_id:
+        await _notify_no_permission(api, user_id)
         return [[ButtonCallback("◁ Back", CommonCallbacks.BACK)]]
 
     buttons: List[List[ButtonCallback]] = [
@@ -1228,8 +1287,8 @@ async def _save_user_edit(
         return STATE_DETAILS
 
     submitter = await _get_feedback_submitter(feedback)
-    if submitter is None or submitter.user_id != int(user_id):
-        await _notify_no_permission(api, int(user_id))
+    if submitter is None or submitter.user_id != user_id:
+        await _notify_no_permission(api, user_id)
         return STATE_DETAILS
 
     apply(feedback)
@@ -1238,6 +1297,17 @@ async def _save_user_edit(
     feedback.viewed_by_admin = False
     feedback.updated_at = _now()
     await feedback.save()
+
+    await _notify_submitter_and_owner(
+        api,
+        feedback=feedback,
+        actor_user_id=user_id,
+        submitter_text=None,
+        owner_text=(
+            "✏️ **Feedback edited**\n"
+            f"{_format_feedback_title_and_type(feedback)}"
+        ),
+    )
 
     return STATE_DETAILS
 
@@ -1258,7 +1328,7 @@ async def handle_user_edit_title_input(input_text: str, flow_state, api: Any, us
 
     return await _save_user_edit(
         api=api,
-        user_id=int(user_id),
+        user_id=user_id,
         flow_state=flow_state,
         feedback_id=str(flow_state.get(KEY_SELECTED_FEEDBACK_ID, "")),
         apply=_apply,
@@ -1281,7 +1351,7 @@ async def handle_user_edit_description_input(input_text: str, flow_state, api: A
 
     return await _save_user_edit(
         api=api,
-        user_id=int(user_id),
+        user_id=user_id,
         flow_state=flow_state,
         feedback_id=str(flow_state.get(KEY_SELECTED_FEEDBACK_ID, "")),
         apply=_apply,
@@ -1298,7 +1368,7 @@ async def handle_user_priority_selected(priority: int, flow_state, api: Any, use
 
     return await _save_user_edit(
         api=api,
-        user_id=int(user_id),
+        user_id=user_id,
         flow_state=flow_state,
         feedback_id=str(flow_state.get(KEY_SELECTED_FEEDBACK_ID, "")),
         apply=_apply,
@@ -1310,8 +1380,8 @@ async def build_admin_change_status_text(flow_state, api: Any, user_id: int) -> 
 
 
 async def build_admin_change_status_keyboard(flow_state, api: Any, user_id: int) -> List[List[ButtonCallback]]:
-    if not await _is_admin(api, int(user_id)):
-        await _notify_no_permission(api, int(user_id))
+    if not await _is_admin(api, user_id):
+        await _notify_no_permission(api, user_id)
         return [[ButtonCallback("◁ Back", CommonCallbacks.BACK)]]
 
     items: List[List[ButtonCallback]] = []
@@ -1323,9 +1393,27 @@ async def build_admin_change_status_keyboard(flow_state, api: Any, user_id: int)
             if feedback is None:
                 return STATE_DETAILS
 
+            old_status = feedback.status
             feedback.status = status
             feedback.updated_at = _now()
             await feedback.save()
+
+            base = _format_feedback_title_and_type(feedback)
+            await _notify_submitter_and_owner(
+                inner_api,
+                feedback=feedback,
+                actor_user_id=inner_user_id,
+                submitter_text=(
+                    "🧭 **Status updated**\n"
+                    f"{base}\n"
+                    f"Status: `{_format_feedback_status(old_status)}` → `{_format_feedback_status(status)}`"
+                ),
+                owner_text=(
+                    "🧭 **Feedback status updated**\n"
+                    f"{base}\n"
+                    f"Status: `{_format_feedback_status(old_status)}` → `{_format_feedback_status(status)}`"
+                ),
+            )
             return STATE_DETAILS
 
         return _handler
@@ -1348,8 +1436,8 @@ async def build_admin_change_priority_text(flow_state, api: Any, user_id: int) -
 
 
 async def handle_admin_priority_selected(priority: int, flow_state, api: Any, user_id: int) -> Optional[str]:
-    if not await _is_admin(api, int(user_id)):
-        await _notify_no_permission(api, int(user_id))
+    if not await _is_admin(api, user_id):
+        await _notify_no_permission(api, user_id)
         return STATE_DETAILS
 
     feedback_id = str(flow_state.get(KEY_SELECTED_FEEDBACK_ID, "")).strip()
@@ -1360,6 +1448,17 @@ async def handle_admin_priority_selected(priority: int, flow_state, api: Any, us
     feedback.priority = int(priority)
     feedback.updated_at = _now()
     await feedback.save()
+
+    await _notify_submitter_and_owner(
+        api,
+        feedback=feedback,
+        actor_user_id=user_id,
+        submitter_text=None,
+        owner_text=(
+            "✏️ **Feedback edited**\n"
+            f"{_format_feedback_title_and_type(feedback)}"
+        ),
+    )
 
     return STATE_DETAILS
 
@@ -1390,7 +1489,7 @@ async def handle_delete_confirm_button(data: str, flow_state, api: Any, user_id:
     feedback = await _get_feedback(api, feedback_id)
     if feedback is None:
         await api.message_manager.send_text(
-            int(user_id),
+            user_id,
             "❌ Feedback not found.",
             vanish=True,
             conv=True,
@@ -1398,14 +1497,14 @@ async def handle_delete_confirm_button(data: str, flow_state, api: Any, user_id:
         )
         return STATE_DETAILS
 
-    if not await _can_view_feedback(api, int(user_id), feedback):
-        await _notify_no_permission(api, int(user_id))
+    if not await _can_view_feedback(api, user_id, feedback):
+        await _notify_no_permission(api, user_id)
         return STATE_DETAILS
 
     try:
         await feedback.delete()
         await api.message_manager.send_text(
-            int(user_id),
+            user_id,
             "✅ Deleted.",
             vanish=True,
             conv=True,
@@ -1415,7 +1514,7 @@ async def handle_delete_confirm_button(data: str, flow_state, api: Any, user_id:
         return str(flow_state.get(KEY_RETURN_STATE, STATE_MAIN))
     except Exception as exc:
         await api.message_manager.send_text(
-            int(user_id),
+            user_id,
             f"❌ Delete failed: {type(exc).__name__}",
             vanish=True,
             conv=True,
@@ -1428,7 +1527,7 @@ def create_feedback_flow() -> MessageFlow:
     flow = MessageFlow()
 
     async def _main_keyboard(flow_state, api: Any, user_id: int) -> List[List[ButtonCallback]]:
-        viewer_id = int(user_id)
+        viewer_id = user_id
         is_admin = await _is_admin(api, viewer_id)
         submitter_attention = await _submitter_has_unread_admin_comment(api, viewer_id)
 
