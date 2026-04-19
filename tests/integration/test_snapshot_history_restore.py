@@ -2,42 +2,6 @@ import os
 import hashlib
 
 import pytest
-import pytest_asyncio
-from beanie import init_beanie
-from pymongo import AsyncMongoClient
-from dotenv import load_dotenv
-
-from src.database.snapshot_manager import SnapshotManager
-from src.models import beanie_models as models
-
-
-load_dotenv()
-
-
-def _build_mongo_uri() -> str:
-    uri = (os.getenv("DATABASE_URL") or "").strip()
-    if uri:
-        return uri
-
-    host = (os.getenv("MONGO_HOST") or "localhost").strip()
-    port = int(os.getenv("MONGO_PORT") or "27017")
-    db_name = (os.getenv("MONGO_INITDB_DATABASE") or "telegram_bot").strip()
-    username = (os.getenv("MONGO_INITDB_ROOT_USERNAME") or "admin").strip()
-    password = (os.getenv("MONGO_INITDB_ROOT_PASSWORD") or "password123").strip()
-
-    return (
-        f"mongodb://{username}:{password}@{host}:{port}/{db_name}?authSource=admin"
-    )
-
-
-@pytest_asyncio.fixture(scope="function")
-async def mongo_db(request):
-    base_db_name = (os.getenv("MONGO_INITDB_DATABASE") or "telegram_bot").strip()
-    test_id = hashlib.md5(request.node.nodeid.encode("utf-8")).hexdigest()[:10]
-    test_db_name = f"{base_db_name}_pytest_snap_{test_id}"
-
-    client = AsyncMongoClient(_build_mongo_uri())
-    try:
         await client.admin.command("ping")
     except Exception as exc:
         await client.close()
@@ -615,3 +579,90 @@ async def test_collections_are_collected_across_snapshots(mongo_db):
     assert history is not None
     assert history.snapshot_numbers == [1, 2, 3, 4, 2]
     assert history.last_snapshot_number == 4
+
+
+@pytest.mark.asyncio
+async def test_clear_all_snapshots_deletes_permanent_and_resets_counter(mongo_db):
+    manager = SnapshotManager(mongo_db)
+    await manager.clear_all_snapshots()
+
+    collection_name = "pytest_snapshot_items_clear_all"
+    collection = mongo_db.get_collection(collection_name)
+    await collection.delete_many({})
+    await collection.insert_many([{"_id": 1, "value": "a"}])
+
+    permanent_id = await manager.create_snapshot(
+        reason="permanent",
+        context="pytest",
+        collections=(collection_name,),
+        save_in_background=False,
+        permanent=True,
+    )
+    permanent_meta = await manager.get_snapshot_meta(str(permanent_id))
+    assert permanent_meta is not None
+    assert permanent_meta.permanent is True
+
+    await collection.delete_many({})
+    await collection.insert_many([{"_id": 1, "value": "b"}])
+    await manager.create_snapshot(
+        reason="normal",
+        context="pytest",
+        collections=(collection_name,),
+        save_in_background=False,
+    )
+
+    await manager.clear_all_snapshots()
+    assert await models.SnapshotMeta.count() == 0
+    assert await models.SnapshotDataChunk.count() == 0
+
+    history = await models.SnapshotHistory.find_one(models.SnapshotHistory.key == "default")
+    assert history is None
+
+    # Counter should start again from 1.
+    await collection.delete_many({})
+    await collection.insert_many([{"_id": 1, "value": "c"}])
+    new_id = await manager.create_snapshot(
+        reason="after_clear",
+        context="pytest",
+        collections=(collection_name,),
+        save_in_background=False,
+    )
+    new_meta = await manager.get_snapshot_meta(str(new_id))
+    assert new_meta is not None
+    assert new_meta.snapshot_number == 1
+
+
+@pytest.mark.asyncio
+async def test_get_undo_last_snapshot_numbers_skips_full_snapshot_duplicates(mongo_db):
+    manager = SnapshotManager(mongo_db)
+    await manager.clear_all_snapshots()
+
+    collection_name = "pytest_snapshot_items_undo"
+    collection = mongo_db.get_collection(collection_name)
+    await collection.delete_many({})
+    await collection.insert_many([{"_id": 1, "value": "a"}])
+
+    await manager.create_snapshot(
+        reason="full",
+        context="pytest",
+        collections=(collection_name,),
+        save_in_background=False,
+        full_snapshot=True,
+    )
+
+    current, previous = await manager.get_undo_last_snapshot_numbers()
+    assert current == 1
+    assert previous is None
+
+    await collection.delete_many({})
+    await collection.insert_many([{"_id": 1, "value": "b"}])
+    await manager.create_snapshot(
+        reason="normal",
+        context="pytest",
+        collections=(collection_name,),
+        save_in_background=False,
+    )
+
+    current, previous = await manager.get_undo_last_snapshot_numbers()
+    assert current == 2
+    assert previous == 1

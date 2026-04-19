@@ -35,11 +35,12 @@ mongo
 Credit menu:
 - Schredder still appears with 0 outstandign credit, so I think that debts might not be correctly marked as paid at all places
 
-- add an option to message flows, which allow actions on initiation, submit and cancel -> so I can so gsheet synchronizations on sumbit and start backups on initiation save them on submit and delete them on cancel 
 
 General:
 - catch the Ctrl+C in the terminal, to make sure that the bot is closed properly
-- remove all brief notifications on button presses, in case the button changes
+- include the /command for the last conversation into the "Conversation aborted due to inactivity" message
+
+- add an option to message flows, which allow actions on initiation, submit and cancel -> so I can so gsheet synchronizations on sumbit and start backups on initiation save them on submit and delete them on cancel 
 
 Settings:
 - Settings for vanishing messages are currently not consistent between bot restarts. It looks like they are not correctly saved in the database or are overwritten by another place

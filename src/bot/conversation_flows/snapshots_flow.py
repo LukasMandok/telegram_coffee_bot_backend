@@ -33,6 +33,9 @@ STATE_RESTORE_LIST = "restore_list"
 STATE_RESTORE_CONFIRM = "restore_confirm"
 STATE_RESTORE_RESULT = "restore_result"
 
+STATE_UNDO_CONFIRM = "undo_confirm"
+STATE_UNDO_RESULT = "undo_result"
+
 STATE_CLEAR_ALL_CONFIRM_1 = "clear_all_confirm_1"
 STATE_CLEAR_ALL_CONFIRM_2 = "clear_all_confirm_2"
 STATE_CLEAR_ALL_RESULT = "clear_all_result"
@@ -43,6 +46,8 @@ STATE_CLEAR_OBSOLETE_RESULT = "clear_obsolete_result"
 CB_CREATE = "create"
 CB_RESTORE = "restore"
 CB_CLEANUP = "cleanup"
+
+CB_UNDO_LAST = "undo_last"
 
 CB_CLEAR_ALL = "clear_all"
 CB_CLEAR_OBSOLETE = "clear_obsolete"
@@ -55,6 +60,10 @@ KEY_CREATED_SNAPSHOT_META = "created_snapshot_meta"
 KEY_RESTORE_SNAPSHOT_ID = "restore_snapshot_id"
 KEY_RESTORE_SNAPSHOT_NUMBER = "restore_snapshot_number"
 KEY_RESTORE_ERROR = "restore_error"
+
+KEY_UNDO_SNAPSHOT_NUMBER = "undo_snapshot_number"
+KEY_UNDO_SNAPSHOT_ID = "undo_snapshot_id"
+KEY_UNDO_ERROR = "undo_error"
 
 KEY_CLEAR_ALL_RESULT = "clear_all_result"
 KEY_CLEAR_ALL_ERROR = "clear_all_error"
@@ -141,11 +150,99 @@ async def build_main_text(flow_state, api, user_id) -> str:
 
 async def build_main_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
     return [
-        [ButtonCallback("📸 Create manual snapshot", CB_CREATE, callback_handler=create_manual_snapshot)],
-        [ButtonCallback("↩️ Restore snapshot", CB_RESTORE)],
-        [ButtonCallback("🧹 Cleanup", CB_CLEANUP)],
-        NavigationButtons.close(),
+        [
+            ButtonCallback("📸 Create Snapshot", CB_CREATE, callback_handler=create_manual_snapshot),
+            ButtonCallback("🧹 Cleanup", CB_CLEANUP),
+        ],
+        [
+            ButtonCallback("↩️ Undo Last", CB_UNDO_LAST, callback_handler=prepare_undo_last),
+            ButtonCallback("↩️ Restore Snapshot", CB_RESTORE),
+        ],
+        NavigationButtons.close(text="❌ Close"),
     ]
+
+
+async def prepare_undo_last(flow_state, api, user_id) -> Optional[str]:
+    snapshot_manager = api.get_snapshot_manager()
+
+    latest = await snapshot_manager.list_snapshots(include_pending=False, limit=1)
+    latest_meta = latest[0] if latest else None
+    if latest_meta is None:
+        await api.message_manager.send_text(
+            int(user_id),
+            "ℹ️ Nothing to undo.",
+            vanish=True,
+            conv=True,
+            delete_after=3,
+        )
+        return None
+
+    flow_state.set(KEY_UNDO_SNAPSHOT_NUMBER, int(latest_meta.snapshot_number))
+    flow_state.set(KEY_UNDO_SNAPSHOT_ID, str(latest_meta.snapshot_id))
+    flow_state.set(KEY_UNDO_ERROR, None)
+    return STATE_UNDO_CONFIRM
+
+
+async def build_undo_confirmation(flow_state, api, user_id) -> str:
+    snapshot_number = flow_state.get(KEY_UNDO_SNAPSHOT_NUMBER)
+    snapshot_id = flow_state.get(KEY_UNDO_SNAPSHOT_ID, "")
+    if not snapshot_number or not snapshot_id:
+        return "Nothing to undo."
+
+    snapshot_manager = api.get_snapshot_manager()
+    meta = await snapshot_manager.get_snapshot_meta(str(snapshot_id))
+    created_at = _format_date(meta.created_at) if meta is not None else "(unknown)"
+    reason = _display_reason(meta) if meta is not None else "(unknown)"
+
+    return (
+        "Undo the last action by restoring the latest snapshot?\n\n"
+        f"Snapshot: **#{snapshot_number} — {reason}**\n"
+        f"Created: {created_at}"
+    )
+
+
+async def undo_last(flow_state, api, user_id) -> None:
+    snapshot_id = flow_state.get(KEY_UNDO_SNAPSHOT_ID)
+    if not snapshot_id:
+        flow_state.set(KEY_UNDO_ERROR, "No undo target selected")
+        return
+
+    snapshot_manager = api.get_snapshot_manager()
+
+    try:
+        await snapshot_manager.restore_snapshot(
+            str(snapshot_id),
+            loaded_by_user_id=int(user_id),
+            capture_pre_restore_snapshot=False,
+        )
+
+        try:
+            await api.coffee_card_manager.load_from_db()
+        except Exception:
+            pass
+
+        request_gsheet_sync_after_action(reason="snapshot_undo_last")
+        flow_state.set(KEY_UNDO_ERROR, None)
+
+        # Ensure pagination cache doesn't show stale items when user re-opens restore list.
+        flow_state.pagination_state.pop(STATE_RESTORE_LIST, None)
+    except Exception as exc:  # pragma: no cover
+        flow_state.set(KEY_UNDO_ERROR, f"{type(exc).__name__}: {exc}")
+
+
+async def build_undo_result_text(flow_state, api, user_id) -> str:
+    err = flow_state.get(KEY_UNDO_ERROR)
+    snapshot_number = flow_state.get(KEY_UNDO_SNAPSHOT_NUMBER)
+    snapshot_id = flow_state.get(KEY_UNDO_SNAPSHOT_ID, "")
+
+    if err:
+        return "❌ **Undo failed**\n\n" f"Error: {err}"
+
+    snapshot_manager = api.get_snapshot_manager()
+    meta = await snapshot_manager.get_snapshot_meta(str(snapshot_id)) if snapshot_id else None
+    reason = _display_reason(meta) if meta is not None else "(unknown)"
+
+    return "✅ **Undone**\n\n" f"Restored snapshot **#{snapshot_number} — {reason}**."
 
 
 async def build_cleanup_text(flow_state, api, user_id) -> str:
@@ -410,6 +507,9 @@ def create_snapshots_flow() -> MessageFlow:
     restore_result_defaults = {
         KEY_RESTORE_ERROR: None,
     }
+    undo_result_defaults = {
+        KEY_UNDO_ERROR: None,
+    }
     clear_all_result_defaults = {
         KEY_CLEAR_ALL_ERROR: None,
         KEY_CLEAR_ALL_RESULT: None,
@@ -466,10 +566,32 @@ def create_snapshots_flow() -> MessageFlow:
     )
 
     flow.add_confirmation(
+        state_id=STATE_UNDO_CONFIRM,
+        question=build_undo_confirmation,
+        on_confirm_state=STATE_UNDO_RESULT,
+        on_cancel_state=STATE_MAIN,
+        confirm_text="✅ Undo",
+        cancel_text="◁ Back",
+        warning="⚠️ This will overwrite the current database state.",
+    )
+
+    flow.add_state(
+        MessageDefinition(
+            state_id=STATE_UNDO_RESULT,
+            state_type=StateType.BUTTON,
+            text_builder=build_undo_result_text,
+            buttons=None,
+            auto_exit_after_render=True,
+            defaults=undo_result_defaults,
+            on_enter=undo_last,
+        )
+    )
+
+    flow.add_confirmation(
         state_id=STATE_CLEAR_ALL_CONFIRM_1,
         question=(
             "⚠️ **Delete ALL snapshots?**\n\n"
-            "This will permanently delete all snapshot history."
+            "This will permanently delete ALL snapshots (including permanent ones) and reset the snapshot counter/history."
         ),
         on_confirm_state=STATE_CLEAR_ALL_CONFIRM_2,
         on_cancel_state=STATE_CLEANUP_MENU,
