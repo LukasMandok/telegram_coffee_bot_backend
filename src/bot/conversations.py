@@ -28,6 +28,7 @@ from .conversation_flows.snapshots_flow import create_snapshots_flow
 from .conversation_flows.users_flow import create_users_flow
 from .conversation_flows.session_flow import create_session_flow, KEY_SESSION_OBJ_ID
 from .message_flow_helpers import CommonFlowKeys, IntegerParser, MoneyParser
+from .command_catalog import COMMAND_BY_CONTEXT
 
 from ..exceptions.coffee_exceptions import CoffeeSessionError, NoActiveCoffeeCardsError
 
@@ -39,9 +40,6 @@ from ..common.log import (
 if TYPE_CHECKING:
     from ..api.telethon_api import TelethonAPI
     from ..models.base_models import TelegramUser
-
-
-
 
 class ConversationCancelledException(Exception):
     """Exception raised when a conversation is cancelled by the user."""
@@ -344,10 +342,15 @@ class ConversationManager:
             except Exception:
                 pass
 
+        restart_command = COMMAND_BY_CONTEXT.get(context)
+        timeout_text = "⏱️ Conversation aborted due to inactivity."
+        if restart_command:
+            timeout_text = f"{timeout_text}\nUse {restart_command} to start again."
+
         try:
             await self.api.message_manager.send_text(
                 user_id,
-                "⏱️ Conversation aborted due to inactivity.",
+                timeout_text,
                 vanish=True,
                 conv=True,
                 delete_after=300,

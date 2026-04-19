@@ -38,7 +38,6 @@ Credit menu:
 
 General:
 - catch the Ctrl+C in the terminal, to make sure that the bot is closed properly
-- include the /command for the last conversation into the "Conversation aborted due to inactivity" message
 
 - add an option to message flows, which allow actions on initiation, submit and cancel -> so I can so gsheet synchronizations on sumbit and start backups on initiation save them on submit and delete them on cancel 
 

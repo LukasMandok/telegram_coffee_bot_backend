@@ -11,6 +11,24 @@ Schema: (command, description, show_for_normal_users)
 from __future__ import annotations
 
 
+COMMAND_BY_CONTEXT: dict[str, str] = {
+    "registration": "/start",
+    "group_selection": "/order",
+    "quick_order": "/order",
+    "create_coffee_card": "/new_card",
+    "close_card": "/close_card",
+    "card_menu": "/cards",
+    "debt": "/debt",
+    "credit_overview": "/credit",
+    "paypal_setup": "/paypal",
+    "setup_paypal": "/paypal",
+    "snapshots": "/snapshots",
+    "users": "/users",
+    "add_passive_user": "/users",
+    "settings": "/settings",
+}
+
+
 BOT_COMMANDS: list[tuple[str, str, bool]] = [
     # (command, description, show_for_normal_users)
     ("start", "Register with the bot", True),
