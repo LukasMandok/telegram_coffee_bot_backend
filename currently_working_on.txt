@@ -16,13 +16,6 @@ remaining:
 Coffee Cards:
 - Royalty system (adjustable in the settings). either an adjustable amount of free coffee for the creditor or that he doesn't have to contribute to missing coffees. 
 
-Sessions / Order:
-- show payed by in an ongoing order and the name of the current coffee card
-- order should show the name of the currently active card
-- in the coffee order summary, add who gave the order/completed the session to the message
-- when a user joins the session, give the other users, which ar already in the session a short notification, that someone else also joined.
-
-
 Snapshots: 
 - add a button to the snapshot menus to undo the last action (load the last snapshot) and please improve the ordering and naming of buttons for the menu. You should get a short confirm for that which tells you what exactly is undone.
 - delete all should really delete all (also permanent snapshots) and reset the counter back to 0.

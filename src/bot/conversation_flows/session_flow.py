@@ -34,11 +34,7 @@ async def _get_session(flow_state, api: Any):
     if session_obj_id is None:
         return None
 
-    try:
-        session = api.session_manager.get_session_by_id(str(session_obj_id))
-    except Exception:
-        session = None
-    return session
+    return api.session_manager.get_session_by_id(str(session_obj_id))
 
 
 async def _build_session_text(flow_state, api: Any, user_id: int) -> str:
@@ -59,13 +55,9 @@ async def _build_session_keyboard(flow_state, api: Any, user_id: int):
 
     session_id = str(session.id)
     current_page = 0
-    try:
-        if session_id in api.group_keyboard_manager.active_keyboards:
-            active = api.group_keyboard_manager.active_keyboards[session_id].get(int(user_id))
-            if active is not None:
-                current_page = int(active.current_page)
-    except Exception:
-        current_page = 0
+    active = api.group_keyboard_manager.active_keyboards.get(session_id, {}).get(int(user_id))
+    if active is not None:
+        current_page = int(active.current_page)
 
     return await api.group_keyboard_manager.create_group_keyboard(
         session.group_state,

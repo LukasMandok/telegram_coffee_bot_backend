@@ -65,7 +65,7 @@ class GroupKeyboardManager:
         Returns:
             Tuple of (is_insufficient, is_multi_card, message_text)
         """
-        # Get available coffees and total
+        # Get available coffees and selected total
         available_coffees = await session.get_available_coffees()
         total_coffees = await session.get_total_coffees()
         
@@ -73,28 +73,38 @@ class GroupKeyboardManager:
         is_multi_card = False
         warning_message = None
         
+        # Get active cards for availability + display
+        active_cards = await self.api.coffee_card_manager.get_active_coffee_cards()
+
         if total_coffees > 0:
-            # Get active cards to check availability
-            active_cards = await self.api.coffee_card_manager.get_active_coffee_cards()
             total_available = sum(card.remaining_coffees for card in active_cards)
-            
+
             if total_coffees > total_available:
-                # Not enough coffees available
                 is_insufficient = True
-                warning_message = f"⚠️ Not enough coffees remaining on your cards!"
+                warning_message = "⚠️ Not enough coffees remaining on your cards!"
             elif len(active_cards) > 1 and total_coffees > active_cards[0].remaining_coffees:
-                # Will use multiple cards
                 is_multi_card = True
                 warning_message = "🔄 Coffee orders will be split between multiple cards"
         
         # Build complete message text with optional warning
-        message_text = (
-            f"☕ **Group Coffee Order**\n"
-            f"Total: {total_coffees} coffees  ({available_coffees} available)\n"
-        )
+        card_lines = [
+            f"• **{card.name}** (purchased by: {card.purchaser.display_name})"  # type: ignore[union-attr]
+            for card in active_cards
+        ]
+
+        lines: List[str] = ["☕ **Group Coffee Order**", ""]
+
+        if card_lines:
+            lines.extend(card_lines)
+            lines.append("")
+
+        lines.append(f"Selected: {total_coffees} coffees  ({available_coffees} available)")
+
         if warning_message:
-            message_text += f"{warning_message}\n"
-        message_text += "\nSelect coffee quantities for each person:"
+            lines.append(warning_message)
+
+        # lines.extend(["", "Select coffee quantities for each person:"])
+        message_text = "\n".join(lines)
         
         return is_insufficient, is_multi_card, message_text
     

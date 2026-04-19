@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, TYPE_CHECKING, Tuple
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, Tuple, cast
 
 from ..common.log import (
     INFO,
@@ -183,10 +183,10 @@ class SessionManager:
             coffee_cards=cards,
             group_state=group_state,
             participants=[initiator],
-            coffee_card_manager=self.api.coffee_card_manager,
         )
+        session.coffee_card_manager = self.api.coffee_card_manager
 
-        initiator_display_name = initiator.display_name or initiator.first_name or str(initiator.user_id)
+        initiator_display_name = initiator.display_name
 
         # Notify all group members that a new session has been started.
         initiator_user_id: Optional[int] = initiator.user_id
@@ -231,9 +231,38 @@ class SessionManager:
             log_coffee_session_participant_added(str(target_session.id), int(user.user_id), False)
             return
 
+        joiner_user_id = int(user.user_id)
+        joiner_display_name = user.display_name
+
+        recipient_user_ids = [
+            int(participant.user_id)
+            for participant in target_session.participants
+            if participant.user_id is not None and int(participant.user_id) != joiner_user_id
+        ]
+
         target_session.participants.append(user)
         log_coffee_session_participant_added(str(target_session.id), int(user.user_id), True)
         self._cancel_delayed_cancel_task(str(target_session.id))
+
+        if recipient_user_ids:
+            try:
+                for recipient_user_id in recipient_user_ids:
+                    await self.api.message_manager.send_user_notification(
+                        recipient_user_id,
+                        f"{joiner_display_name} joined the coffee session.",
+                        force_silent=True,
+                            delete_after=5,
+                    )
+            except Exception as exc:
+                log_unexpected_error(
+                    operation="notify_members_join_session",
+                    error=str(exc),
+                    context={
+                        "session_id": str(target_session.id),
+                        "joiner_user_id": joiner_user_id,
+                        "recipient_count": len(recipient_user_ids),
+                    },
+                )
 
     
     async def remove_participant(
@@ -511,6 +540,10 @@ class SessionManager:
         # Resolve the submitting user (for persisted history + notifications).
         submitted_by = await TelegramUser.find_one(TelegramUser.user_id == int(submitted_by_user_id))
 
+        # Keep submitter info on the in-memory session (used for summaries/UI).
+        self.session.submitted_by = submitted_by
+        self.session.completed_date = datetime.now()
+
         # Get total coffees
         total_coffees = await self.session.get_total_coffees()
 
@@ -620,6 +653,7 @@ class SessionManager:
 
         # DB commit: create a persistent CoffeeSession doc and link orders to it.
         persisted_session: Optional[CoffeeSession] = None
+        orders_created: List[CoffeeOrder] = []
         try:
             persisted_session = CoffeeSession(
                 initiator=self.session.initiator,
@@ -634,11 +668,17 @@ class SessionManager:
             await persisted_session.insert()
 
             initiator_id = int(submitted_by_user_id)
-            await self.api.coffee_card_manager.create_orders_from_allocations(
+            orders_created = await self.api.coffee_card_manager.create_orders_from_allocations(
                 allocations,
                 initiator_id,
                 persisted_session,
             )
+
+            # Keep the created orders in memory for the broadcast summary.
+            try:
+                self.session.orders = list(orders_created)
+            except Exception:
+                pass
         except InsufficientCoffeeError as e:
             self.session.is_active = True
             # Capacity can change between plan and commit (race with other orders).
@@ -874,12 +914,28 @@ class SessionManager:
             
         total_coffees = await self.session.get_total_coffees()
         participant_count = len(self.session.participants)
+
+        completed_by_name = "(unknown)"
+        if self.session.submitted_by is not None:
+            completed_by_name = self.session.submitted_by.display_name
+
+        card_usage: Dict[str, int] = {}
+        for order in self.session.orders:
+            card_name = cast(CoffeeCard, order.coffee_cards[0]).name
+            card_usage[card_name] = card_usage.get(card_name, 0) + int(order.quantity)
         
         summary = (
             f"📊 **Coffee Order:**\n"
+            f"• Completed by: {completed_by_name}\n"
             f"• Participants: {participant_count}\n"
             f"• Total Coffees: {total_coffees}\n\n"
         )
+
+        if card_usage:
+            summary += "**Cards used:**\n"
+            for card_name, qty in card_usage.items():
+                summary += f"• {card_name}: {qty}\n"
+            summary += "\n"
         
         if self.session.group_state.members:
             summary += "**Individual Orders:**\n"

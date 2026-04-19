@@ -55,7 +55,14 @@ class CoffeeCardManager:
     @requires_beanie(CoffeeCard)
     async def load_from_db(self):
         """Load active coffee cards from database."""
-        self.cards = await CoffeeCard.find(CoffeeCard.is_active == True).sort("created_at").to_list()  # type: ignore[comparison-overlap]
+        self.cards = (
+            await CoffeeCard.find(
+                CoffeeCard.is_active == True,
+                fetch_links=True,
+            )
+            .sort("created_at")
+            .to_list()
+        )  # type: ignore[comparison-overlap]
         await self._update_available()
         self.logger.info(f"Loaded {len(self.cards)} active coffee cards from database")
 
