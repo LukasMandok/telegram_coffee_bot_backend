@@ -398,9 +398,11 @@ class ConversationManager:
             ConversationCancelledException: If the user sends /cancel
             TimeoutError: If no message is received within timeout
         """
+        # Only accept messages from the expected user. This prevents cross-talk
+        # if a conversation is ever opened against a shared chat.
         message_event = await conv.wait_event(
-            events.NewMessage(incoming=True), 
-            timeout=timeout
+            events.NewMessage(incoming=True, from_users=user_id),
+            timeout=timeout,
         )
         
         # Check if the received message is a cancel command
