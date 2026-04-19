@@ -38,6 +38,7 @@ Credit menu:
 
 General:
 - catch the Ctrl+C in the terminal, to make sure that the bot is closed properly
+- the default admin should be set up as the owner and will not be able to be demoted from its admin status
 
 - add an option to message flows, which allow actions on initiation, submit and cancel -> so I can so gsheet synchronizations on sumbit and start backups on initiation save them on submit and delete them on cancel 
 
@@ -46,15 +47,9 @@ Settings:
 - make each toggle button the same, so that an activated option has a green dot and an deactivated an red dot on the toggle button (instead of showing how the stat would change if you press the button), this should also include all of the checkmark/cross icons in toggle buttons used somewhere else. This should be completely consistent in the whole message flow.
 - make sure that all submenues are correctly implemented as message flow. Currently most of this is still manually in the conversation manager
 
-Logging:
-- each logger should register with the settings manager, so that I get a full list of modules [module name], which I can separately deactivate
-- I should include the class name in the logging message.
-- Logging (also the definition) should be more consistent, I think this logger class and the implemented functions dont do anything at the moment
-- transfer a lot INFO logging to DEBUG or even trace and keep this cleaner.
-
 Feedback:
 - a command /feedback which allows a user to send a message as feedback, which is stored in the database with the corresponding user and a score between 1-5 how important this feature is.
-
+- see below
 
 maybe:
 - emulate other users
@@ -82,3 +77,21 @@ And whenever a sync is triggered, either by action or by a periodic sync, the bo
 it is important that this only affects paid amount so far.
 Also I need a mechanism, to make sure that changes of the paid amount in the bot are priotised over the changes in the spreadsheet, if they affect the same value.
 this means, that for paid amounts, the actual changed values should be forwarded to the syncing algorithm, so it does not overwrite them
+
+### Feedback system:
+I want a new feedback system implemented into the bot.
+For this create a new /feedback command which starts a feedback conversation flow.
+
+I want a Feedback document, which saves a title, description, status, submitter, score, type
+A normal user can create a new Feedback from the feedback menu
+If he presses the new Feedback button, the bot should ask for the type first (present a keyboard with different types: bug, feature request, general)
+he then should be asked for the title and then for description
+If he he chooses bug or feature request he gets to select a keyboard with keys from 1-5 to select the importance (5 very important)
+
+the normal user will also get a button to view his own feedback, where he will pre presented with the status of his feedback (open, in progress, closed) 
+he will be able to update the feedback (description), which changes the status to modified, he will also be able to delte it.
+for this there will be a submenu with the title of the feedback as single column buttons (includign the current status in brackets).
+pressing on on of them will show details about the feedback and give the option to update or delete it via two buttons next to each other.
+
+the admins will also get the same menu. but they will also get a button to change the status of the feedback in the detailed view.
+They will also see all users feedbacks in this submenu list (not only their own like the normal users will)
