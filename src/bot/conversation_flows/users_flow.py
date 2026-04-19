@@ -414,9 +414,11 @@ async def build_manage_details_keyboard(flow_state, api: Any, user_id: int) -> L
     ]
 
     if isinstance(user, TelegramUser):
-        is_admin = await api.conversation_manager.repo.is_user_admin(int(user.user_id))
+        is_admin = await api.conversation_manager.repo.is_user_admin(user.user_id)
         if is_admin:
-            rows.insert(1, [ButtonCallback("🚫 Revoke admin", CB_DETAILS_REVOKE_ADMIN)])
+            owner_id = await api.conversation_manager.repo.get_owner_user_id()
+            if user.user_id != owner_id:
+                rows.insert(1, [ButtonCallback("🚫 Revoke admin", CB_DETAILS_REVOKE_ADMIN)])
         else:
             rows.insert(1, [ButtonCallback("⭐ Promote to admin", CB_DETAILS_PROMOTE_ADMIN)])
 
@@ -443,7 +445,7 @@ async def handle_manage_details_button(data: str, flow_state, api: Any, user_id:
         return None
 
     if data == CB_DETAILS_PROMOTE_ADMIN and isinstance(user, TelegramUser):
-        ok = await api.conversation_manager.repo.add_admin(int(user.user_id))
+        ok = await api.conversation_manager.repo.add_admin(user.user_id)
         if not ok:
             await api.message_manager.send_text(
                 user_id,
@@ -455,7 +457,17 @@ async def handle_manage_details_button(data: str, flow_state, api: Any, user_id:
         return None
 
     if data == CB_DETAILS_REVOKE_ADMIN and isinstance(user, TelegramUser):
-        ok = await api.conversation_manager.repo.remove_admin(int(user.user_id))
+        owner_id = await api.conversation_manager.repo.get_owner_user_id()
+        if user.user_id == owner_id:
+            await api.message_manager.send_text(
+                user_id,
+                "❌ Cannot revoke admin rights of the owner.",
+                vanish=True,
+                conv=True,
+                delete_after=3,
+            )
+            return None
+        ok = await api.conversation_manager.repo.remove_admin(user.user_id)
         if not ok:
             await api.message_manager.send_text(
                 user_id,

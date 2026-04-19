@@ -39,7 +39,7 @@ class AppConfig(BaseSettings):
     # CONFIGURATION
     
     DEFAULT_PASSWORD: str
-    DEFAULT_ADMIN: str
+    DEFAULT_ADMIN: int
     
     # Logging
     LOG_LEVEL: str = "TRACE"  # Default to INFO, can be: TRACE, DEBUG, INFO, WARNING, ERROR, CRITICAL

@@ -365,6 +365,7 @@ class SnapshotDataChunk(Document):
 class Config(base.Config, Document):
     password: Link[Password]
     admins: List[int]
+    owner_user_id: Optional[int] = None
     
     async def get_password(self) -> Optional[Password]:
         # Instead of using Link, query Password collection directly

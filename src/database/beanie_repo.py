@@ -103,7 +103,8 @@ class BeanieRepository(BaseRepository):
         # Create Config with Link to password
         new_config = models.Config(
             password = password_doc,  # type: ignore[arg-type]  # Beanie accepts Document instances for Link fields
-            admins   = [int(app_config.DEFAULT_ADMIN)]  # Convert to int
+            admins=[app_config.DEFAULT_ADMIN],
+            owner_user_id=app_config.DEFAULT_ADMIN,
         )
         
         # Create default Settings
@@ -114,7 +115,7 @@ class BeanieRepository(BaseRepository):
         await app_settings.insert()
 
         self.logger.info(
-            f"Default database values set up (admins={[int(app_config.DEFAULT_ADMIN)]})",
+            f"Default database values set up (admins={[app_config.DEFAULT_ADMIN]})",
             extra_tag="DB",
         )
         self.logger.info("Default configuration and settings created successfully")
@@ -520,12 +521,23 @@ class BeanieRepository(BaseRepository):
         """Get the list of admin user IDs from config."""
         try:
             config = await models.Config.find_one()
-            if config and config.admins:
-                return config.admins
-            return []
+            if config is None:
+                return []
+            return list(config.admins or [])
         except Exception as e:
             self.logger.error("get_admins failed", extra_tag="DB", exc=e)
             return []
+
+    async def get_owner_user_id(self) -> int:
+        """Get the owner Telegram user_id (protected admin)."""
+        try:
+            config = await models.Config.find_one()
+            if config is not None and config.owner_user_id is not None:
+                return config.owner_user_id
+            return app_config.DEFAULT_ADMIN
+        except Exception as e:
+            self.logger.error("get_owner_user_id failed", extra_tag="DB", exc=e)
+            return app_config.DEFAULT_ADMIN
 
 
 
@@ -536,12 +548,12 @@ class BeanieRepository(BaseRepository):
             if not admin_ids:
                 return []
 
-            admin_id_set = set(int(admin_id) for admin_id in admin_ids)
+            admin_id_set = set(admin_ids)
             telegram_users = await self.find_all_telegram_users(
                 exclude_archived=False,
                 exclude_disabled=False,
             ) or []
-            return [user for user in telegram_users if int(user.user_id) in admin_id_set]
+            return [user for user in telegram_users if user.user_id in admin_id_set]
         except Exception as e:
             self.logger.error("get_admin_users failed", extra_tag="DB", exc=e)
             return []
@@ -552,7 +564,7 @@ class BeanieRepository(BaseRepository):
             admin_users = await self.get_admin_users()
             if not admin_users:
                 return []
-            return [int(admin.user_id) for admin in admin_users if admin.user_id is not None]
+            return [admin.user_id for admin in admin_users if admin.user_id is not None]
         except Exception as e:
             self.logger.error("get_registered_admins failed", extra_tag="DB", exc=e)
             return []
@@ -579,6 +591,17 @@ class BeanieRepository(BaseRepository):
         """Remove a user from the admin list."""
         try:
             config = await models.Config.find_one()
+            owner_id = app_config.DEFAULT_ADMIN
+            if config is not None and config.owner_user_id is not None:
+                owner_id = config.owner_user_id
+
+            if user_id == owner_id:
+                self.logger.warning(
+                    f"Refused to revoke admin from owner (user_id={user_id})",
+                    extra_tag="AUTH",
+                )
+                return False
+
             if config and user_id in config.admins:
                 config.admins.remove(user_id)
                 await config.save()
