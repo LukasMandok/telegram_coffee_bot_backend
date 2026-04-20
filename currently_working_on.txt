@@ -68,6 +68,7 @@ not working:
 Can you help me implement a two-way syncing.
 The idea behind this is, that users should be able to make changes in the google spreadsheet (only for the paid amount, all other cells should be protected).
 And whenever a sync is triggered, either by action or by a periodic sync, the bot should check for changes in the upstream spreadsheet and propagate thos to the bot.
-it is important that this only affects paid amount so far.
-Also I need a mechanism, to make sure that changes of the paid amount in the bot are priotised over the changes in the spreadsheet, if they affect the same value.
-this means, that for paid amounts, the actual changed values should be forwarded to the syncing algorithm, so it does not overwrite them
+it is important that this only affects paid amount so far and only on closed cards. An active card should ideally be fully protected.
+Also I need a mechanism, to make sure that changes of the paid amount in the bot are priotised over the changes in the spreadsheet, if they affect the same value when changes are synced.
+this means, that for paid amounts, the actual changed values should be forwarded to the syncing algorithm, so it does not overwrite them. or you compare the paied value to the previous value and if both the local and the spreadsheet value differ from that one, the local value is choosen.
+and please log such an incident with a warning.

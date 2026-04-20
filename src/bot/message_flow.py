@@ -18,6 +18,25 @@ from ..common.log import Logger
 from .message_manager import NotificationStyle
 from .message_flow_ids import CommonCallbacks
 
+
+_LEGACY_EXIT_SENTINEL = "__exit__"
+
+
+class _FlowExit(Exception):
+    """Internal control-flow signal to exit a flow without using a string sentinel."""
+
+    def __init__(
+        self,
+        *,
+        completed: bool,
+        rendered_text: Optional[str] = None,
+        exit_callback_data: Optional[str] = None,
+    ):
+        super().__init__("flow_exit")
+        self.completed = completed
+        self.rendered_text = rendered_text
+        self.exit_callback_data = exit_callback_data
+
 if TYPE_CHECKING:
     from telethon.tl.custom.conversation import Conversation
     from .telethon_models import MessageModel
@@ -436,8 +455,9 @@ class MessageDefinition(BaseModel):
         description=(
             "Async function called when waiting for user input times out. "
             "If provided, MessageFlow will NOT raise asyncio.TimeoutError; instead it will "
-            "call this handler. Return a state_id to navigate, '__exit__' to exit, or None to "
-            "apply default timeout behavior."
+            "call this handler. Return a state_id to navigate (or the current state_id to re-render), "
+            "or None to apply default timeout behavior. To exit intentionally, prefer navigating to an "
+            "explicit terminal state (auto_exit_after_render=True)."
         ),
     )
 
@@ -661,6 +681,27 @@ class MessageFlow:
     def __init__(self):
         self.states: Dict[str, MessageDefinition] = {}
         self.logger = Logger("MessageFlow")
+        # Optional hook for consumers that want to observe/cleanup on flow exit.
+        self.on_flow_exit: Optional[Callable[..., Awaitable[None]]] = None
+
+    @staticmethod
+    def _normalize_next_state_id(value: Any) -> Optional[str]:
+        """Normalize next_state_id values returned from handlers.
+
+        Handlers sometimes accidentally return bytes or include whitespace.
+        Normalizing here makes legacy/accidental return values more robust.
+        """
+        if value is None:
+            return None
+
+        if isinstance(value, (bytes, bytearray)):
+            try:
+                value = value.decode("utf-8")
+            except Exception:
+                value = value.decode("utf-8", errors="ignore")
+
+        normalized = str(value).strip()
+        return normalized or None
 
     @staticmethod
     def _extract_callback_data(button: Any) -> Optional[str]:
@@ -909,7 +950,7 @@ class MessageFlow:
         Handle a text input state.
         
         Returns:
-            Next state_id, or None if cancelled/invalid input, or "__exit__" to exit flow
+            Next state_id, or None if cancelled/invalid input.
         """
         # Build base text. For TEXT_INPUT states we want paginated content (lists)
         # above the prompt, so we append `items_text` before `input_prompt`.
@@ -1030,11 +1071,23 @@ class MessageFlow:
                             # None means use default buttons, empty list means no exit buttons
                             exit_buttons_to_check = current_def.exit_buttons if current_def.exit_buttons is not None else [CommonCallbacks.CLOSE, CommonCallbacks.CANCEL, CommonCallbacks.DONE]
                             if button_data in exit_buttons_to_check:
-                                return "__exit__"
+                                raise _FlowExit(
+                                    completed=True,
+                                    rendered_text=full_text,
+                                    exit_callback_data=button_data,
+                                )
                             
                             # Check if it's the back button
                             if button_data == current_def.back_button:
-                                return flow_state.previous_state_id or "__exit__"
+                                if flow_state.previous_state_id:
+                                    return flow_state.previous_state_id
+
+                                # No previous state: treat as exit (clean up UI in caller).
+                                raise _FlowExit(
+                                    completed=True,
+                                    rendered_text=full_text,
+                                    exit_callback_data=CommonCallbacks.CANCEL,
+                                )
                             
                             # Call on_button_press handler
                             next_state = None
@@ -1092,7 +1145,11 @@ class MessageFlow:
                 if input_text.lower() in [kw.lower() for kw in current_def.input_cancel_keywords]:
                     if flow_state.previous_state_id:
                         return flow_state.previous_state_id
-                    return "__exit__"
+                    raise _FlowExit(
+                        completed=True,
+                        rendered_text=full_text,
+                        exit_callback_data=CommonCallbacks.CANCEL,
+                    )
                 
                 # Validate input
                 if current_def.input_validator:
@@ -1123,6 +1180,8 @@ class MessageFlow:
                 return current_def.default_next_state
                 
             except TimeoutError:
+                raise
+            except _FlowExit:
                 raise
             except Exception as e:
                 # Log error and retry
@@ -1201,18 +1260,61 @@ class MessageFlow:
             # Handle different state types
             if current_def.state_type == StateType.TEXT_INPUT or current_def.state_type == StateType.MIXED:
                 # Text input state or mixed (text + buttons)
-                next_state_id = await self._handle_text_input_state(
-                    conv, user_id, api, flow_state, current_def, text
-                )
+                try:
+                    next_state_id = await self._handle_text_input_state(
+                        conv, user_id, api, flow_state, current_def, text
+                    )
+                except _FlowExit as e:
+                    if current_def.on_exit:
+                        await current_def.on_exit(flow_state, api, user_id)
+
+                    if self.on_flow_exit is not None:
+                        await self.on_flow_exit(flow_state, api, user_id)
+
+                    if current_def.on_exit_notification:
+                        await api.message_manager.send_notification(
+                            user_id=user_id,
+                            text=current_def.on_exit_notification,
+                            style=current_def.notification_style,
+                            auto_delete=current_def.notification_auto_delete,
+                        )
+
+                    # Clean up the visible UI similar to BUTTON-state exits.
+                    if flow_state.current_message:
+                        try:
+                            if e.exit_callback_data == CommonCallbacks.CLOSE and not current_def.keep_message_on_exit:
+                                await flow_state.current_message.delete()
+                                flow_state.current_message = None
+                            elif current_def.remove_buttons_on_exit:
+                                await api.conversation_manager.send_or_edit_message(
+                                    user_id,
+                                    (e.rendered_text or text),
+                                    flow_state.current_message,
+                                    remove_buttons=True,
+                                )
+                        except Exception:
+                            pass
+                    return bool(e.completed)
+
+                next_state_id = self._normalize_next_state_id(next_state_id)
                 
                 if next_state_id is None:
                     # Input cancelled
                     return False
-                elif next_state_id == "__exit__":
+                elif next_state_id == _LEGACY_EXIT_SENTINEL:
+                    # Backward-compatible: allow handlers to request exit.
+                    # Prefer explicit terminal states instead.
                     return True
                 elif next_state_id == flow_state.current_state_id:
                     # Returning to same state - just re-render without updating history
                     continue
+
+                if next_state_id not in self.states:
+                    self.logger.warning(
+                        f"Invalid next_state_id, exiting flow (current={flow_state.current_state_id}, next={next_state_id})",
+                        extra_tag="FLOW",
+                    )
+                    return False
                 
                 # Update flow state and continue to new state
                 flow_state.previous_state_id = flow_state.current_state_id
@@ -1312,6 +1414,7 @@ class MessageFlow:
                     raise
 
                 next_state_id = await current_def.on_timeout(flow_state, api, user_id)
+                next_state_id = self._normalize_next_state_id(next_state_id)
                 if next_state_id is None:
                     # Default timeout behavior: remove the UI if possible, then exit.
                     try:
@@ -1321,8 +1424,26 @@ class MessageFlow:
                         pass
                     return False
 
-                if next_state_id == "__exit__":
-                    return False
+                if next_state_id == _LEGACY_EXIT_SENTINEL:
+                    if current_def.on_exit:
+                        await current_def.on_exit(flow_state, api, user_id)
+
+                    if current_def.on_exit_notification:
+                        await api.message_manager.send_notification(
+                            user_id=user_id,
+                            text=current_def.on_exit_notification,
+                            style=current_def.notification_style,
+                            auto_delete=current_def.notification_auto_delete,
+                        )
+
+                    if flow_state.current_message and current_def.remove_buttons_on_exit:
+                        try:
+                            await api.conversation_manager.send_or_edit_message(
+                                user_id, text, flow_state.current_message, remove_buttons=True
+                            )
+                        except Exception:
+                            pass
+                    return True
 
                 if next_state_id == flow_state.current_state_id:
                     continue
@@ -1426,6 +1547,29 @@ class MessageFlow:
                             continue
                         # Otherwise use default_next_state
                         next_state_id = current_def.default_next_state
+
+            next_state_id = self._normalize_next_state_id(next_state_id)
+
+            if next_state_id == _LEGACY_EXIT_SENTINEL:
+                if current_def.on_exit:
+                    await current_def.on_exit(flow_state, api, user_id)
+
+                if self.on_flow_exit is not None:
+                    await self.on_flow_exit(flow_state, api, user_id)
+
+                if current_def.on_exit_notification:
+                    await api.message_manager.send_notification(
+                        user_id=user_id,
+                        text=current_def.on_exit_notification,
+                        style=current_def.notification_style,
+                        auto_delete=current_def.notification_auto_delete,
+                    )
+
+                if flow_state.current_message and current_def.remove_buttons_on_exit:
+                    await api.conversation_manager.send_or_edit_message(
+                        user_id, text, flow_state.current_message, remove_buttons=True
+                    )
+                return True
             
             # Validate next state exists
             if next_state_id is None or next_state_id not in self.states:

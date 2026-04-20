@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from ..message_flow import MessageAction, MessageFlow
+from ..message_flow import MessageAction, MessageDefinition, MessageFlow, StateType
 from ..message_flow_helpers import make_state
-from ..message_flow_ids import CommonCallbacks
+from ..message_flow_ids import CommonCallbacks, CommonStateIds
 from ...common.log import Logger
 from ...exceptions.coffee_exceptions import CoffeeSessionError
 
@@ -23,11 +23,11 @@ from ...exceptions.coffee_exceptions import CoffeeSessionError
 _logger = Logger("SessionFlow")
 
 STATE_SESSION_MAIN = "session_main"
-STATE_SESSION_EXIT_SUCCESS = "session_exit_success"
 
 KEY_SESSION_ID = "session_id"
 KEY_SESSION_OBJ_ID = "session_obj_id"
 KEY_REGISTERED = "registered"
+KEY_EXIT_TEXT = "session_exit_text"
 
 
 async def _get_session(flow_state, api: Any):
@@ -96,11 +96,13 @@ async def _on_render_register_keyboard(flow_state, api: Any, user_id: int) -> No
 async def _handle_inactivity(flow_state, api: Any, user_id: int) -> Optional[str]:
     session = await _get_session(flow_state, api)
     if session is None:
-        return "__exit__"
+        flow_state.set(KEY_EXIT_TEXT, (flow_state.current_message.text if flow_state.current_message is not None else "") or "")
+        return CommonStateIds.EXIT_CANCELLED
 
     # If the session already ended (e.g., submitted by another user), exit quietly.
     if not bool(session.is_active):
-        return "__exit__"
+        flow_state.set(KEY_EXIT_TEXT, (flow_state.current_message.text if flow_state.current_message is not None else "") or "")
+        return CommonStateIds.EXIT_CANCELLED
 
     # Per-user cleanup.
     try:
@@ -134,19 +136,15 @@ async def _handle_inactivity(flow_state, api: Any, user_id: int) -> Optional[str
     else:
         inactivity_text = "⏱️ **Conversation closed due to inactivity**"
 
-    try:
-        if flow_state.current_message is not None:
-            await api.message_manager.edit_message(flow_state.current_message, inactivity_text, buttons=None)
-    except Exception:
-        pass
-
-    return "__exit__"
+    flow_state.set(KEY_EXIT_TEXT, inactivity_text)
+    return CommonStateIds.EXIT_CANCELLED
 
 
 async def _on_button_press(data: str, flow_state, api: Any, user_id: int) -> Optional[str]:
     session = await _get_session(flow_state, api)
     if session is None:
-        return "__exit__"
+        flow_state.set(KEY_EXIT_TEXT, "❌ Session not found.")
+        return CommonStateIds.EXIT_CANCELLED
 
     try:
         await api.session_manager.mark_session_active(session)
@@ -164,17 +162,20 @@ async def _on_button_press(data: str, flow_state, api: Any, user_id: int) -> Opt
         try:
             await api.session_manager.complete_session(int(user_id))
         except CoffeeSessionError:
-            return "__exit__"
+            flow_state.set(KEY_EXIT_TEXT, "❌ Submit failed.")
+            return CommonStateIds.EXIT_CANCELLED
         except Exception as e:
             _logger.error("Session submit failed", exc=e)
-            return "__exit__"
+            flow_state.set(KEY_EXIT_TEXT, "❌ Submit failed.")
+            return CommonStateIds.EXIT_CANCELLED
 
         try:
             api.group_keyboard_manager.unregister_keyboard(int(user_id), str(session.id))
         except Exception:
             pass
 
-        return STATE_SESSION_EXIT_SUCCESS
+        flow_state.set(KEY_EXIT_TEXT, "✅ **Submitted**")
+        return CommonStateIds.EXIT_SUCCESS
 
     if data == "group_cancel":
         try:
@@ -200,13 +201,8 @@ async def _on_button_press(data: str, flow_state, api: Any, user_id: int) -> Opt
                 "Use /order to re-open the session."
             )
 
-        try:
-            if flow_state.current_message is not None:
-                await api.message_manager.edit_message(flow_state.current_message, cancel_text, buttons=None)
-        except Exception:
-            pass
-
-        return "__exit__"
+        flow_state.set(KEY_EXIT_TEXT, cancel_text)
+        return CommonStateIds.EXIT_CANCELLED
 
     if data.startswith("group_plus_"):
         name = data[len("group_plus_") :]
@@ -253,16 +249,32 @@ def create_session_flow(*, timeout_seconds: int = 180) -> MessageFlow:
         )
     )
 
-    # Exit state used to end the flow with `True` after successful submit.
-    # We keep the message unchanged (text='') and return immediately.
+    async def _build_exit_text(flow_state, api: Any, user_id: int) -> str:
+        return str(flow_state.get(KEY_EXIT_TEXT, "") or "")
+
     flow.add_state(
-        make_state(
-            STATE_SESSION_EXIT_SUCCESS,
-            text="",
+        MessageDefinition(
+            state_id=CommonStateIds.EXIT_CANCELLED,
+            state_type=StateType.BUTTON,
+            text_builder=_build_exit_text,
             buttons=None,
             action=MessageAction.AUTO,
             timeout=1,
             exit_buttons=[],
+            auto_exit_after_render=True,
+        )
+    )
+
+    flow.add_state(
+        MessageDefinition(
+            state_id=CommonStateIds.EXIT_SUCCESS,
+            state_type=StateType.BUTTON,
+            text_builder=_build_exit_text,
+            buttons=None,
+            action=MessageAction.AUTO,
+            timeout=1,
+            exit_buttons=[],
+            auto_exit_after_render=True,
         )
     )
 
