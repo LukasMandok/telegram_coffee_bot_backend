@@ -612,7 +612,7 @@ def format_card_debt_item(item: CardDebtItem, index: int) -> str:
     paid_text = format_money(item.paid)
     total_text = format_money(item.total)
     outstanding_text = format_money(outstanding)
-    return f"- **{name}**:\n`  `paid: {paid_text} / {total_text}`   `remaining: {outstanding_text}"
+    return f"- **{name}**:\n`  `paid: {paid_text} / {total_text}`   `rem.: {outstanding_text}"
 
 
 def format_card_details(card: CoffeeCard, index: int) -> str:

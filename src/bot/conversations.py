@@ -20,7 +20,6 @@ from ..handlers import users
 from ..handlers.paypal import create_paypal_link, validate_paypal_link
 from ..dependencies.dependencies import get_repo
 from .settings_manager import SettingsManager
-from .keyboards import KeyboardManager
 from .credit_flow import run_credit_flow
 from .conversation_flows.debt_flow import run_debt_flow
 from .conversation_flows.card_flow import create_card_menu_flow, create_close_card_flow, create_new_card_flow
@@ -31,7 +30,14 @@ from .conversation_flows.feedback_flow import create_feedback_flow
 from .conversation_flows.session_flow import create_session_flow, KEY_SESSION_OBJ_ID
 from .message_flow import PaginationConfig, build_telethon_pagination_nav_keyboard, paginate_items_0_indexed
 from .message_flow_ids import CommonCallbacks
-from .message_flow_helpers import CommonFlowKeys, IntegerParser, MoneyParser
+from .message_flow_helpers import (
+    CommonFlowKeys,
+    IntegerParser,
+    MoneyParser,
+    get_confirmation_keyboard,
+    get_keyboard_callback_filter,
+    get_persistent_keyboard,
+)
 from .command_catalog import COMMAND_BY_CONTEXT
 
 from ..exceptions.coffee_exceptions import CoffeeSessionError, NoActiveCoffeeCardsError
@@ -560,7 +566,7 @@ class ConversationManager:
 
             try:
                 button_event = await conv.wait_event(
-                    KeyboardManager.get_keyboard_callback_filter(user_id),
+                    get_keyboard_callback_filter(user_id),
                     timeout=remaining
                 )
             except asyncio.TimeoutError:
@@ -783,7 +789,7 @@ class ConversationManager:
             conv, 
             user_id, 
             "Do you want to register?", 
-            KeyboardManager.get_confirmation_keyboard(), 
+            get_confirmation_keyboard(), 
             30
         )
         if data is None:
@@ -900,7 +906,7 @@ class ConversationManager:
                 conv,
                 user_id,
                 f"Found existing user: **{existing_passive_user.first_name} {existing_passive_user.last_name}**\n\nDo you want to take over this user?",
-                KeyboardManager.get_confirmation_keyboard(),
+                get_confirmation_keyboard(),
                 60
             )
             if data is None:
@@ -946,7 +952,7 @@ class ConversationManager:
                             f" - enter /order to enter coffees for a larger group.\n"
                             f" - enter /help for a complete overview about all commands.\n"
                         ),
-                        KeyboardManager.get_persistent_keyboard(),
+                        get_persistent_keyboard(),
                         True,
                         True
                     )
@@ -1002,7 +1008,7 @@ class ConversationManager:
                     f" - enter /order to order coffees for a larger group.\n"
                     f" - enter /help for a complete overview about all commands.\n"
                 ),
-                KeyboardManager.get_persistent_keyboard(),
+                get_persistent_keyboard(),
                 True,
                 True
             )
@@ -1294,7 +1300,7 @@ class ConversationManager:
             conv,
             user_id,
             f"**{full_name}**\n\nConfirm creation?",
-            KeyboardManager.get_confirmation_keyboard(),
+            get_confirmation_keyboard(),
             30
         )
         if data == "No" or data is None:

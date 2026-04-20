@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from telethon import events
 
 from .command_catalog import BOT_COMMANDS, get_all_commands, get_user_commands
-from .keyboards import KeyboardManager
+from .message_flow_helpers import get_persistent_keyboard
 from ..handlers import users
 from ..dependencies import dependencies as dep
 from ..common.log import Logger
@@ -76,7 +76,7 @@ class CommandManager:
             await self.api.message_manager.send_keyboard(
                 user_id, 
                 "There is nothing more to do. You are already registered.", 
-                KeyboardManager.get_persistent_keyboard(),
+                get_persistent_keyboard(),
                 True
             )
             return 

@@ -15,7 +15,6 @@ from ..dependencies.dependencies import repo, get_repo
 from ..utils.beanie_utils import requires_beanie
 
 from src.common.log import Logger
-from .keyboards import KeyboardManager
 from .message_flow import ButtonCallback
 from .message_flow_ids import DebtQuickConfirmCallbacks
 from .message_flow_helpers import format_money

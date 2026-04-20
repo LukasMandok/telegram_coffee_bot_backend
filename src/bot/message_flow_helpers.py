@@ -11,6 +11,8 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Callable, Awaitable, TypeVar, Generic, TYPE_CHECKING
 
+from telethon import Button, events
+
 from .message_flow_ids import CommonCallbacks, CommonFlowKeys, CommonStateIds
 
 if TYPE_CHECKING:
@@ -20,6 +22,30 @@ else:
     from .message_flow import MessageFlowState, ButtonCallback
 
 T = TypeVar('T')
+
+
+# ----------------------------------------------------------------------------
+# Telethon keyboard helpers (legacy ConversationManager + commands)
+# ----------------------------------------------------------------------------
+
+def get_persistent_keyboard() -> List[List[Any]]:
+    """Persistent reply keyboard (non-inline)."""
+    return [
+        [
+            Button.text("Place Order", resize=True, single_use=False),
+            Button.text("Show Debts", resize=True, single_use=False),
+        ]
+    ]
+
+
+def get_confirmation_keyboard() -> List[List[Any]]:
+    """Simple inline Yes/No confirmation keyboard."""
+    return [[Button.inline("Yes", b"Yes"), Button.inline("No", b"No")]]
+
+
+def get_keyboard_callback_filter(user_id: int) -> events.CallbackQuery:
+    """CallbackQuery filter that only accepts callbacks from the given user."""
+    return events.CallbackQuery(func=lambda e: e.sender_id == user_id)
 
 
 def format_date(value: Any, *, fmt: str = "%d.%m.%Y %H:%M") -> str:

@@ -14,7 +14,7 @@ Classes:
     - TelethonAPI: Main bot API handler
 
 Note: Command handlers have been moved to bot/commands.py (CommandManager class).
-Note: Keyboard functionality has been moved to bot/keyboards.py (KeyboardManager, KeyboardButton).
+Note: Telethon keyboard helpers live in bot/message_flow_helpers.py.
 Note: Message management functionality has been moved to bot/message_manager.py (MessageManager).
 Note: Conversation management has been moved to bot/conversations.py (ConversationManager).
 Note: Telegram-specific models have been moved to bot/telethon_models.py.
@@ -41,7 +41,7 @@ from telethon.tl.types import (
 
 from ..handlers import exceptions, users
 from ..bot.telethon_models import ( MessageModel, BotConfiguration )
-from ..bot.keyboards import KeyboardButton, KeyboardManager
+from ..bot.message_flow_helpers import get_keyboard_callback_filter
 from ..common.log import Logger
 
 from ..bot.message_manager import MessageManager
@@ -429,8 +429,8 @@ class TelethonAPI:
     # The delegation methods above provide backward compatibility.
     
     def keyboard_callback(self, user_id: int) -> events.CallbackQuery:
-        """Get keyboard callback filter using KeyboardManager."""
-        return KeyboardManager.get_keyboard_callback_filter(user_id)
+        """Get callback filter for inline keyboard clicks from this user."""
+        return get_keyboard_callback_filter(user_id)
 
 
     ### SECTION: Event Handlers - Moved to bot/commands.py
