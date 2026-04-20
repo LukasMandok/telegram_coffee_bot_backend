@@ -21,7 +21,6 @@ Snapshots:
 (- sub collection snapshots (for example only the inactivity counters of users) and full collection snapshots should cover those sub-collection snapshots as well on restore)
 
 Spreadsheet:
-- add a emtpy row in the spreadsheet above the table to make it less cramped
 - gsheet update is not carried out anymore reliably after card creation (manual sync works)
 
 - add two-way sync to gsheet, so changes remote can also be propagated to the bot, but only if an admin allows this, especially if something is marked as paid.
@@ -35,7 +34,6 @@ Credit menu:
 
 
 General:
-- catch the Ctrl+C in the terminal, to make sure that the bot is closed properly
 - unify certain repeating code snippets as functions 
 - add an option to message flows, which allow actions on initiation, submit and cancel -> so I can so gsheet synchronizations on sumbit and start backups on initiation save them on submit and delete them on cancel 
 
@@ -44,6 +42,8 @@ Settings:
 - make each toggle button the same, so that an activated option has a green dot and an deactivated an red dot on the toggle button (instead of showing how the stat would change if you press the button), this should also include all of the checkmark/cross icons in toggle buttons used somewhere else. This should be completely consistent in the whole message flow.
 - make sure that all submenues are correctly implemented as message flow. Currently most of this is still manually in the conversation manager
 
+PayPal Setup:
+- if invoked from the new_card flow, can you convert the messages, that the paypal link setup was successful or the canceled message intl a banner popup notification?
 
 maybe:
 - emulate other users
@@ -56,11 +56,6 @@ this should also allow to use the restapi with a webpage instead (except for not
 
 not working:
 - add a reply keyboard and close if pressed and reopen if the coversation finishes. 
-
-
-
-# next
-- enfore the paypal flow being carried out before the a user can create a new card, in case he doesnt have a paypal link setup yet.
 
 
 ### Google Spredsheet two-way syncing:

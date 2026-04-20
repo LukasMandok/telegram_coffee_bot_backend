@@ -1,5 +1,4 @@
-"""
-Settings-related flows using MessageFlow system.
+"""Settings-related flows using MessageFlow system.
 
 This module contains flows for user settings and configuration,
 including PayPal link setup.
@@ -65,30 +64,13 @@ async def build_paypal_main_text(flow_state, api, user_id) -> str:
         )
 
 
-async def build_paypal_main_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-    """Build the main PayPal setup keyboard."""
-    user = await api.conversation_manager.repo.find_user_by_id(user_id)
-    
-    if user.paypal_link:
-        return [
-            [ButtonCallback("🔄 Change Link", CB_CHANGE)],
-            [ButtonCallback("❌ Remove Link", CB_REMOVE)],
-            NavigationButtons.close()
-        ]
-    else:
-        return [
-            [ButtonCallback("➕ Add PayPal Link", CB_ADD)],
-            NavigationButtons.close()
-        ]
-
-
 async def handle_paypal_main_button(data: str, flow_state, api, user_id) -> Optional[str]:
     """Handle main PayPal menu button presses."""
     if data in (CB_CHANGE, CB_ADD):
         return STATE_ENTER_LINK
     if data == CB_REMOVE:
         return STATE_CONFIRM_REMOVE
-    if data == CommonCallbacks.CLOSE:
+    if data in (CommonCallbacks.CLOSE, CommonCallbacks.CANCEL):
         return CommonStateIds.EXIT_CANCELLED
     return None
 
@@ -124,16 +106,6 @@ async def build_enter_link_text(flow_state, api, user_id) -> str:
     )
 
 
-async def validate_paypal_input(text: str, flow_state) -> tuple[bool, Optional[str]]:
-    """Validate PayPal input."""
-    if not text.strip():
-        return False, "❌ PayPal information cannot be empty."
-    
-    # Basic length check
-    if len(text) < 3:
-        return False, "❌ PayPal username must be at least 3 characters."
-    
-    return True, None
 
 
 async def handle_paypal_input(input_text: str, flow_state, api, user_id) -> Optional[str]:
@@ -333,9 +305,35 @@ async def handle_confirm_remove_button(data: str, flow_state, api, user_id) -> O
 # FLOW DEFINITION
 # ============================================================================
 
-def create_paypal_flow() -> MessageFlow:
+def create_paypal_flow(
+    *,
+    invoked_from_card_creation: bool = False,
+    exit_message_delete_after_seconds: int = 0,
+) -> MessageFlow:
     """Create the PayPal setup message flow."""
     flow = MessageFlow()
+
+    exit_delete_after = int(exit_message_delete_after_seconds) if invoked_from_card_creation else 0
+
+    async def build_main_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
+        user = await api.conversation_manager.repo.find_user_by_id(user_id)
+
+        nav_row = (
+            NavigationButtons.cancel(text="❌ Cancel")
+            if invoked_from_card_creation
+            else NavigationButtons.close()
+        )
+
+        if user.paypal_link:
+            return [
+                [ButtonCallback("🔄 Change Link", CB_CHANGE), ButtonCallback("❌ Remove Link", CB_REMOVE)],
+                nav_row,
+            ]
+
+        return [
+            [ButtonCallback("➕ Add PayPal Link", CB_ADD)],
+            nav_row,
+        ]
 
     enter_link_defaults = {
         KEY_VALIDATION_ATTEMPTS: 0,
@@ -348,7 +346,7 @@ def create_paypal_flow() -> MessageFlow:
     flow.add_state(make_state(
         STATE_MAIN,
         text_builder=build_paypal_main_text,
-        keyboard_builder=build_paypal_main_keyboard,
+        keyboard_builder=build_main_keyboard,
         action=MessageAction.AUTO,
         timeout=120,
         exit_buttons=[],  # No default exit buttons - handler manages navigation
@@ -407,26 +405,35 @@ def create_paypal_flow() -> MessageFlow:
         on_button_press=handle_confirm_remove_button,
     ))
     
-    # Exit states - using universal ExitStateBuilder
-    flow.add_state(ExitStateBuilder.create_cancelled(
+    # Exit states - universal ExitStateBuilder
+    cancel_message = "❌ **PayPal Link Setup Cancelled**\n\nNo changes were made."
+
+    exit_cancelled = ExitStateBuilder.create_cancelled(
         state_id=CommonStateIds.EXIT_CANCELLED,
-        message="❌ **PayPal Setup Cancelled**\n\nNo changes were made."
-    ))
-    
-    flow.add_state(ExitStateBuilder.create_cancelled(
+        message=cancel_message,
+        delete_after=exit_delete_after,
+    )
+    flow.add_state(exit_cancelled)
+
+    exit_removal_cancelled = ExitStateBuilder.create_cancelled(
         state_id=STATE_EXIT_REMOVAL_CANCELLED,
-        message="❌ **Removal Cancelled**\n\nYour PayPal link was not removed."
-    ))
-    
-    # These use dynamic text builders for link info
-    flow.add_state(ExitStateBuilder.create(
+        message="❌ **Removal Cancelled**\n\nYour PayPal link was not removed.",
+        delete_after=exit_delete_after,
+    )
+    flow.add_state(exit_removal_cancelled)
+
+    exit_save_success = ExitStateBuilder.create(
         state_id=STATE_EXIT_SAVE_SUCCESS,
-        text_builder=build_save_success_text
-    ))
-    
-    flow.add_state(ExitStateBuilder.create(
+        text_builder=build_save_success_text,
+        delete_after=exit_delete_after,
+    )
+    flow.add_state(exit_save_success)
+
+    exit_remove_success = ExitStateBuilder.create(
         state_id=STATE_EXIT_REMOVE_SUCCESS,
-        text_builder=build_remove_success_text
-    ))
+        text_builder=build_remove_success_text,
+        delete_after=exit_delete_after,
+    )
+    flow.add_state(exit_remove_success)
     
     return flow

@@ -547,6 +547,8 @@ class CoffeeCardManager:
                         ),
                     ]
                 ],
+                force_silent = True,
+                
             )
         
         # # If someone else completed it manually, notify them too

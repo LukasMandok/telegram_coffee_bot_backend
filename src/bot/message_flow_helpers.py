@@ -785,6 +785,7 @@ class ExitStateBuilder:
         text: Optional[str] = None,
         text_builder: Optional[Callable[..., Awaitable[str]]] = None,
         timeout: int = 1,
+        delete_after: int = 0,
     ):
         """
         Create an exit state that edits the message and closes the flow.
@@ -811,6 +812,7 @@ class ExitStateBuilder:
             action=MessageAction.EDIT,  # Edit the current message
             timeout=timeout,  # Auto-close after timeout
             remove_buttons_on_exit=True,  # Clean up buttons
+            delete_after=delete_after,
         )
     
     @staticmethod
@@ -818,6 +820,7 @@ class ExitStateBuilder:
         state_id: str = CommonStateIds.EXIT_CANCELLED,
         message: str = "❌ **Cancelled**\n\nNo changes were made.",
         timeout: int = 1,
+        delete_after: int = 0,
     ):
         """
         Create a standard cancellation exit state.
@@ -827,13 +830,19 @@ class ExitStateBuilder:
             message: Cancellation message
             timeout: Seconds before auto-closing
         """
-        return ExitStateBuilder.create(state_id=state_id, text=message, timeout=timeout)
+        return ExitStateBuilder.create(
+            state_id=state_id,
+            text=message,
+            timeout=timeout,
+            delete_after=delete_after,
+        )
     
     @staticmethod
     def create_success(
         state_id: str = CommonStateIds.EXIT_SUCCESS,
         message: str = "✅ **Success**\n\nOperation completed successfully.",
         timeout: int = 1,
+        delete_after: int = 0,
     ):
         """
         Create a standard success exit state.
@@ -843,7 +852,12 @@ class ExitStateBuilder:
             message: Success message
             timeout: Seconds before auto-closing
         """
-        return ExitStateBuilder.create(state_id=state_id, text=message, timeout=timeout)
+        return ExitStateBuilder.create(
+            state_id=state_id,
+            text=message,
+            timeout=timeout,
+            delete_after=delete_after,
+        )
 
 
 # ----------------------------------------------------------------------------

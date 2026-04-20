@@ -369,6 +369,12 @@ class MessageDefinition(BaseModel):
         default=MessageAction.AUTO,
         description="How to display this message"
     )
+
+    delete_after: int = Field(
+        default=0,
+        ge=0,
+        description="Auto-delete the rendered message after N seconds (0 = keep)"
+    )
     timeout: int = Field(
         default=120,
         gt=0,
@@ -1422,7 +1428,11 @@ class MessageFlow:
             if is_legacy_exit or is_explicit_exit:
                 if flow_state.current_message and text.strip():
                     await api.conversation_manager.send_or_edit_message(
-                        user_id, text, flow_state.current_message, remove_buttons=True
+                        user_id,
+                        text,
+                        flow_state.current_message,
+                        remove_buttons=True,
+                        delete_after=int(current_def.delete_after or 0),
                     )
                 else:
                     # Keep legacy behavior: if there is no message to edit, do not send a new one.
@@ -1435,15 +1445,31 @@ class MessageFlow:
             try:
                 if action == MessageAction.SEND or flow_state.current_message is None:
                     if keyboard is None:
-                        message = await api.message_manager.send_text(user_id, text, True, True)
+                        message = await api.message_manager.send_text(
+                            user_id,
+                            text,
+                            True,
+                            True,
+                            delete_after=int(current_def.delete_after or 0),
+                        )
                     else:
                         message = await api.message_manager.send_keyboard(user_id, text, keyboard, True, True)
                     flow_state.current_message = message
                 else:
                     if keyboard is None:
-                        await api.message_manager.edit_message(flow_state.current_message, text, buttons=None)
+                        await api.message_manager.edit_message(
+                            flow_state.current_message,
+                            text,
+                            buttons=None,
+                            delete_after=int(current_def.delete_after or 0),
+                        )
                     else:
-                        await api.message_manager.edit_message(flow_state.current_message, text, buttons=keyboard)
+                        await api.message_manager.edit_message(
+                            flow_state.current_message,
+                            text,
+                            buttons=keyboard,
+                            delete_after=int(current_def.delete_after or 0),
+                        )
                     message = flow_state.current_message
 
                 if current_def.on_render is not None:

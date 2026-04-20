@@ -45,6 +45,7 @@ from ...common.log import Logger
 from ...config import app_config
 from ...models.beanie_models import PassiveUser, TelegramUser
 from ...models.coffee_models import CoffeeCard, CoffeeOrder, CoffeeSession
+from ..settings_flow import create_paypal_flow
 
 
 _logger = Logger("CardFlow")
@@ -64,6 +65,8 @@ STATE_CREATE_TOTAL = "create_total"
 STATE_CREATE_PRICE = "create_price"
 STATE_CREATE_CONFIRM = "create_confirm"
 STATE_CREATE_EXECUTE = "create_execute"
+
+STATE_EXIT_PAYPAL_REQUIRED = "exit_paypal_required"
 
 STATE_CLOSE_CONFIRM = CommonStateIds.CLOSE_CONFIRM
 STATE_CLOSE_EXECUTE = CommonStateIds.CLOSE_EXECUTE
@@ -663,6 +666,93 @@ async def handle_cancel_to_after_cancel(data: str, flow_state, api, user_id: int
     return None
 
 
+async def _ensure_paypal_link_setup(
+    flow_state,
+    api,
+    user_id: int,
+    *,
+    invoked_from_new_card_flow: bool,
+) -> bool:
+    user = await api.conversation_manager.repo.find_user_by_id(user_id)
+    if user and user.paypal_link:
+        return True
+
+    if flow_state.current_message is not None:
+        try:
+            await api.conversation_manager.send_or_edit_message(
+                user_id,
+                "ℹ️ Before creating a coffee card, please set up your PayPal link.",
+                flow_state.current_message,
+                remove_buttons=True,
+            )
+        except Exception:
+            pass
+
+    conv_state = api.conversation_manager.get_conversation_state(int(user_id))
+    conv = conv_state.conv if conv_state else None
+    if conv is None:
+        return False
+
+    flow = create_paypal_flow(
+        invoked_from_card_creation=True,
+        exit_message_delete_after_seconds=5,
+    )
+
+    completed = await flow.run(conv, user_id, api, start_state="main")
+
+    if not completed:
+        return False
+
+    user = await api.conversation_manager.repo.find_user_by_id(user_id)
+    return bool(user and user.paypal_link)
+
+
+async def handle_create_main_button(data: str, flow_state, api, user_id: int) -> Optional[str]:
+    cancel_next = await handle_cancel_to_after_cancel(data, flow_state, api, user_id)
+    if cancel_next is not None:
+        return cancel_next
+
+    if data != STATE_CREATE_CONFIRM:
+        return None
+
+    after_cancel = flow_state.get(CommonFlowKeys.AFTER_CANCEL, CommonStateIds.EXIT_CANCELLED)
+    invoked_from_new_card_flow = after_cancel == CommonStateIds.EXIT_CANCELLED
+
+    has_paypal = await _ensure_paypal_link_setup(
+        flow_state,
+        api,
+        user_id,
+        invoked_from_new_card_flow=invoked_from_new_card_flow,
+    )
+    if not has_paypal:
+        return STATE_EXIT_PAYPAL_REQUIRED
+
+    return STATE_CREATE_CONFIRM
+
+
+async def handle_create_confirm_button(data: str, flow_state, api, user_id: int) -> Optional[str]:
+    cancel_next = await handle_cancel_to_after_cancel(data, flow_state, api, user_id)
+    if cancel_next is not None:
+        return cancel_next
+
+    if data != STATE_CREATE_EXECUTE:
+        return None
+
+    after_cancel = flow_state.get(CommonFlowKeys.AFTER_CANCEL, CommonStateIds.EXIT_CANCELLED)
+    invoked_from_new_card_flow = after_cancel == CommonStateIds.EXIT_CANCELLED
+
+    has_paypal = await _ensure_paypal_link_setup(
+        flow_state,
+        api,
+        user_id,
+        invoked_from_new_card_flow=invoked_from_new_card_flow,
+    )
+    if not has_paypal:
+        return STATE_EXIT_PAYPAL_REQUIRED
+
+    return STATE_CREATE_EXECUTE
+
+
 async def build_create_total_text(flow_state, api, user_id: int) -> str:
     validation_error = flow_state.pop("create_total_error", None)
     if validation_error:
@@ -754,6 +844,12 @@ async def build_create_confirm_text(flow_state, api, user_id: int) -> str:
 async def execute_create_card(flow_state, api, user_id: int) -> None:
     total_coffees = int(flow_state.get(KEY_TOTAL_COFFEES, DEFAULT_TOTAL_COFFEES))
     cost_per_coffee = float(flow_state.get(KEY_COST_PER_COFFEE, DEFAULT_COST_PER_COFFEE))
+
+    user = await api.conversation_manager.repo.find_user_by_id(user_id)
+    if not user or not user.paypal_link:
+        flow_state.set("created_card", None)
+        flow_state.set("create_error", "PayPal setup is required before creating a coffee card")
+        return
 
     try:
         card = await api.coffee_card_manager.create_coffee_card(
@@ -914,7 +1010,7 @@ def _create_common_flow() -> MessageFlow:
             timeout=120,
             exit_buttons=[],
             defaults=create_main_defaults,
-            on_button_press=handle_cancel_to_after_cancel,
+            on_button_press=handle_create_main_button,
             route_callback_to_state_id=True,
             route_callback_allowlist=create_main_allowlist,
         )
@@ -960,9 +1056,19 @@ def _create_common_flow() -> MessageFlow:
             buttons=create_confirm_buttons,
             timeout=60,
             exit_buttons=[],
-            on_button_press=handle_cancel_to_after_cancel,
+            on_button_press=handle_create_confirm_button,
             route_callback_to_state_id=True,
             route_callback_allowlist=create_confirm_allowlist,
+        )
+    )
+
+    flow.add_state(
+        ExitStateBuilder.create_cancelled(
+            state_id=STATE_EXIT_PAYPAL_REQUIRED,
+            message=(
+                "❌ **Coffee Card Creation Cancelled**\n\n"
+                "PayPal setup is required before creating a new card."
+            ),
         )
     )
 
