@@ -26,5 +26,10 @@ else
     echo "--- Starting in PRODUCTION mode ---"
     # Start web process in the foreground using gunicorn
     # Note: Changed port to 8000 to match docker-compose.yml
-    gunicorn src.main:app --bind 0.0.0.0:8000 -w 4 -k uvicorn.workers.UvicornWorker
+    # IMPORTANT: This project starts Telethon using a SQLite session file.
+    # Multiple Gunicorn workers would start multiple bot instances and will race on the same
+    # `coffee_bot_session.session` file, leading to `sqlite3.OperationalError: database is locked`.
+    # Keep this at 1 unless you also refactor to run the bot in a separate process/service.
+    GUNICORN_WORKERS=${GUNICORN_WORKERS:-1}
+    gunicorn src.main:app --bind 0.0.0.0:8000 -w "$GUNICORN_WORKERS" -k uvicorn.workers.UvicornWorker
 fi
