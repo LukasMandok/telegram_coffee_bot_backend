@@ -284,8 +284,9 @@ def _payload_to_grid(payload: CardSheetPayload) -> List[List[Any]]:
     meta_row_1 = 2
     meta_row_2 = 3
     meta_row_3 = 4
-    header_row = 5
-    first_data_row = 6
+    spacer_row = 5
+    header_row = 6
+    first_data_row = 7
 
     grid: List[List[Any]] = []
 
@@ -296,6 +297,9 @@ def _payload_to_grid(payload: CardSheetPayload) -> List[List[Any]]:
     grid.append(["Status", status, "", "Last updated", payload.updated_at_iso, "", "Purchaser", payload.purchaser_name])
     grid.append(["Total coffees", payload.total_coffees, "", "Coffees left", payload.remaining_coffees, "", "PayPal", payload.paypal_link])
     grid.append(["Cost/coffee", payload.cost_per_coffee, "", "Total cost", payload.total_cost, "", "", ""])
+
+    # Spacer row to visually separate meta info from the main table
+    grid.append(["", "", "", "", "", "", "", ""])
 
     # Row 5: Table header
     grid.append(
@@ -400,10 +404,10 @@ def _apply_layout_chart_and_protection(
     ]
 
     # Format ranges (0-based indices)
-    header_row_index = 4  # row 5
+    header_row_index = 5  # row 6
     title_row_index = 0
 
-    first_data_row_index = 5  # row 6
+    first_data_row_index = 6  # row 7
     last_data_row_index = first_data_row_index + max(0, data_row_count)
 
     currency_cols = [3, 4, 5, 6, 7]  # D-H
@@ -417,7 +421,7 @@ def _apply_layout_chart_and_protection(
                 "properties": {
                     "sheetId": sheet_id,
                     "gridProperties": {
-                        "frozenRowCount": 5,
+                        "frozenRowCount": 6,
                         "frozenColumnCount": 1,
                     },
                 },
@@ -525,7 +529,7 @@ def _apply_layout_chart_and_protection(
 
     # Add a pie chart to the right of the table
     if data_row_count > 0:
-        first_row = 5  # row 6 (0-based)
+        first_row = 6  # row 7 (0-based)
         last_row = first_row + data_row_count
         chart_request = {
             "addChart": {
@@ -566,7 +570,7 @@ def _apply_layout_chart_and_protection(
                         "overlayPosition": {
                             "anchorCell": {
                                 "sheetId": sheet_id,
-                                "rowIndex": 4,
+                                "rowIndex": 5,
                                 "columnIndex": 9,
                             },
                             "offsetXPixels": 0,
@@ -581,10 +585,10 @@ def _apply_layout_chart_and_protection(
     # Protect the sheet so only one column is editable.
     # - Active card: allow editing Coffees column (B)
     # - Completed card: allow editing Paid column (G)
-    first_data_row_index = 5  # row 6 (0-based)
+    first_data_row_index = 6  # row 7 (0-based)
     editable_col = 1 if payload.is_active else 6
 
-    # Protect meta + header rows fully (rows 1-5).
+    # Protect title/meta/spacer/header rows fully (rows 1-6).
     requests.append(
         {
             "addProtectedRange": {
