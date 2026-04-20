@@ -558,6 +558,15 @@ class SessionManager:
                 extra_tag="ORDER"
             )
 
+            try:
+                await self.api.message_manager.send_popup_brief(
+                    user_id=int(submitted_by_user_id),
+                    text="❌ Submit failed.",
+                    auto_delete=3,
+                )
+            except Exception:
+                pass
+
             # Cancel all active conversations for this session to prevent timeout errors
             if session_id in self.api.group_keyboard_manager.active_keyboards:
                 for participant_user_id in list(self.api.group_keyboard_manager.active_keyboards[session_id].keys()):
@@ -607,6 +616,15 @@ class SessionManager:
                 extra_tag="ORDER",
                 exc=exc,
             )
+
+            try:
+                await self.api.message_manager.send_popup_brief(
+                    user_id=int(submitted_by_user_id),
+                    text="❌ Submit failed.",
+                    auto_delete=3,
+                )
+            except Exception:
+                pass
 
             # Cancel all active conversations for this session to prevent timeout errors
             if session_id in self.api.group_keyboard_manager.active_keyboards:
@@ -686,6 +704,15 @@ class SessionManager:
             except Exception:
                 pass
 
+            try:
+                await self.api.message_manager.send_popup_brief(
+                    user_id=int(submitted_by_user_id),
+                    text="❌ Submit failed.",
+                    auto_delete=3,
+                )
+            except Exception:
+                pass
+
             await self.api.message_manager.send_text(
                 submitted_by_user_id,
                 f"⚠️ **Session Suspended!**\n\n"
@@ -723,6 +750,15 @@ class SessionManager:
                     await persisted_session.delete()
             except Exception:
                 pass
+            try:
+                await self.api.message_manager.send_popup_brief(
+                    user_id=int(submitted_by_user_id),
+                    text="❌ Submit failed.",
+                    auto_delete=3,
+                )
+            except Exception:
+                pass
+
             await self.api.message_manager.send_text(
                 submitted_by_user_id,
                 "⚠️ **Session Suspended!**\n\n❌ Commit failed. Please try again.",

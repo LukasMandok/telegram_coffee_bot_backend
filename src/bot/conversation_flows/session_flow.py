@@ -14,7 +14,6 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from ..message_flow import MessageAction, MessageDefinition, MessageFlow, StateType
-from ..message_flow_helpers import make_state
 from ..message_flow_ids import CommonCallbacks, CommonStateIds
 from ...common.log import Logger
 from ...exceptions.coffee_exceptions import CoffeeSessionError
@@ -26,8 +25,11 @@ STATE_SESSION_MAIN = "session_main"
 
 KEY_SESSION_ID = "session_id"
 KEY_SESSION_OBJ_ID = "session_obj_id"
+KEY_IS_NEW_SESSION = "is_new_session"
 KEY_REGISTERED = "registered"
 KEY_EXIT_TEXT = "session_exit_text"
+
+KEY_JOIN_STATUS_SENT = "join_status_sent"
 
 
 async def _get_session(flow_state, api: Any):
@@ -36,6 +38,42 @@ async def _get_session(flow_state, api: Any):
         return None
 
     return api.session_manager.get_session_by_id(str(session_obj_id))
+
+
+async def _on_enter_session_main(flow_state, api: Any, user_id: int) -> None:
+    if flow_state.get(KEY_IS_NEW_SESSION, True):
+        return
+
+    if flow_state.get(KEY_JOIN_STATUS_SENT, False):
+        return
+
+    session = await _get_session(flow_state, api)
+    if session is None:
+        return
+
+    participant_count = 0
+    try:
+        participant_count = len(session.participants)
+    except Exception:
+        participant_count = 0
+
+    participant_word = "participant" if participant_count == 1 else "participants"
+
+    join_msg = await api.message_manager.send_text(
+        int(user_id),
+        "👥 **Joined existing coffee session!**\n"
+        f"Session has {participant_count} {participant_word}",
+        True,
+        True,
+    )
+
+    try:
+        if join_msg is not None and join_msg.id is not None:
+            flow_state.add_aux_message(int(user_id), int(join_msg.id))
+    except Exception:
+        pass
+
+    flow_state.set(KEY_JOIN_STATUS_SENT, True)
 
 
 async def _build_session_text(flow_state, api: Any, user_id: int) -> str:
@@ -162,11 +200,11 @@ async def _on_button_press(data: str, flow_state, api: Any, user_id: int) -> Opt
         try:
             await api.session_manager.complete_session(int(user_id))
         except CoffeeSessionError:
-            flow_state.set(KEY_EXIT_TEXT, "❌ Submit failed.")
+            flow_state.set(KEY_EXIT_TEXT, "")
             return CommonStateIds.EXIT_CANCELLED
         except Exception as e:
             _logger.error("Session submit failed", exc=e)
-            flow_state.set(KEY_EXIT_TEXT, "❌ Submit failed.")
+            flow_state.set(KEY_EXIT_TEXT, "")
             return CommonStateIds.EXIT_CANCELLED
 
         try:
@@ -174,7 +212,9 @@ async def _on_button_press(data: str, flow_state, api: Any, user_id: int) -> Opt
         except Exception:
             pass
 
-        flow_state.set(KEY_EXIT_TEXT, "✅ **Submitted**")
+        # No extra "Submitted" message here; session completion notifications are sent
+        # by SessionManager and the UI message gets cleaned up.
+        flow_state.set(KEY_EXIT_TEXT, "")
         return CommonStateIds.EXIT_SUCCESS
 
     if data == "group_cancel":
@@ -236,13 +276,15 @@ def create_session_flow(*, timeout_seconds: int = 180) -> MessageFlow:
     flow = MessageFlow()
 
     flow.add_state(
-        make_state(
-            STATE_SESSION_MAIN,
+        MessageDefinition(
+            state_id=STATE_SESSION_MAIN,
+            state_type=StateType.BUTTON,
             text_builder=_build_session_text,
             keyboard_builder=_build_session_keyboard,
             action=MessageAction.AUTO,
             timeout=timeout_seconds,
             exit_buttons=[],
+            on_enter=_on_enter_session_main,
             on_button_press=_on_button_press,
             on_timeout=_handle_inactivity,
             on_render=_on_render_register_keyboard,

@@ -615,6 +615,47 @@ class MessageFlowState(BaseModel):
     def update(self, **kwargs) -> None:
         """Update multiple values at once."""
         self.flow_data.update(kwargs)
+
+    def add_aux_message(self, peer_id: int, message_id: int) -> None:
+        """Register an auxiliary message to be deleted when the flow exits.
+
+        This is useful for small status/info messages sent during a flow that
+        should not remain in chat after the main UI is gone.
+        """
+
+        aux = self.flow_data.get("__aux_messages")
+        if aux is None:
+            aux = []
+            self.flow_data["__aux_messages"] = aux
+
+        aux.append({"peer_id": int(peer_id), "message_id": int(message_id)})
+
+    async def cleanup_aux_messages(self, api: Any) -> None:
+        """Delete all registered auxiliary messages (best-effort)."""
+
+        aux = self.flow_data.pop("__aux_messages", None)
+        if not aux:
+            return
+
+        per_peer: Dict[int, List[int]] = {}
+        for item in aux:
+            try:
+                peer_id = int(item.get("peer_id"))
+                message_id = int(item.get("message_id"))
+            except Exception:
+                continue
+
+            if peer_id not in per_peer:
+                per_peer[peer_id] = []
+            per_peer[peer_id].append(message_id)
+
+        for peer_id, message_ids in per_peer.items():
+            if not message_ids:
+                continue
+            try:
+                await api.bot.delete_messages(int(peer_id), list(message_ids))
+            except Exception:
+                pass
     
     async def get_or_fetch(self, key: str, fetch_func: Callable[[], Awaitable[Any]]) -> Any:
         """
@@ -1220,7 +1261,22 @@ class MessageFlow:
             current_state_id=start_state,
             flow_data=initial_data or {}
         )
-        
+
+        try:
+            return await self._run_loop(conv, user_id, api, flow_state)
+        finally:
+            try:
+                await flow_state.cleanup_aux_messages(api)
+            except Exception:
+                pass
+
+    async def _run_loop(
+        self,
+        conv: "Conversation",
+        user_id: int,
+        api: Any,
+        flow_state: MessageFlowState,
+    ) -> bool:
         while True:
             current_def = self.states[flow_state.current_state_id]
 
@@ -1237,7 +1293,7 @@ class MessageFlow:
                     for key, value in current_def.defaults.items():
                         if not flow_state.has(key):
                             flow_state.set(key, value)
-            
+
                 # Call on_enter hook (only on true entry, not on rerenders).
                 if current_def.on_enter:
                     await current_def.on_enter(flow_state, api, user_id)
@@ -1250,13 +1306,13 @@ class MessageFlow:
                         style=current_def.notification_style,
                         auto_delete=current_def.notification_auto_delete,
                     )
-            
+
             # Build text (dynamic or static)
             if current_def.text_builder:
                 text = await current_def.text_builder(flow_state, api, user_id)
             else:
                 text = current_def.text or ""
-            
+
             # Handle different state types
             if current_def.state_type == StateType.TEXT_INPUT or current_def.state_type == StateType.MIXED:
                 # Text input state or mixed (text + buttons)
@@ -1297,7 +1353,7 @@ class MessageFlow:
                     return bool(e.completed)
 
                 next_state_id = self._normalize_next_state_id(next_state_id)
-                
+
                 if next_state_id is None:
                     # Input cancelled
                     return False
@@ -1315,13 +1371,13 @@ class MessageFlow:
                         extra_tag="FLOW",
                     )
                     return False
-                
+
                 # Update flow state and continue to new state
                 flow_state.previous_state_id = flow_state.current_state_id
                 flow_state.state_history.append(flow_state.current_state_id)
                 flow_state.current_state_id = next_state_id
                 continue
-            
+
             # Build keyboard (dynamic, static, or paginated)
             if current_def.pagination_config:
                 # Paginated keyboard
@@ -1337,9 +1393,7 @@ class MessageFlow:
             else:
                 # Keep None as None (for exit states), otherwise use empty list
                 button_callbacks = current_def.buttons
-            
-            # Intentionally no per-render TRACE logs here; button objects are very noisy.
-            
+
             # Convert ButtonCallback objects to Telethon buttons (or accept prebuilt Telethon keyboards).
             # If button_callbacks is None -> remove buttons.
             if button_callbacks is None:
@@ -1356,19 +1410,13 @@ class MessageFlow:
             else:
                 # Already a Telethon keyboard (List[List[telethon Button]])
                 keyboard = button_callbacks
-            
-            # Avoid logging keyboard/button internals at TRACE.
-            
+
             # Determine action: send or edit
             action = current_def.action
             if action == MessageAction.AUTO:
                 action = MessageAction.EDIT if flow_state.current_message else MessageAction.SEND
-            
+
             # Special handling for terminal/exit states.
-            # Preserve legacy behavior: existing ExitStateBuilder used the heuristic
-            # (keyboard is None and timeout <= 2). We add an explicit flag
-            # `auto_exit_after_render` to support explicit terminal states without
-            # relying on the heuristic. Either condition triggers the same behavior.
             is_legacy_exit = keyboard is None and current_def.timeout <= 2
             is_explicit_exit = current_def.auto_exit_after_render
             if is_legacy_exit or is_explicit_exit:
@@ -1379,12 +1427,10 @@ class MessageFlow:
                 else:
                     # Keep legacy behavior: if there is no message to edit, do not send a new one.
                     pass
-                # Legacy exit states historically slept for <=2s; explicit exit states
-                # should return immediately to release exclusive Telethon conversations.
-                if is_legacy_exit:
+                if is_legacy_exit and not is_explicit_exit:
                     await asyncio.sleep(current_def.timeout)
                 return True
-            
+
             # Send or edit message, then wait for response.
             try:
                 if action == MessageAction.SEND or flow_state.current_message is None:
@@ -1452,28 +1498,24 @@ class MessageFlow:
                 flow_state.state_history.append(flow_state.current_state_id)
                 flow_state.current_state_id = next_state_id
                 continue
-            
+
             # Handle timeout or no response
             if data is None:
                 if flow_state.current_message:
                     await flow_state.current_message.delete()
                 return False
-            
+
             # Handle pagination buttons
             if current_def.pagination_config:
                 if await self._handle_pagination_button(data, flow_state, flow_state.current_state_id):
-                    # Pagination button clicked, stay in same state and re-render
                     continue
-            
+
             # Check for exit buttons
-            # None means use default buttons, empty list means no exit buttons
             exit_buttons_to_check = current_def.exit_buttons if current_def.exit_buttons is not None else [CommonCallbacks.CLOSE, CommonCallbacks.CANCEL, CommonCallbacks.DONE]
             if data in exit_buttons_to_check:
-                # Call on_exit hook
                 if current_def.on_exit:
                     await current_def.on_exit(flow_state, api, user_id)
-                
-                # Show on_exit notification
+
                 if current_def.on_exit_notification:
                     await api.message_manager.send_notification(
                         user_id=user_id,
@@ -1481,7 +1523,7 @@ class MessageFlow:
                         style=current_def.notification_style,
                         auto_delete=current_def.notification_auto_delete,
                     )
-                
+
                 if flow_state.current_message:
                     if data == CommonCallbacks.CLOSE and not current_def.keep_message_on_exit:
                         await flow_state.current_message.delete()
@@ -1490,31 +1532,27 @@ class MessageFlow:
                         await api.conversation_manager.send_or_edit_message(
                             user_id, text, flow_state.current_message, remove_buttons=True
                         )
-                
+
                 return True
-            
+
             # Check for back button
             if current_def.back_button and data == current_def.back_button:
                 if flow_state.previous_state_id:
                     next_state_id = flow_state.previous_state_id
-                    # Remove last state from history
                     if flow_state.state_history:
                         flow_state.state_history.pop()
                 else:
-                    # No previous state, treat as exit
                     return True
             else:
                 # Call on_button_press hook (can override next state)
                 next_state_id = None
                 if current_def.on_button_press:
                     next_state_id = await current_def.on_button_press(data, flow_state, api, user_id)
-                
-                # If hook returned None, check button callbacks and next_state_map
+
                 if next_state_id is None:
                     # Check button-specific callbacks
                     for row in (button_callbacks or []):
                         for btn in row:
-                            # Only ButtonCallback supports callback_handler.
                             if not hasattr(btn, "callback_handler"):
                                 continue
                             if self._extract_callback_data(btn) == data and getattr(btn, "callback_handler"):
@@ -1522,20 +1560,16 @@ class MessageFlow:
                                 break
                         if next_state_id:
                             break
-                    
-                    # Fall back to next_state_map
+
                     if next_state_id is None:
                         next_state_id = current_def.next_state_map.get(data)
 
-                    # Optional routing: callback_data == state_id
                     if next_state_id is None and current_def.route_callback_to_state_id:
                         allowlist = current_def.route_callback_allowlist
                         if (allowlist is None or data in allowlist) and data in self.states:
                             next_state_id = data
-                    
-                    # If still None, check if we should stay in same state or use default
+
                     if next_state_id is None:
-                        # If button was handled but no state returned, stay in current state
                         all_button_callbacks = []
                         for row in (button_callbacks or []):
                             for btn in row:
@@ -1543,9 +1577,7 @@ class MessageFlow:
                                 if cb is not None:
                                     all_button_callbacks.append(cb)
                         if data in all_button_callbacks:
-                            # Re-render same state
                             continue
-                        # Otherwise use default_next_state
                         next_state_id = current_def.default_next_state
 
             next_state_id = self._normalize_next_state_id(next_state_id)
@@ -1570,10 +1602,9 @@ class MessageFlow:
                         user_id, text, flow_state.current_message, remove_buttons=True
                     )
                 return True
-            
+
             # Validate next state exists
             if next_state_id is None or next_state_id not in self.states:
-                # Invalid state, treat as exit
                 self.logger.warning(
                     f"Invalid next_state_id, exiting flow (current={flow_state.current_state_id}, next={next_state_id})",
                     extra_tag="FLOW",
@@ -1584,15 +1615,13 @@ class MessageFlow:
                 f"flow_transition: {flow_state.current_state_id} -> {next_state_id}",
                 extra_tag="FLOW",
             )
-            
-            # Call on_exit hook
+
             if current_def.on_exit:
                 await current_def.on_exit(flow_state, api, user_id)
-            
-            # Update flow state
+
             flow_state.previous_state_id = flow_state.current_state_id
             flow_state.state_history.append(flow_state.current_state_id)
             flow_state.current_state_id = next_state_id
-            
-    
+
+
 

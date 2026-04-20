@@ -27,7 +27,7 @@ from .conversation_flows.quick_order_flow import create_quick_order_flow, format
 from .conversation_flows.snapshots_flow import create_snapshots_flow
 from .conversation_flows.users_flow import create_users_flow
 from .conversation_flows.feedback_flow import create_feedback_flow
-from .conversation_flows.session_flow import create_session_flow, KEY_SESSION_OBJ_ID
+from .conversation_flows.session_flow import create_session_flow, KEY_SESSION_OBJ_ID, KEY_IS_NEW_SESSION
 from .message_flow import PaginationConfig, build_telethon_pagination_nav_keyboard, paginate_items_0_indexed
 from .message_flow_ids import CommonCallbacks
 from .message_flow_helpers import (
@@ -1180,13 +1180,8 @@ class ConversationManager:
             #         "Other users can join by typing `/order`",
             #         True, True
             #     )
-            if not is_new_session:
-                await self.api.message_manager.send_text(
-                    user_id,
-                    "👥 **Joined existing coffee session!**\n"
-                    f"Session has {len(session.participants)} participants",
-                    True, True
-                )
+            # Join-status message is sent by SessionFlow and tracked as an auxiliary
+            # message so it gets deleted automatically when the flow exits.
             
         except NoActiveCoffeeCardsError:
             await self.api.message_manager.send_text(
@@ -1215,6 +1210,7 @@ class ConversationManager:
                 start_state="session_main",
                 initial_data={
                     KEY_SESSION_OBJ_ID: session.id,
+                    KEY_IS_NEW_SESSION: bool(is_new_session),
                 },
             )
         finally:
