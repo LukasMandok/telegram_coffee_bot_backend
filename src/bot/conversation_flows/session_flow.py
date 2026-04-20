@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 from ..message_flow import MessageAction, MessageFlow
 from ..message_flow_helpers import make_state
+from ..message_flow_ids import CommonCallbacks
 from ...common.log import Logger
 from ...exceptions.coffee_exceptions import CoffeeSessionError
 
@@ -226,12 +227,12 @@ async def _on_button_press(data: str, flow_state, api: Any, user_id: int) -> Opt
         await api.group_keyboard_manager.handle_show_archived(session, int(user_id))
         return None
 
-    if data in ("group_next", "group_prev"):
-        direction = "next" if data == "group_next" else "prev"
+    if data in (CommonCallbacks.PAGE_NEXT, CommonCallbacks.PAGE_PREV):
+        direction = "next" if data == CommonCallbacks.PAGE_NEXT else "prev"
         await api.group_keyboard_manager.handle_pagination(session, int(user_id), direction)
         return None
 
-    # group_info or unknown callbacks -> no-op
+    # PAGE_INFO, group_info (member name), or unknown callbacks -> no-op
     return None
 
 

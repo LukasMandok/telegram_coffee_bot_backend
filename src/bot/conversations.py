@@ -29,6 +29,8 @@ from .conversation_flows.snapshots_flow import create_snapshots_flow
 from .conversation_flows.users_flow import create_users_flow
 from .conversation_flows.feedback_flow import create_feedback_flow
 from .conversation_flows.session_flow import create_session_flow, KEY_SESSION_OBJ_ID
+from .message_flow import PaginationConfig, build_telethon_pagination_nav_keyboard, paginate_items_0_indexed
+from .message_flow_ids import CommonCallbacks
 from .message_flow_helpers import CommonFlowKeys, IntegerParser, MoneyParser
 from .command_catalog import COMMAND_BY_CONTEXT
 
@@ -2380,16 +2382,11 @@ class ConversationManager:
 
         while True:
             known_loggers = get_known_loggers()
-            module_count = len(known_loggers)
-            total_pages = max(1, (module_count + per_page - 1) // per_page)
-            if page < 0:
-                page = 0
-            if page >= total_pages:
-                page = total_pages - 1
-
-            start = page * per_page
-            end = min(start + per_page, module_count)
-            page_modules = known_loggers[start:end]
+            page_modules, page, total_pages, start, end, module_count = paginate_items_0_indexed(
+                known_loggers,
+                page=page,
+                per_page=per_page,
+            )
 
             current_state = LOG_STATE_SEQUENCE[current_state_index]
             current_state_icon = LOG_STATE_ICON.get(current_state, "")
@@ -2443,16 +2440,16 @@ class ConversationManager:
                 ]
             )
 
-            nav_row: list[Any] = []
-            if total_pages > 1:
-                nav_row = [
-                    Button.inline("◀ Prev", b"page_prev"),
-                    Button.inline(f"{page + 1}/{total_pages}", b"noop"),
-                    Button.inline("Next ▶", b"page_next"),
-                ]
-            else:
-                nav_row = [Button.inline("1/1", b"noop")]
-            keyboard.append(nav_row)
+            keyboard.extend(
+                build_telethon_pagination_nav_keyboard(
+                    current_page=page + 1,
+                    total_pages=total_pages,
+                    config=PaginationConfig(),
+                    prev_callback=CommonCallbacks.PAGE_PREV,
+                    info_callback=CommonCallbacks.PAGE_INFO,
+                    next_callback=CommonCallbacks.PAGE_NEXT,
+                )
+            )
 
             keyboard.append(
                 [
@@ -2470,7 +2467,7 @@ class ConversationManager:
                     await event.answer()
                 return True
 
-            if data == "noop":
+            if data in ("noop", CommonCallbacks.PAGE_INFO):
                 if event:
                     await event.answer()
                 continue
@@ -2489,13 +2486,13 @@ class ConversationManager:
                 current_state_index = (current_state_index - 1) % len(LOG_STATE_SEQUENCE)
                 continue
 
-            if data == "page_prev":
+            if data == CommonCallbacks.PAGE_PREV:
                 if event:
                     await event.answer()
                 page -= 1
                 continue
 
-            if data == "page_next":
+            if data == CommonCallbacks.PAGE_NEXT:
                 if event:
                     await event.answer()
                 page += 1

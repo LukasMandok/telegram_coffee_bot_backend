@@ -8,7 +8,7 @@ This module provides a declarative way to define message flows with:
 - Chainable message states with edit/send logic
 """
 
-from typing import Any, Optional, List, Dict, Callable, Awaitable, Union, TYPE_CHECKING
+from typing import Any, Optional, List, Dict, Callable, Awaitable, Union, TYPE_CHECKING, Sequence, TypeVar
 import asyncio
 from telethon import Button, events
 from pydantic import BaseModel, Field
@@ -135,6 +135,117 @@ class PaginationConfig:
     page_info_format: str = "Page {current}/{total}"  # Format string for page info
 
 
+T = TypeVar("T")
+
+
+def paginate_items_0_indexed(
+    items: Sequence[T],
+    *,
+    page: int,
+    per_page: int,
+) -> tuple[List[T], int, int, int, int, int]:
+    """Paginate a sequence with a 0-indexed page index.
+
+    Returns:
+        (page_items, page, total_pages, start, end, total_items)
+    """
+    if per_page <= 0:
+        raise ValueError("per_page must be > 0")
+
+    total_items = len(items)
+    total_pages = max(1, (total_items + per_page - 1) // per_page)
+
+    if page < 0:
+        page = 0
+    if page >= total_pages:
+        page = total_pages - 1
+
+    start = page * per_page
+    end = min(start + per_page, total_items)
+
+    return list(items[start:end]), page, total_pages, start, end, total_items
+
+
+def build_pagination_nav_row(
+    *,
+    current_page: int,
+    total_pages: int,
+    config: PaginationConfig,
+    prev_callback: str,
+    info_callback: str,
+    next_callback: str,
+    prev_handler: Optional[Callable[..., Awaitable[Optional[str]]]] = None,
+    info_handler: Optional[Callable[..., Awaitable[Optional[str]]]] = None,
+    next_handler: Optional[Callable[..., Awaitable[Optional[str]]]] = None,
+) -> List[ButtonCallback]:
+    """Build a single pagination navigation row.
+
+    This intentionally mirrors MessageFlow's default pagination UX.
+
+    Args:
+        current_page: 1-indexed current page.
+        total_pages: Total number of pages (>= 1).
+        config: PaginationConfig controlling texts and formatting.
+        prev_callback/info_callback/next_callback: Callback IDs.
+        prev_handler/info_handler/next_handler: Optional callback handlers.
+
+    Returns:
+        A single row (List[ButtonCallback]) or [] if not needed.
+    """
+    if total_pages <= 1:
+        return []
+
+    row: List[ButtonCallback] = []
+
+    if current_page > 1:
+        row.append(
+            ButtonCallback(
+                config.prev_button_text,
+                prev_callback,
+                callback_handler=prev_handler,
+            )
+        )
+
+    if config.show_page_numbers:
+        info_text = config.page_info_format.format(current=current_page, total=total_pages)
+        row.append(ButtonCallback(info_text, info_callback, callback_handler=info_handler))
+
+    if current_page < total_pages:
+        row.append(
+            ButtonCallback(
+                config.next_button_text,
+                next_callback,
+                callback_handler=next_handler,
+            )
+        )
+
+    return row
+
+
+def build_telethon_pagination_nav_keyboard(
+    *,
+    current_page: int,
+    total_pages: int,
+    config: PaginationConfig,
+    prev_callback: str,
+    info_callback: str,
+    next_callback: str,
+) -> List[List[Any]]:
+    """Build a Telethon inline keyboard row for pagination navigation."""
+    row = build_pagination_nav_row(
+        current_page=current_page,
+        total_pages=total_pages,
+        config=config,
+        prev_callback=prev_callback,
+        info_callback=info_callback,
+        next_callback=next_callback,
+    )
+    if not row:
+        return []
+
+    return [[Button.inline(btn.text, btn.callback_data) for btn in row]]
+
+
 class MessageDefinition(BaseModel):
     """
     Defines a message state in a conversation flow.
@@ -222,6 +333,16 @@ class MessageDefinition(BaseModel):
     pagination_item_button_builder: Optional[Callable[[Any, int], ButtonCallback]] = Field(
         default=None,
         description="Function that creates a button for an item (item, index) -> ButtonCallback"
+    )
+
+    pagination_extra_buttons_builder: Optional[
+        Callable[["MessageFlowState", Any, int], Awaitable[List[List[ButtonCallback]]]]
+    ] = Field(
+        default=None,
+        description=(
+            "Optional dynamic buttons to prepend above paginated items/navigation. "
+            "Useful for filter toggles that must reflect current state."
+        ),
     )
     
     # Behavior
@@ -648,7 +769,7 @@ class MessageFlow:
             # Fetch all items
             all_items = await current_def.pagination_items_builder(flow_state, api, user_id)  # type: ignore
             total_items = len(all_items)
-            total_pages = (total_items + config.page_size - 1) // config.page_size
+            total_pages = max(1, (total_items + config.page_size - 1) // config.page_size)
             
             flow_state.pagination_state[state_id] = {
                 "current_page": 1,
@@ -657,9 +778,15 @@ class MessageFlow:
             }
         
         pag_state = flow_state.pagination_state[state_id]
-        current_page = pag_state["current_page"]
-        total_pages = pag_state["total_pages"]
+        current_page = int(pag_state.get("current_page", 1))
+        total_pages = int(pag_state.get("total_pages", 1))
         all_items = pag_state["items"]
+
+        # Defensive clamps (state may be mutated by custom handlers).
+        total_pages = max(1, int(total_pages))
+        current_page = max(1, min(int(current_page), total_pages))
+        pag_state["current_page"] = current_page
+        pag_state["total_pages"] = total_pages
         
         # Calculate page slice
         start_idx = (current_page - 1) * config.page_size
@@ -684,17 +811,17 @@ class MessageFlow:
             buttons.append(current_row)
         
         # Add navigation buttons
-        nav_buttons = []
-        if current_page > 1:
-            nav_buttons.append(ButtonCallback(config.prev_button_text, CommonCallbacks.PAGE_PREV))
-        if config.show_page_numbers and total_pages > 1:
-            page_info = config.page_info_format.format(current=current_page, total=total_pages)
-            nav_buttons.append(ButtonCallback(page_info, CommonCallbacks.PAGE_INFO))
-        if current_page < total_pages:
-            nav_buttons.append(ButtonCallback(config.next_button_text, CommonCallbacks.PAGE_NEXT))
-        
-        if nav_buttons:
-            buttons.append(nav_buttons)
+        nav_row = build_pagination_nav_row(
+            current_page=current_page,
+            total_pages=total_pages,
+            config=config,
+            prev_callback=CommonCallbacks.PAGE_PREV,
+            info_callback=CommonCallbacks.PAGE_INFO,
+            next_callback=CommonCallbacks.PAGE_NEXT,
+        )
+
+        if nav_row:
+            buttons.append(nav_row)
         
         # Add close/back button
         buttons.append([ButtonCallback(config.close_button_text, CommonCallbacks.CLOSE)])
@@ -710,15 +837,26 @@ class MessageFlow:
         
         return buttons, items_text
 
-    @staticmethod
-    def _prepend_static_buttons(
+    async def _prepend_pagination_extras(
+        self,
+        flow_state: "MessageFlowState",
+        current_def: MessageDefinition,
+        api: Any,
+        user_id: int,
         base_buttons: List[List[ButtonCallback]],
-        extra_buttons: Optional[List[List[ButtonCallback]]],
     ) -> List[List[ButtonCallback]]:
-        """Prepend static `MessageDefinition.buttons` above pagination rows."""
-        if not extra_buttons:
-            return base_buttons
-        return list(extra_buttons) + list(base_buttons)
+        """Prepend optional per-state extras above pagination rows."""
+        extras: List[List[ButtonCallback]] = []
+
+        if current_def.pagination_extra_buttons_builder:
+            extra = await current_def.pagination_extra_buttons_builder(flow_state, api, user_id)
+            if extra:
+                extras.extend(extra)
+
+        if current_def.buttons:
+            extras.extend(list(current_def.buttons))
+
+        return extras + list(base_buttons) if extras else base_buttons
     
     async def _handle_pagination_button(
         self,
@@ -773,25 +911,29 @@ class MessageFlow:
         Returns:
             Next state_id, or None if cancelled/invalid input, or "__exit__" to exit flow
         """
-        # Build full prompt text
+        # Build base text. For TEXT_INPUT states we want paginated content (lists)
+        # above the prompt, so we append `items_text` before `input_prompt`.
         full_text = text
-        if current_def.input_prompt:
-            full_text += f"\n\n{current_def.input_prompt}"
-        
+
         # Build keyboard (pagination/dynamic/static) so MIXED states can still display lists.
         cancel_keyboard = None
         button_callbacks: Optional[List[List[ButtonCallback]]] = None
         if current_def.pagination_config:
             button_callbacks, items_text = await self._build_pagination_keyboard(flow_state, current_def, api, user_id)
-            button_callbacks = self._prepend_static_buttons(button_callbacks, current_def.buttons)
+            button_callbacks = await self._prepend_pagination_extras(flow_state, current_def, api, user_id, button_callbacks)
             if items_text:
                 full_text = f"{full_text}\n\n{items_text}"
+            if current_def.input_prompt:
+                full_text += f"\n\n{current_def.input_prompt}"
         elif current_def.keyboard_builder:
             # Dynamic keyboard
             button_callbacks = await current_def.keyboard_builder(flow_state, api, user_id)
         else:
             # Static keyboard (None means remove buttons)
             button_callbacks = current_def.buttons
+
+        if not current_def.pagination_config and current_def.input_prompt:
+            full_text += f"\n\n{current_def.input_prompt}"
 
         if button_callbacks is not None:
             # Convert ButtonCallback objects to Telethon buttons, or accept a prebuilt Telethon keyboard.
@@ -1084,9 +1226,10 @@ class MessageFlow:
                 button_callbacks, items_text = await self._build_pagination_keyboard(
                     flow_state, current_def, api, user_id
                 )
-                button_callbacks = self._prepend_static_buttons(button_callbacks, current_def.buttons)
-                # Append items to text
-                text = f"{text}\n\n{items_text}"
+                button_callbacks = await self._prepend_pagination_extras(flow_state, current_def, api, user_id, button_callbacks)
+                # Append items to text (only when provided)
+                if items_text:
+                    text = f"{text}\n\n{items_text}"
             elif current_def.keyboard_builder:
                 button_callbacks = await current_def.keyboard_builder(flow_state, api, user_id)
             else:

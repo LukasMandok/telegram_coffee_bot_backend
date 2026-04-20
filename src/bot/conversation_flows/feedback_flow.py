@@ -4,7 +4,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, List, Optional
 
-from ..message_flow import ButtonCallback, MessageDefinition, MessageFlow, StateType, TextLengthValidator
+from ..message_flow import (
+    ButtonCallback,
+    MessageDefinition,
+    MessageFlow,
+    PaginationConfig,
+    StateType,
+    TextLengthValidator,
+    build_pagination_nav_row,
+)
 from ..message_flow_helpers import CommonCallbacks, NavigationButtons, format_date
 from ...models.beanie_models import TelegramUser
 from ...models.feedback_models import Feedback, FeedbackComment, FeedbackStatus, FeedbackType
@@ -62,11 +70,6 @@ KEY_CREATE_PRIORITY = "feedback_create_priority"
 KEY_SELECTED_FEEDBACK_ID = "feedback_selected_id"
 KEY_RETURN_STATE = "feedback_return_state"
 
-KEY_LIST_PAGE_MY = "feedback_list_page_my"
-KEY_LIST_PAGE_ADMIN_BUGS = "feedback_list_page_admin_bugs"
-KEY_LIST_PAGE_ADMIN_FEATURES = "feedback_list_page_admin_features"
-KEY_LIST_PAGE_ADMIN_GENERAL = "feedback_list_page_admin_general"
-
 KEY_DETAILS_COMMENTS_PAGE = "feedback_details_comments_page"
 KEY_ADD_COMMENT_COMMENTS_PAGE = "feedback_add_comment_comments_page"
 
@@ -75,10 +78,6 @@ KEY_FILTER_IN_PROGRESS = "feedback_filter_in_progress"
 KEY_FILTER_COMPLETED = "feedback_filter_completed"
 KEY_FILTER_REJECTED = "feedback_filter_rejected"
 KEY_FILTER_ARCHIVED = "feedback_filter_archived"
-
-CB_LIST_PAGE_PREV = "list_page_prev"
-CB_LIST_PAGE_NEXT = "list_page_next"
-CB_LIST_PAGE_INFO = "list_page_info"
 
 CB_FILTER_OPEN = "filter_open"
 CB_FILTER_IN_PROGRESS = "filter_in_progress"
@@ -89,10 +88,6 @@ CB_FILTER_ARCHIVED = "filter_archived"
 CB_DELETE_YES = "delete_yes"
 
 CB_ABORT_CREATE = "abort_create"
-
-CB_COMMENTS_NEWER = "comments_newer"
-CB_COMMENTS_OLDER = "comments_older"
-CB_COMMENTS_INFO = "comments_info"
 
 
 @dataclass(frozen=True)
@@ -248,27 +243,21 @@ def _build_comments_nav_row(
     *,
     current_page: int,
     total_pages: int,
-    make_handler: Callable[[int], Any],
 ) -> List[ButtonCallback]:
-    if total_pages <= 1:
-        return []
-
-    row: List[ButtonCallback] = []
-    if current_page > 1:
-        row.append(ButtonCallback("◀️ Newer", CB_COMMENTS_NEWER, callback_handler=make_handler(-1)))
-
-    row.append(
-        ButtonCallback(
-            f"{current_page}/{total_pages}",
-            CB_COMMENTS_INFO,
-            callback_handler=make_handler(0),
-        )
+    config = PaginationConfig(
+        prev_button_text="◀️ Newer",
+        next_button_text="Older ▶️",
+        page_info_format="{current}/{total}",
     )
 
-    if current_page < total_pages:
-        row.append(ButtonCallback("Older ▶️", CB_COMMENTS_OLDER, callback_handler=make_handler(1)))
-
-    return row
+    return build_pagination_nav_row(
+        current_page=current_page,
+        total_pages=total_pages,
+        config=config,
+        prev_callback=CommonCallbacks.PAGE_PREV,
+        info_callback=CommonCallbacks.PAGE_INFO,
+        next_callback=CommonCallbacks.PAGE_NEXT,
+    )
 
 
 def _get_enabled_status_values(flow_state) -> List[str]:
@@ -466,25 +455,25 @@ async def abort_create(flow_state, api: Any, user_id: int) -> Optional[str]:
 
 async def open_my_list(flow_state, api: Any, user_id: int) -> Optional[str]:
     flow_state.set(KEY_RETURN_STATE, STATE_MAIN)
-    flow_state.set(KEY_LIST_PAGE_MY, 1)
+    _reset_pagination(flow_state, STATE_LIST_MY)
     return STATE_LIST_MY
 
 
 async def open_admin_bugs_list(flow_state, api: Any, user_id: int) -> Optional[str]:
     flow_state.set(KEY_RETURN_STATE, STATE_MAIN)
-    flow_state.set(KEY_LIST_PAGE_ADMIN_BUGS, 1)
+    _reset_pagination(flow_state, STATE_LIST_ADMIN_BUGS)
     return STATE_LIST_ADMIN_BUGS
 
 
 async def open_admin_features_list(flow_state, api: Any, user_id: int) -> Optional[str]:
     flow_state.set(KEY_RETURN_STATE, STATE_MAIN)
-    flow_state.set(KEY_LIST_PAGE_ADMIN_FEATURES, 1)
+    _reset_pagination(flow_state, STATE_LIST_ADMIN_FEATURES)
     return STATE_LIST_ADMIN_FEATURES
 
 
 async def open_admin_general_list(flow_state, api: Any, user_id: int) -> Optional[str]:
     flow_state.set(KEY_RETURN_STATE, STATE_MAIN)
-    flow_state.set(KEY_LIST_PAGE_ADMIN_GENERAL, 1)
+    _reset_pagination(flow_state, STATE_LIST_ADMIN_GENERAL)
     return STATE_LIST_ADMIN_GENERAL
 
 
@@ -738,208 +727,97 @@ def _get_int(flow_state, key: str, default: int) -> int:
     return max(1, value)
 
 
-async def _toggle_filter(flow_state, *, key: str, page_key: str, state_id: str) -> Optional[str]:
+def _reset_pagination(flow_state, state_id: str) -> None:
+    # MessageFlow caches paginated items per-state in flow_state.pagination_state.
+    try:
+        flow_state.pagination_state.pop(state_id, None)
+    except Exception:
+        pass
+
+
+async def _toggle_filter(flow_state, *, key: str, state_id: str) -> Optional[str]:
     flow_state.set(key, not _get_bool(flow_state, key, False))
-    flow_state.set(page_key, 1)
+    _reset_pagination(flow_state, state_id)
     return state_id
 
 
-async def _change_page(flow_state, *, page_key: str, delta: int, max_page: int, state_id: str) -> Optional[str]:
-    current = _get_int(flow_state, page_key, 1)
-    next_page = max(1, min(max_page, current + int(delta)))
-    flow_state.set(page_key, next_page)
-    return state_id
+def _make_toggle_filter_handler(*, state_id: str, key: str) -> Any:
+    async def _handler(inner_flow_state, inner_api: Any, inner_user_id: int) -> Optional[str]:
+        return await _toggle_filter(inner_flow_state, key=key, state_id=state_id)
+
+    return _handler
 
 
-async def _build_feedback_list_keyboard(
-    *,
-    flow_state,
-    state_id: str,
-    page_key: str,
-    return_state: str,
-    items: List[FeedbackListItem],
-    show_type_icon: bool,
-    page_size: int = 10,
-) -> List[List[ButtonCallback]]:
-    active_open = _get_bool(flow_state, KEY_FILTER_OPEN, False)
-    active_in_progress = _get_bool(flow_state, KEY_FILTER_IN_PROGRESS, False)
-    active_completed = _get_bool(flow_state, KEY_FILTER_COMPLETED, False)
-    active_rejected = _get_bool(flow_state, KEY_FILTER_REJECTED, False)
-    active_archived = _get_bool(flow_state, KEY_FILTER_ARCHIVED, False)
+def _make_filters_builder(*, state_id: str) -> Any:
+    async def _builder(flow_state, api: Any, user_id: int) -> List[List[ButtonCallback]]:
+        active_open = _get_bool(flow_state, KEY_FILTER_OPEN, False)
+        active_in_progress = _get_bool(flow_state, KEY_FILTER_IN_PROGRESS, False)
+        active_completed = _get_bool(flow_state, KEY_FILTER_COMPLETED, False)
+        active_rejected = _get_bool(flow_state, KEY_FILTER_REJECTED, False)
+        active_archived = _get_bool(flow_state, KEY_FILTER_ARCHIVED, False)
 
-    total_items = len(items)
-    total_pages = max(1, (total_items + page_size - 1) // page_size) if total_items else 1
-    current_page = min(_get_int(flow_state, page_key, 1), total_pages)
-    flow_state.set(page_key, current_page)
+        def _label(icon: str, active: bool) -> str:
+            return f"[{icon}]" if active else icon
 
-    start = (current_page - 1) * page_size
-    end = min(start + page_size, total_items)
-    page_items = items[start:end]
-
-    rows: List[List[ButtonCallback]] = []
-
-    # Filters
-    def _label(icon: str, active: bool) -> str:
-        return f"[{icon}]" if active else icon
-
-    rows.append(
-        [
-            ButtonCallback(
-                _label(_status_icon(FeedbackStatus.OPEN), active_open),
-                CB_FILTER_OPEN,
-                callback_handler=lambda fs, api, uid: _toggle_filter(
-                    fs,
-                    key=KEY_FILTER_OPEN,
-                    page_key=page_key,
-                    state_id=state_id,
-                ),
-            ),
-            ButtonCallback(
-                _label(_status_icon(FeedbackStatus.IN_PROGRESS), active_in_progress),
-                CB_FILTER_IN_PROGRESS,
-                callback_handler=lambda fs, api, uid: _toggle_filter(
-                    fs,
-                    key=KEY_FILTER_IN_PROGRESS,
-                    page_key=page_key,
-                    state_id=state_id,
-                ),
-            ),
-            ButtonCallback(
-                _label(_status_icon(FeedbackStatus.COMPLETED), active_completed),
-                CB_FILTER_COMPLETED,
-                callback_handler=lambda fs, api, uid: _toggle_filter(
-                    fs,
-                    key=KEY_FILTER_COMPLETED,
-                    page_key=page_key,
-                    state_id=state_id,
-                ),
-            ),
-            ButtonCallback(
-                _label(_status_icon(FeedbackStatus.REJECTED), active_rejected),
-                CB_FILTER_REJECTED,
-                callback_handler=lambda fs, api, uid: _toggle_filter(
-                    fs,
-                    key=KEY_FILTER_REJECTED,
-                    page_key=page_key,
-                    state_id=state_id,
-                ),
-            ),
-            ButtonCallback(
-                _label(_status_icon(FeedbackStatus.POSTPONED), active_archived),
-                CB_FILTER_ARCHIVED,
-                callback_handler=lambda fs, api, uid: _toggle_filter(
-                    fs,
-                    key=KEY_FILTER_ARCHIVED,
-                    page_key=page_key,
-                    state_id=state_id,
-                ),
-            ),
-        ]
-    )
-
-    # Items (single column)
-    for item in page_items:
-        rows.append(
+        return [
             [
-                build_feedback_list_button(
-                    item,
-                    return_state=return_state,
-                    show_type_icon=show_type_icon,
-                )
+                ButtonCallback(
+                    _label(_status_icon(FeedbackStatus.OPEN), active_open),
+                    CB_FILTER_OPEN,
+                    callback_handler=_make_toggle_filter_handler(state_id=state_id, key=KEY_FILTER_OPEN),
+                ),
+                ButtonCallback(
+                    _label(_status_icon(FeedbackStatus.IN_PROGRESS), active_in_progress),
+                    CB_FILTER_IN_PROGRESS,
+                    callback_handler=_make_toggle_filter_handler(state_id=state_id, key=KEY_FILTER_IN_PROGRESS),
+                ),
+                ButtonCallback(
+                    _label(_status_icon(FeedbackStatus.COMPLETED), active_completed),
+                    CB_FILTER_COMPLETED,
+                    callback_handler=_make_toggle_filter_handler(state_id=state_id, key=KEY_FILTER_COMPLETED),
+                ),
+                ButtonCallback(
+                    _label(_status_icon(FeedbackStatus.REJECTED), active_rejected),
+                    CB_FILTER_REJECTED,
+                    callback_handler=_make_toggle_filter_handler(state_id=state_id, key=KEY_FILTER_REJECTED),
+                ),
+                ButtonCallback(
+                    _label(_status_icon(FeedbackStatus.POSTPONED), active_archived),
+                    CB_FILTER_ARCHIVED,
+                    callback_handler=_make_toggle_filter_handler(state_id=state_id, key=KEY_FILTER_ARCHIVED),
+                ),
             ]
-        )
+        ]
 
-    # Pagination nav
-    nav_row: List[ButtonCallback] = []
-    if current_page > 1:
-        nav_row.append(
-            ButtonCallback(
-                "◀️ Prev",
-                CB_LIST_PAGE_PREV,
-                callback_handler=lambda fs, api, uid: _change_page(
-                    fs,
-                    page_key=page_key,
-                    delta=-1,
-                    max_page=total_pages,
-                    state_id=state_id,
-                ),
-            )
-        )
-
-    if total_pages > 1:
-        nav_row.append(ButtonCallback(f"Page {current_page}/{total_pages}", CB_LIST_PAGE_INFO))
-
-    if current_page < total_pages:
-        nav_row.append(
-            ButtonCallback(
-                "Next ▶️",
-                CB_LIST_PAGE_NEXT,
-                callback_handler=lambda fs, api, uid: _change_page(
-                    fs,
-                    page_key=page_key,
-                    delta=1,
-                    max_page=total_pages,
-                    state_id=state_id,
-                ),
-            )
-        )
-
-    if nav_row:
-        rows.append(nav_row)
-
-    async def _go_back_to_main(inner_flow_state, inner_api: Any, inner_user_id: int) -> Optional[str]:
-        return STATE_MAIN
-
-    rows.append([ButtonCallback("◁ Back", CommonCallbacks.BACK, callback_handler=_go_back_to_main)])
-    return rows
+    return _builder
 
 
-async def build_list_my_keyboard(flow_state, api: Any, user_id: int) -> List[List[ButtonCallback]]:
-    items = await list_my_feedback(flow_state, api, user_id)
-    return await _build_feedback_list_keyboard(
-        flow_state=flow_state,
-        state_id=STATE_LIST_MY,
-        page_key=KEY_LIST_PAGE_MY,
-        return_state=STATE_LIST_MY,
-        items=items,
-        show_type_icon=True,
-    )
+def _make_feedback_list_pagination_config() -> PaginationConfig:
+    # Use the default MessageFlow pagination UX, but with a "Back" footer.
+    return PaginationConfig(page_size=10, items_per_row=1, close_button_text="◁ Back")
 
 
-async def build_list_admin_bugs_keyboard(flow_state, api: Any, user_id: int) -> List[List[ButtonCallback]]:
-    items = await list_all_feedback(flow_state, api, user_id, only_type=FeedbackType.BUG)
-    return await _build_feedback_list_keyboard(
-        flow_state=flow_state,
-        state_id=STATE_LIST_ADMIN_BUGS,
-        page_key=KEY_LIST_PAGE_ADMIN_BUGS,
-        return_state=STATE_LIST_ADMIN_BUGS,
-        items=items,
-        show_type_icon=False,
-    )
+def _make_list_item_button_builder(*, return_state: str, show_type_icon: bool) -> Any:
+    def _builder(item: FeedbackListItem, _idx: int) -> ButtonCallback:
+        return build_feedback_list_button(item, return_state=return_state, show_type_icon=show_type_icon)
+
+    return _builder
 
 
-async def build_list_admin_features_keyboard(flow_state, api: Any, user_id: int) -> List[List[ButtonCallback]]:
-    items = await list_all_feedback(flow_state, api, user_id, only_type=FeedbackType.FEATURE_REQUEST)
-    return await _build_feedback_list_keyboard(
-        flow_state=flow_state,
-        state_id=STATE_LIST_ADMIN_FEATURES,
-        page_key=KEY_LIST_PAGE_ADMIN_FEATURES,
-        return_state=STATE_LIST_ADMIN_FEATURES,
-        items=items,
-        show_type_icon=False,
-    )
+async def _build_list_my_items(flow_state, api: Any, user_id: int) -> List[FeedbackListItem]:
+    return await list_my_feedback(flow_state, api, user_id)
 
 
-async def build_list_admin_general_keyboard(flow_state, api: Any, user_id: int) -> List[List[ButtonCallback]]:
-    items = await list_all_feedback(flow_state, api, user_id, only_type=FeedbackType.GENERAL)
-    return await _build_feedback_list_keyboard(
-        flow_state=flow_state,
-        state_id=STATE_LIST_ADMIN_GENERAL,
-        page_key=KEY_LIST_PAGE_ADMIN_GENERAL,
-        return_state=STATE_LIST_ADMIN_GENERAL,
-        items=items,
-        show_type_icon=False,
-    )
+async def _build_list_admin_bugs_items(flow_state, api: Any, user_id: int) -> List[FeedbackListItem]:
+    return await list_all_feedback(flow_state, api, user_id, only_type=FeedbackType.BUG)
+
+
+async def _build_list_admin_features_items(flow_state, api: Any, user_id: int) -> List[FeedbackListItem]:
+    return await list_all_feedback(flow_state, api, user_id, only_type=FeedbackType.FEATURE_REQUEST)
+
+
+async def _build_list_admin_general_items(flow_state, api: Any, user_id: int) -> List[FeedbackListItem]:
+    return await list_all_feedback(flow_state, api, user_id, only_type=FeedbackType.GENERAL)
 
 
 async def build_details_text(flow_state, api: Any, user_id: int) -> str:
@@ -1044,14 +922,6 @@ async def build_details_keyboard(flow_state, api: Any, user_id: int) -> List[Lis
     is_admin, viewer_side, submitter = await _get_viewer_context(api, viewer_id, feedback)
     viewer_is_submitter = submitter is not None and submitter.user_id == viewer_id
 
-    def _change_comments_page(key: str, delta: int) -> Any:
-        async def _handler(inner_flow_state, inner_api: Any, inner_user_id: int) -> Optional[str]:
-            current = _get_int(inner_flow_state, key, 1)
-            inner_flow_state.set(key, max(1, current + int(delta)))
-            return STATE_DETAILS
-
-        return _handler
-
     comments_page = _get_int(flow_state, KEY_DETAILS_COMMENTS_PAGE, 1)
     _, total_comment_pages, current_comment_page = _render_comments_page(
         feedback,
@@ -1064,7 +934,6 @@ async def build_details_keyboard(flow_state, api: Any, user_id: int) -> List[Lis
     comment_nav_row = _build_comments_nav_row(
         current_page=current_comment_page,
         total_pages=total_comment_pages,
-        make_handler=lambda delta: _change_comments_page(KEY_DETAILS_COMMENTS_PAGE, int(delta)),
     )
 
     if is_admin:
@@ -1098,6 +967,14 @@ async def handle_details_button(data: str, flow_state, api: Any, user_id: int) -
     if data == CommonCallbacks.BACK:
         return str(flow_state.get(KEY_RETURN_STATE, STATE_MAIN))
 
+    if data in (CommonCallbacks.PAGE_PREV, CommonCallbacks.PAGE_NEXT, CommonCallbacks.PAGE_INFO):
+        current_page = _get_int(flow_state, KEY_DETAILS_COMMENTS_PAGE, 1)
+        if data == CommonCallbacks.PAGE_NEXT:
+            flow_state.set(KEY_DETAILS_COMMENTS_PAGE, current_page + 1)
+        elif data == CommonCallbacks.PAGE_PREV:
+            flow_state.set(KEY_DETAILS_COMMENTS_PAGE, max(1, current_page - 1))
+        return STATE_DETAILS
+
     if data == CB_DETAILS_EDIT:
         return STATE_USER_EDIT_MENU
 
@@ -1113,6 +990,18 @@ async def handle_details_button(data: str, flow_state, api: Any, user_id: int) -
 
     if data == CB_ADMIN_PRIORITY:
         return STATE_ADMIN_CHANGE_PRIORITY
+
+    return None
+
+
+async def handle_add_comment_button(data: str, flow_state, api: Any, user_id: int) -> Optional[str]:
+    if data in (CommonCallbacks.PAGE_PREV, CommonCallbacks.PAGE_NEXT, CommonCallbacks.PAGE_INFO):
+        current_page = _get_int(flow_state, KEY_ADD_COMMENT_COMMENTS_PAGE, 1)
+        if data == CommonCallbacks.PAGE_NEXT:
+            flow_state.set(KEY_ADD_COMMENT_COMMENTS_PAGE, current_page + 1)
+        elif data == CommonCallbacks.PAGE_PREV:
+            flow_state.set(KEY_ADD_COMMENT_COMMENTS_PAGE, max(1, current_page - 1))
+        return STATE_ADD_COMMENT
 
     return None
 
@@ -1149,14 +1038,6 @@ async def build_add_comment_keyboard(flow_state, api: Any, user_id: int) -> List
 
     _, viewer_side, _ = await _get_viewer_context(api, user_id, feedback)
 
-    def _change_comments_page(delta: int) -> Any:
-        async def _handler(inner_flow_state, inner_api: Any, inner_user_id: int) -> Optional[str]:
-            current = _get_int(inner_flow_state, KEY_ADD_COMMENT_COMMENTS_PAGE, 1)
-            inner_flow_state.set(KEY_ADD_COMMENT_COMMENTS_PAGE, max(1, current + int(delta)))
-            return STATE_ADD_COMMENT
-
-        return _handler
-
     comments_page = _get_int(flow_state, KEY_ADD_COMMENT_COMMENTS_PAGE, 1)
     _, total_comment_pages, current_comment_page = _render_comments_page(
         feedback,
@@ -1170,7 +1051,6 @@ async def build_add_comment_keyboard(flow_state, api: Any, user_id: int) -> List
     nav_row = _build_comments_nav_row(
         current_page=current_comment_page,
         total_pages=total_comment_pages,
-        make_handler=lambda delta: _change_comments_page(int(delta)),
     )
     if nav_row:
         rows.append(nav_row)
@@ -1656,9 +1536,16 @@ def create_feedback_flow() -> MessageFlow:
             state_id=STATE_LIST_MY,
             state_type=StateType.BUTTON,
             text_builder=build_list_my_text,
-            keyboard_builder=build_list_my_keyboard,
+            pagination_config=_make_feedback_list_pagination_config(),
+            pagination_reset_on_enter=True,
+            pagination_items_builder=_build_list_my_items,
+            pagination_item_button_builder=_make_list_item_button_builder(
+                return_state=STATE_LIST_MY,
+                show_type_icon=True,
+            ),
+            pagination_extra_buttons_builder=_make_filters_builder(state_id=STATE_LIST_MY),
+            next_state_map={CommonCallbacks.CLOSE: STATE_MAIN},
             defaults={
-                KEY_LIST_PAGE_MY: 1,
                 KEY_FILTER_OPEN: False,
                 KEY_FILTER_IN_PROGRESS: False,
                 KEY_FILTER_COMPLETED: False,
@@ -1674,9 +1561,16 @@ def create_feedback_flow() -> MessageFlow:
             state_id=STATE_LIST_ADMIN_BUGS,
             state_type=StateType.BUTTON,
             text_builder=build_list_admin_bugs_text,
-            keyboard_builder=build_list_admin_bugs_keyboard,
+            pagination_config=_make_feedback_list_pagination_config(),
+            pagination_reset_on_enter=True,
+            pagination_items_builder=_build_list_admin_bugs_items,
+            pagination_item_button_builder=_make_list_item_button_builder(
+                return_state=STATE_LIST_ADMIN_BUGS,
+                show_type_icon=False,
+            ),
+            pagination_extra_buttons_builder=_make_filters_builder(state_id=STATE_LIST_ADMIN_BUGS),
+            next_state_map={CommonCallbacks.CLOSE: STATE_MAIN},
             defaults={
-                KEY_LIST_PAGE_ADMIN_BUGS: 1,
                 KEY_FILTER_OPEN: False,
                 KEY_FILTER_IN_PROGRESS: False,
                 KEY_FILTER_COMPLETED: False,
@@ -1692,9 +1586,16 @@ def create_feedback_flow() -> MessageFlow:
             state_id=STATE_LIST_ADMIN_FEATURES,
             state_type=StateType.BUTTON,
             text_builder=build_list_admin_features_text,
-            keyboard_builder=build_list_admin_features_keyboard,
+            pagination_config=_make_feedback_list_pagination_config(),
+            pagination_reset_on_enter=True,
+            pagination_items_builder=_build_list_admin_features_items,
+            pagination_item_button_builder=_make_list_item_button_builder(
+                return_state=STATE_LIST_ADMIN_FEATURES,
+                show_type_icon=False,
+            ),
+            pagination_extra_buttons_builder=_make_filters_builder(state_id=STATE_LIST_ADMIN_FEATURES),
+            next_state_map={CommonCallbacks.CLOSE: STATE_MAIN},
             defaults={
-                KEY_LIST_PAGE_ADMIN_FEATURES: 1,
                 KEY_FILTER_OPEN: False,
                 KEY_FILTER_IN_PROGRESS: False,
                 KEY_FILTER_COMPLETED: False,
@@ -1710,9 +1611,16 @@ def create_feedback_flow() -> MessageFlow:
             state_id=STATE_LIST_ADMIN_GENERAL,
             state_type=StateType.BUTTON,
             text_builder=build_list_admin_general_text,
-            keyboard_builder=build_list_admin_general_keyboard,
+            pagination_config=_make_feedback_list_pagination_config(),
+            pagination_reset_on_enter=True,
+            pagination_items_builder=_build_list_admin_general_items,
+            pagination_item_button_builder=_make_list_item_button_builder(
+                return_state=STATE_LIST_ADMIN_GENERAL,
+                show_type_icon=False,
+            ),
+            pagination_extra_buttons_builder=_make_filters_builder(state_id=STATE_LIST_ADMIN_GENERAL),
+            next_state_map={CommonCallbacks.CLOSE: STATE_MAIN},
             defaults={
-                KEY_LIST_PAGE_ADMIN_GENERAL: 1,
                 KEY_FILTER_OPEN: False,
                 KEY_FILTER_IN_PROGRESS: False,
                 KEY_FILTER_COMPLETED: False,
@@ -1742,6 +1650,7 @@ def create_feedback_flow() -> MessageFlow:
             state_type=StateType.TEXT_INPUT,
             text_builder=build_add_comment_text,
             keyboard_builder=build_add_comment_keyboard,
+            on_button_press=handle_add_comment_button,
             input_validator=TextLengthValidator(min_length=1, max_length=1500),
             on_input_received=handle_add_comment_input,
             next_state_map={CommonCallbacks.BACK: STATE_DETAILS},

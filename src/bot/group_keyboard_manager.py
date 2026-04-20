@@ -8,9 +8,11 @@ and handles keyboard creation, real-time updates, and pagination.
 from typing import Any, Dict, List, Optional, Protocol, TYPE_CHECKING
 from datetime import datetime
 from ..common.log import Logger
+from ..dependencies.dependencies import get_repo
+from .message_flow import PaginationConfig, build_telethon_pagination_nav_keyboard
+from .message_flow_ids import CommonCallbacks
 from .telethon_models import GroupState
 from telethon import Button
-# from .keyboards import KeyboardManager
 
 if TYPE_CHECKING:
     from ..api.telethon_api import TelethonAPI
@@ -54,6 +56,23 @@ class GroupKeyboardManager:
         self.logger = Logger("GroupKeyboardManager")
         # session_id -> {user_id -> ActiveKeyboard}
         self.active_keyboards: Dict[str, Dict[int, ActiveKeyboard]] = {}
+
+    @staticmethod
+    def _compute_total_pages(group_state: GroupState, *, page_size: int) -> int:
+        members = list(group_state.members.values()) if group_state.members else []
+
+        archived_count = sum(1 for member in members if member.is_archived)
+        non_archived_count = len(members) - archived_count
+
+        has_archived = archived_count > 0
+        show_more_button_needed = has_archived and not group_state.show_archived
+
+        total_items = non_archived_count + (archived_count if group_state.show_archived else 0)
+        member_total_pages = (total_items + page_size - 1) // page_size if total_items > 0 else 1
+        last_page_count = (total_items - page_size * (member_total_pages - 1)) if total_items > 0 else 0
+        show_more_on_last_page = show_more_button_needed and last_page_count < page_size
+
+        return member_total_pages + (1 if (show_more_button_needed and not show_more_on_last_page) else 0)
     
     async def _determine_flags_and_message(self, session: _SessionLike) -> tuple[bool, bool, str]:
         """
@@ -144,7 +163,6 @@ class GroupKeyboardManager:
         page_size = 10  # Default
         sort_by = "alphabetical"  # Default
         if user_id:
-            from ..dependencies.dependencies import get_repo
             repo = get_repo()
             settings = await repo.get_user_settings(user_id)
             if settings:
@@ -202,24 +220,17 @@ class GroupKeyboardManager:
         # Pagination navigation
         # Total pages = member pages + 1 if Show More needs its own page
         total_pages = member_total_pages + (1 if (show_more_button_needed and not show_more_on_last_page) else 0)
-        max_page = max(0, total_pages - 1)
-        
         if total_pages > 1:
-            navigation_buttons = []
-            if current_page > 0:
-                # U+1F8A0 (LEFTWARDS ARROW WITH TAIL FROM BAR) from Supplemental Arrows-C
-                navigation_buttons.append(Button.inline("◁  Prev", "group_prev"))
-
-            navigation_buttons.append(
-                Button.inline(f"{current_page + 1}/{total_pages}", "group_info")
+            keyboard_group.extend(
+                build_telethon_pagination_nav_keyboard(
+                    current_page=current_page + 1,
+                    total_pages=total_pages,
+                    config=PaginationConfig(),
+                    prev_callback=CommonCallbacks.PAGE_PREV,
+                    info_callback=CommonCallbacks.PAGE_INFO,
+                    next_callback=CommonCallbacks.PAGE_NEXT,
+                )
             )
-
-            if current_page < max_page:
-                # U+1F8A1 (RIGHTWARDS ARROW WITH TAIL FROM BAR) from Supplemental Arrows-C
-                navigation_buttons.append(Button.inline("Next  ▷", "group_next"))
-
-            if navigation_buttons:
-                keyboard_group.append(navigation_buttons)
 
         keyboard_group.append([
             Button.inline("Cancel", "group_cancel")
@@ -420,7 +431,7 @@ class GroupKeyboardManager:
         Args:
             session: The coffee session
             user_id: Telegram user ID of the participant
-            direction: 'next'|'prev' or 'group_next'|'group_prev'
+            direction: 'next'|'prev'
         """
         session_id = str(session.id)
         if session_id not in self.active_keyboards:
@@ -433,17 +444,17 @@ class GroupKeyboardManager:
         
         # Get user's page size setting
         page_size = 10  # Default
-        from ..dependencies.dependencies import get_repo
         repo = get_repo()
         settings = await repo.get_user_settings(user_id)
         if settings:
             page_size = settings.group_page_size
+
+        total_pages = self._compute_total_pages(session.group_state, page_size=page_size)
+        max_page = max(0, total_pages - 1)
         
-        total_pages = (len(session.group_state.members) - 1) // page_size + 1 if session.group_state.members else 1
-        
-        if direction in ('next', 'group_next'):
-            new_page = min(active_keyboard.current_page + 1, total_pages - 1)
-        elif direction in ('prev', 'group_prev'):
+        if direction == 'next':
+            new_page = min(active_keyboard.current_page + 1, max_page)
+        elif direction == 'prev':
             new_page = max(active_keyboard.current_page - 1, 0)
         else:
             return
