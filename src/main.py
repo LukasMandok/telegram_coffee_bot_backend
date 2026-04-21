@@ -60,8 +60,19 @@ async def lifespan(app: FastAPI):
         telethon_task = asyncio.create_task(telethon_api.run())
 
         # Periodic one-way export to Google Sheets (optional)
-        await warmup_gsheet_api()
-        gsheet_task = asyncio.create_task(run_periodic_gsheet_sync(stop_event=gsheet_stop_event))
+        if app_config.GSHEET_SYNC_ENABLED:
+            try:
+                await warmup_gsheet_api()
+            except Exception as e:
+                logger.error(
+                    "Google Sheets warmup failed; periodic sync disabled",
+                    extra_tag="GSHEET",
+                    exc=e,
+                )
+            else:
+                gsheet_task = asyncio.create_task(
+                    run_periodic_gsheet_sync(stop_event=gsheet_stop_event)
+                )
 
         if mongodb.snapshot_manager is not None:
             weekly_snapshot_task = asyncio.create_task(

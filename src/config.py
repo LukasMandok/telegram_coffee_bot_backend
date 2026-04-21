@@ -61,7 +61,17 @@ class AppConfig(BaseSettings):
     @field_validator('SERVICE_ACCOUNT_PRIVATE_KEY')
     @classmethod
     def parse_private_key(cls, v: str) -> str:
-        return v.strip().replace('\\n', '\n')
+        key = v.strip()
+        if len(key) >= 2 and ((key[0] == '"' and key[-1] == '"') or (key[0] == "'" and key[-1] == "'")):
+            key = key[1:-1].strip()
+
+        # Support both "\\n" and "\\r\\n" encoded newlines coming from .env files.
+        key = key.replace('\\r\\n', '\\n')
+        key = key.replace('\\n', '\n')
+
+        # If the key was provided via environment variables (not .env), it may contain real CRLF.
+        key = key.replace('\r\n', '\n').replace('\r', '\n')
+        return key
 
     @field_validator(
         'GSHEET_SSID',

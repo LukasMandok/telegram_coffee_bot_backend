@@ -315,12 +315,21 @@ echo "🚀 Starting the bot..."
 
 # Validate/sanitize .env (trim whitespace, reject keys with spaces)
 if [ -f ".env" ]; then
+    trim() {
+        # Trim leading/trailing whitespace without interpreting backslashes.
+        # Important for values like SERVICE_ACCOUNT_PRIVATE_KEY that contain literal "\\n" sequences.
+        local s="$1"
+        s="${s#"${s%%[![:space:]]*}"}"
+        s="${s%"${s##*[![:space:]]}"}"
+        printf '%s' "$s"
+    }
+
     TMP_ENV=$(mktemp)
     CHANGED=0; INVALID_KEYS=()
     while IFS= read -r LINE || [ -n "$LINE" ]; do
         case "$LINE" in
             ''|'#'*) printf '%s\n' "$LINE" >>$TMP_ENV; continue;;
-            *'='*) K=${LINE%%=*}; V=${LINE#*=}; K2=$(echo "$K" | xargs); V2=$(echo "$V" | xargs); if [[ "$K2" != "$K" || "$V2" != "$V" ]]; then CHANGED=1; fi; if [[ "$K2" =~ [[:space:]] ]]; then INVALID_KEYS+=("$K2"); fi; printf '%s=%s\n' "$K2" "$V2" >>$TMP_ENV; continue;;
+            *'='*) K=${LINE%%=*}; V=${LINE#*=}; K2=$(trim "$K"); V2=$(trim "$V"); if [[ "$K2" != "$K" || "$V2" != "$V" ]]; then CHANGED=1; fi; if [[ "$K2" =~ [[:space:]] ]]; then INVALID_KEYS+=("$K2"); fi; printf '%s=%s\n' "$K2" "$V2" >>$TMP_ENV; continue;;
             *) printf '%s\n' "$LINE" >>$TMP_ENV; continue;;
         esac
     done <.env
