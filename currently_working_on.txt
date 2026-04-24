@@ -25,17 +25,12 @@ Snapshots:
 (- sub collection snapshots (for example only the inactivity counters of users) and full collection snapshots should cover those sub-collection snapshots as well on restore)
 
 Spreadsheet:
-- gsheet update is not carried out anymore reliably after card creation (manual sync works)
-
-- add two-way sync to gsheet, so changes remote can also be propagated to the bot, but only if an admin allows this, especially if something is marked as paid.
-- allow searching for changes on the google spreadsheet and propagating them down before updating the spreadsheet. Has to be fast
-mongo
 - after a card is completed, in the syncing process to GSHEET, the card is still marked as active there
 (- if a card is completed because all coffees were used up it does not update the spreadsheet but earlier when the session was closed, so the card is not marked as completed in google spreadsheet yet)
 
 Credit menu:
 - Schredder still appears with 0 outstandign credit, so I think that debts might not be correctly marked as paid at all places
-
+- Credit menu is currently not correctly working (doesnt find certain debts)
 
 General:
 - unify certain repeating code snippets as functions
@@ -71,3 +66,23 @@ This list will be used to define new passive users on the first startup, with th
 
 users=[Lukas Mandok, Borys Oppenländer, Heiko Augustin, David Immig, David Fritz, André Schöning, Tamasi Kar, Benjamin Weinläder, Joey, Lelia Fuchs, Frosso Zachou, Sebasitian Dittmeier, Giulia Fazzino, Abhi Nadi, Luigi Vigani, Antonis Kontopoulos, Thomas Schwartze, Abhi Nandi]
 [@.env](file:///C:/Users/Lukas/git/coffee%20bot/telegram_coffee_bot_backend/.env) [@.env.example](file:///C:/Users/Lukas/git/coffee%20bot/telegram_coffee_bot_backend/.env.example)
+
+
+## Settings
+
+The Settings Menu is the last remaining big construction site.
+Currently the submenus of settings are implemented as separate conversations in @conversations.py. However, like all other conversations, they should be implemented as message flow in the settings_flow.py
+
+can you please do the refacting to convert all submenus to message flow.
+
+while we are at it, we can improve certain aspects of the settings manager as well:
+
+- make each toggle button the same, so that an activated option has a green dot and an deactivated an red dot on the toggle button (instead of showing how the stat would change if you press the button), this should also include all of the checkmark/cross icons in toggle buttons used somewhere else. This should be completely consistent in the whole message flow.
+maybe it makes sense to implement an own toggle button in message flow (message_flow_helpers.py)
+
+
+## additional settings stuff
+
+- allow users changing their own Display Name in the settings
+- allow the admin to modify the admin password in the settings
+- Settings for vanishing messages are currently not consistent between bot restarts. It looks like they are not correctly saved in the database or are overwritten by another place. (But maybe this is not the case anymore.)
