@@ -18,6 +18,7 @@ class PaymentReason(str, Enum):
     CREDITOR_MARKED_PAID = "creditor_marked_paid"
     COMPENSATION_OFFSET = "compensation_offset"
     MANUAL_ADJUSTMENT = "manual_adjustment"
+    GSHEET_IMPORT = "gsheet_import"
 
 
 class ConsumerStats(BaseModel):

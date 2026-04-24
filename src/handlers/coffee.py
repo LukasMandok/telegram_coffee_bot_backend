@@ -8,6 +8,8 @@ card management, order processing, session handling, and debt tracking.
 from typing import List, Optional, Dict, Any, TYPE_CHECKING, Tuple
 from datetime import datetime
 
+from beanie import Link as BeanieLink
+
 # Runtime imports - actually used in code
 from ..models.coffee_models import (
     CoffeeCard, CoffeeOrder, Payment, UserDebt, 
@@ -16,7 +18,7 @@ from ..models.coffee_models import (
 
 from ..dependencies.dependencies import repo
 from ..services.order import place_order
-from ..services.gsheet_sync import request_gsheet_sync_after_action
+from ..services.gsheet_sync import LocalPaidAmountChange, request_gsheet_sync_after_action
 
 from ..bot.group_state_helpers import initialize_group_state_from_db
 from ..models.beanie_models import TelegramUser
@@ -191,16 +193,21 @@ async def settle_debts_for_payment(payment: Payment) -> None:
     
     payer = payment.payer  # type: ignore
     recipient = payment.recipient  # type: ignore
+
+    payer_id = payer.ref.id if isinstance(payer, BeanieLink) else payer.id  # type: ignore[union-attr]
+    recipient_id = recipient.ref.id if isinstance(recipient, BeanieLink) else recipient.id  # type: ignore[union-attr]
     
     # Find relevant debts
     # Query using MongoDB $oid comparison for Link fields
     debts = await UserDebt.find(
-        {"debtor.$id": payer.id, "creditor.$id": recipient.id},
+        {"debtor.$id": payer_id, "creditor.$id": recipient_id},
         UserDebt.is_settled == False
     ).to_list()
     
     remaining_amount = payment.amount
     
+    paid_changes: List[LocalPaidAmountChange] = []
+
     for debt in debts:
         if remaining_amount <= 0:
             break
@@ -209,6 +216,7 @@ async def settle_debts_for_payment(payment: Payment) -> None:
         if unpaid <= 0:
             continue
 
+        paid_before = float(debt.paid_amount)
         to_apply = min(remaining_amount, unpaid)
         debt.paid_amount += to_apply
         remaining_amount -= to_apply
@@ -218,6 +226,36 @@ async def settle_debts_for_payment(payment: Payment) -> None:
             debt.settled_at = datetime.now()
         
         await debt.save()
+
+        try:
+            card_id = ""
+            debtor_id = ""
+            if isinstance(debt.coffee_card, BeanieLink):
+                card_id = str(debt.coffee_card.ref.id)
+            else:
+                card_id = str(debt.coffee_card.id)  # type: ignore[union-attr]
+
+            if isinstance(debt.debtor, BeanieLink):
+                debtor_id = str(debt.debtor.ref.id)
+            else:
+                debtor_id = str(debt.debtor.id)  # type: ignore[union-attr]
+
+            if not card_id or not debtor_id:
+                continue
+
+            paid_changes.append(
+                LocalPaidAmountChange(
+                    card_id=card_id,
+                    debtor_id=debtor_id,
+                    value_before=paid_before,
+                    value_after=float(debt.paid_amount),
+                )
+            )
+        except Exception:
+            pass
+
+    if paid_changes:
+        request_gsheet_sync_after_action(reason="debt_paid", paid_changes=paid_changes)
         
         
 # Session managment

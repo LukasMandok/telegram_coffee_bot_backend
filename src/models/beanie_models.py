@@ -235,7 +235,7 @@ class GsheetSettings(BaseModel):
     )
     two_way_sync_enabled: bool = Field(
         default=False,
-        description="Enable two-way sync (currently no-op)",
+        description="Enable two-way sync for paid amounts on completed cards",
     )
 
     sync_after_actions_enabled: bool = Field(

@@ -187,7 +187,7 @@ class CommandManager:
         )
 
         try:
-            await sync_all_cards_once()
+            await sync_all_cards_once(mode="manual")
         except Exception as exc:
             await self.api.message_manager.send_text(
                 user_id,

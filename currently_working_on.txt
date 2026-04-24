@@ -1,6 +1,6 @@
 working on:
 - restructure all conversations using the message flow
-done: 
+done:
 - credit (payment)
 - debt (payment)
 - paypal
@@ -13,10 +13,14 @@ remaining:
 - settings submenu inntegration
 
 
-Coffee Cards:
-- Royalty system (adjustable in the settings). either an adjustable amount of free coffee for the creditor or that he doesn't have to contribute to missing coffees. 
+Signup:
+- convert to message flow
+- allow a skip button for the last name
 
-Snapshots: 
+Coffee Cards:
+- Royalty system (adjustable in the settings). either an adjustable amount of free coffee for the creditor or that he doesn't have to contribute to missing coffees.
+
+Snapshots:
 (- an option to make specific snapshots as permanent, so they are not part of the fixed number of snapshots that are deleted, when more are created.)
 (- sub collection snapshots (for example only the inactivity counters of users) and full collection snapshots should cover those sub-collection snapshots as well on restore)
 
@@ -25,7 +29,7 @@ Spreadsheet:
 
 - add two-way sync to gsheet, so changes remote can also be propagated to the bot, but only if an admin allows this, especially if something is marked as paid.
 - allow searching for changes on the google spreadsheet and propagating them down before updating the spreadsheet. Has to be fast
-mongo 
+mongo
 - after a card is completed, in the syncing process to GSHEET, the card is still marked as active there
 (- if a card is completed because all coffees were used up it does not update the spreadsheet but earlier when the session was closed, so the card is not marked as completed in google spreadsheet yet)
 
@@ -34,16 +38,17 @@ Credit menu:
 
 
 General:
-- unify certain repeating code snippets as functions 
-- add an option to message flows, which allow actions on initiation, submit and cancel -> so I can so gsheet synchronizations on sumbit and start backups on initiation save them on submit and delete them on cancel 
+- unify certain repeating code snippets as functions
+- add an option to message flows, which allow actions on initiation, submit and cancel -> so I can so gsheet synchronizations on sumbit and start backups on initiation save them on submit and delete them on cancel
+
 
 Settings:
 - Settings for vanishing messages are currently not consistent between bot restarts. It looks like they are not correctly saved in the database or are overwritten by another place
 - make each toggle button the same, so that an activated option has a green dot and an deactivated an red dot on the toggle button (instead of showing how the stat would change if you press the button), this should also include all of the checkmark/cross icons in toggle buttons used somewhere else. This should be completely consistent in the whole message flow.
 - make sure that all submenues are correctly implemented as message flow. Currently most of this is still manually in the conversation manager
 
-PayPal Setup:
-- if invoked from the new_card flow, can you convert the messages, that the paypal link setup was successful or the canceled message intl a banner popup notification?
+- allow users changing their own Display Name in the settings
+- allow the admin to modify the admin password in the settings
 
 maybe:
 - emulate other users
@@ -55,15 +60,14 @@ this should also allow to use the restapi with a webpage instead (except for not
 
 
 not working:
-- add a reply keyboard and close if pressed and reopen if the coversation finishes. 
+- add a reply keyboard and close if pressed and reopen if the coversation finishes.
 
 
-### Google Spredsheet two-way syncing:
 
-Can you help me implement a two-way syncing.
-The idea behind this is, that users should be able to make changes in the google spreadsheet (only for the paid amount, all other cells should be protected).
-And whenever a sync is triggered, either by action or by a periodic sync, the bot should check for changes in the upstream spreadsheet and propagate thos to the bot.
-it is important that this only affects paid amount so far and only on closed cards. An active card should ideally be fully protected.
-Also I need a mechanism, to make sure that changes of the paid amount in the bot are priotised over the changes in the spreadsheet, if they affect the same value when changes are synced.
-this means, that for paid amounts, the actual changed values should be forwarded to the syncing algorithm, so it does not overwrite them. or you compare the paied value to the previous value and if both the local and the spreadsheet value differ from that one, the local value is choosen.
-and please log such an incident with a warning.
+## Adding default users:
+
+Can you add a list to the .env file and .env.examplse, which will be interpreted as passive users, which are predefined.
+This list will be used to define new passive users on the first startup, with the first word being the first name and the last word the last name. If there is only one, leave a way the last name, for more than two ignore the middle ones
+
+users=[Lukas Mandok, Borys Oppenländer, Heiko Augustin, David Immig, David Fritz, André Schöning, Tamasi Kar, Benjamin Weinläder, Joey, Lelia Fuchs, Frosso Zachou, Sebasitian Dittmeier, Giulia Fazzino, Abhi Nadi, Luigi Vigani, Antonis Kontopoulos, Thomas Schwartze, Abhi Nandi]
+[@.env](file:///C:/Users/Lukas/git/coffee%20bot/telegram_coffee_bot_backend/.env) [@.env.example](file:///C:/Users/Lukas/git/coffee%20bot/telegram_coffee_bot_backend/.env.example)

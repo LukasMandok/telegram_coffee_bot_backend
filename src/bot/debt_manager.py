@@ -14,7 +14,7 @@ from ..common.log import Logger
 from ..models.coffee_models import CoffeeCard, Payment, UserDebt, PaymentReason
 from ..models.beanie_models import TelegramUser, PassiveUser
 from ..dependencies.dependencies import get_repo
-from ..services.gsheet_sync import request_gsheet_sync_after_action
+from ..services.gsheet_sync import LocalPaidAmountChange, request_gsheet_sync_after_action
 from .message_flow_helpers import format_money
 
 
@@ -433,6 +433,29 @@ class DebtManager:
         for debt in debts_ba:
             await debt.save()
 
+        paid_changes: List[LocalPaidAmountChange] = []
+        for debt in debts_ab + debts_ba:
+            debt_id = getattr(debt, "id", None)
+            key = str(debt_id) if debt_id is not None else f"mem:{id(debt)}"
+            before_paid, _before_settled = before_state.get(key, (0.0, False))
+            after_paid = float(getattr(debt, "paid_amount", 0.0) or 0.0)
+            if abs(after_paid - float(before_paid)) <= 1e-9:
+                continue
+
+            card_link = getattr(debt, "coffee_card", None)
+            debtor_link = getattr(debt, "debtor", None)
+            if not isinstance(card_link, BeanieLink) or not isinstance(debtor_link, BeanieLink):
+                continue
+
+            paid_changes.append(
+                LocalPaidAmountChange(
+                    card_id=str(card_link.ref.id),
+                    debtor_id=str(debtor_link.ref.id),
+                    value_before=float(before_paid),
+                    value_after=after_paid,
+                )
+            )
+
         # Create auditable payment events for each offset step in both directions.
         for debt_ab, debt_ba, offset in offset_events:
             if offset <= 0:
@@ -542,7 +565,7 @@ class DebtManager:
                     exc=e,
                 )
 
-        request_gsheet_sync_after_action(reason="debt_offset")
+        request_gsheet_sync_after_action(reason="debt_offset", paid_changes=paid_changes)
     
     async def get_user_debts(
         self, 
@@ -583,21 +606,6 @@ class DebtManager:
 
         results = await UserDebt.find(query_filter, fetch_links=True).to_list()
         self.logger.trace(f"get_user_debts query returned {len(results)} debts")
-
-        # Fetch all linked documents
-        # for debt in results:
-        #     await debt.fetch_link(UserDebt.debtor)
-        #     await debt.fetch_link(UserDebt.creditor)
-        #     await debt.fetch_link(UserDebt.coffee_card)
-        #     await debt.fetch_all_links()
-                
-        for debt in results:
-            if isinstance(debt.debtor, BeanieLink):
-                debt.debtor = await PassiveUser.get(debt.debtor.ref.id) or await TelegramUser.get(debt.debtor.ref.id)
-            if isinstance(debt.creditor, BeanieLink):
-                debt.creditor = await TelegramUser.get(debt.creditor.ref.id)
-            if isinstance(debt.coffee_card, BeanieLink):
-                debt.coffee_card = await CoffeeCard.get(debt.coffee_card.ref.id)
 
         for debt in results:
             debtor_name = debt.debtor.display_name if not isinstance(debt.debtor, BeanieLink) else "?"
@@ -671,30 +679,11 @@ class DebtManager:
         Returns:
             List of UserDebt documents with fetched links
         """
-        # Query directly by link and fetch linked debtor/coffee_card
-        query = None
+        query_filter: Dict[str, Any] = {"creditor.$id": user.id}
+        if not include_settled:
+            query_filter["is_settled"] = False
 
-        if include_settled:
-            query = UserDebt.find({UserDebt.creditor.id: user.id})
-        else:
-            query = UserDebt.find({UserDebt.creditor.id: user.id, UserDebt.is_settled: False})
-
-        results = await query.to_list()      
-        
-        # Fetch all linked documents
-        # for debt in results:
-        #     await debt.fetch_link(UserDebt.debtor)
-        #     await debt.fetch_link(UserDebt.creditor)
-        #     await debt.fetch_link(UserDebt.coffee_card)
-        #     await debt.fetch_all_links()
-                
-        for debt in results:
-            if isinstance(debt.debtor, BeanieLink):
-                debt.debtor = await PassiveUser.get(debt.debtor.ref.id) or await TelegramUser.get(debt.debtor.ref.id)
-            if isinstance(debt.creditor, BeanieLink):
-                debt.creditor = await TelegramUser.get(debt.creditor.ref.id)
-            if isinstance(debt.coffee_card, BeanieLink):
-                debt.coffee_card = await CoffeeCard.get(debt.coffee_card.ref.id)
+        results = await UserDebt.find(query_filter, fetch_links=True).to_list()
     
         return results
     
@@ -769,11 +758,9 @@ class DebtManager:
                 payment_events.append(event)
         else:
             # Apply to all unsettled debts from payer to recipient
-            debts = await UserDebt.find({
-                UserDebt.debtor.id: payer.id, 
-                UserDebt.creditor.id: recipient.id,
-                UserDebt.is_settled: False
-            }).to_list()
+            debts = await UserDebt.find(
+                {"debtor.$id": payer.id, "creditor.$id": recipient.id, "is_settled": False}
+            ).to_list()
             
             # Sort by creation date (oldest first)
             debts.sort(key=lambda d: d.created_at)
@@ -901,6 +888,27 @@ class DebtManager:
         epsilon = 1e-9
         now = datetime.now()
         unpaid = debt.total_amount - debt.paid_amount
+
+        card_id = ""
+        debtor_id = ""
+
+        try:
+            if isinstance(debt.coffee_card, BeanieLink):
+                card_id = str(debt.coffee_card.ref.id)
+            else:
+                card_id = str(debt.coffee_card.id) if debt.coffee_card is not None else ""  # type: ignore[union-attr]
+        except Exception:
+            card_id = ""
+
+        try:
+            if isinstance(debt.debtor, BeanieLink):
+                debtor_id = str(debt.debtor.ref.id)
+            else:
+                debtor_id = str(debt.debtor.id) if debt.debtor is not None else ""  # type: ignore[union-attr]
+        except Exception:
+            debtor_id = ""
+
+        paid_before = float(getattr(debt, "paid_amount", 0.0) or 0.0)
         
         if unpaid <= epsilon:
             return amount, None  # Debt already paid, return full amount
@@ -926,6 +934,19 @@ class DebtManager:
 
         debt.updated_at = now
         await debt.save()
+
+        if card_id and debtor_id:
+            request_gsheet_sync_after_action(
+                reason="debt_paid",
+                paid_changes=[
+                    LocalPaidAmountChange(
+                        card_id=card_id,
+                        debtor_id=debtor_id,
+                        value_before=paid_before,
+                        value_after=float(getattr(debt, "paid_amount", 0.0) or 0.0),
+                    )
+                ],
+            )
 
         payment_event = await self._create_payment(
             debt=debt,

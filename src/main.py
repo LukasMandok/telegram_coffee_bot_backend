@@ -13,7 +13,7 @@ from src.dependencies.dependencies import get_repo
 from src.common.log import Logger
 from src.temp_debug_setup import run_debug_setup_if_enabled
 from src.bot.settings_manager import SettingsManager
-from src.services.gsheet_sync import run_periodic_gsheet_sync, warmup_gsheet_api
+from src.services.gsheet_sync import run_periodic_gsheet_sync, set_gsheet_sync_api, warmup_gsheet_api
 from src.services.weekly_snapshots import run_periodic_weekly_full_snapshots
 # from .middlewares.middleware import SecurityMiddleware
 
@@ -50,6 +50,9 @@ async def lifespan(app: FastAPI):
         await mongodb.connect(database_url)
         logger.info(f"Connected to MongoDB (uri={database_url})", extra_tag="DB")
 
+        # Allow gsheet sync service to send Telegram notifications (conflicts).
+        set_gsheet_sync_api(telethon_api)
+
         # Run debug setup (dev-only operations like defaults and passive users)
         await run_debug_setup_if_enabled()
         
@@ -59,20 +62,19 @@ async def lifespan(app: FastAPI):
         # Start Telethon bot in the background (do not block lifespan startup)
         telethon_task = asyncio.create_task(telethon_api.run())
 
-        # Periodic one-way export to Google Sheets (optional)
-        if app_config.GSHEET_SYNC_ENABLED:
-            try:
-                await warmup_gsheet_api()
-            except Exception as e:
-                logger.error(
-                    "Google Sheets warmup failed; periodic sync disabled",
-                    extra_tag="GSHEET",
-                    exc=e,
-                )
-            else:
-                gsheet_task = asyncio.create_task(
-                    run_periodic_gsheet_sync(stop_event=gsheet_stop_event)
-                )
+        # Periodic Google Sheets sync is controlled by DB settings inside the worker.
+        try:
+            await warmup_gsheet_api()
+        except Exception as e:
+            logger.error(
+                "Google Sheets warmup failed; periodic sync disabled",
+                extra_tag="GSHEET",
+                exc=e,
+            )
+        else:
+            gsheet_task = asyncio.create_task(
+                run_periodic_gsheet_sync(stop_event=gsheet_stop_event)
+            )
 
         if mongodb.snapshot_manager is not None:
             weekly_snapshot_task = asyncio.create_task(

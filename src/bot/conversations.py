@@ -1967,7 +1967,7 @@ class ConversationManager:
             if data == "toggle_two_way":
                 if event:
                     await event.answer()
-                new_value = not bool(getattr(gsheet_settings, "two_way_sync_enabled", False))
+                new_value = not bool(gsheet_settings.two_way_sync_enabled)
                 success = await self.repo.update_gsheet_settings(two_way_sync_enabled=new_value)
                 if not success:
                     await self.api.message_manager.send_text(
@@ -1982,7 +1982,7 @@ class ConversationManager:
             if data == "toggle_after_actions":
                 if event:
                     await event.answer()
-                current_value = bool(getattr(gsheet_settings, "sync_after_actions_enabled", True))
+                current_value = bool(gsheet_settings.sync_after_actions_enabled)
                 new_value = not current_value
                 success = await self.repo.update_gsheet_settings(sync_after_actions_enabled=new_value)
                 if not success:

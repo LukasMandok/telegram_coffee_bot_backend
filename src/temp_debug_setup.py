@@ -8,7 +8,7 @@ development and testing purposes only.
 Usage:
     1. Set DEBUG_MODE=true or ENVIRONMENT=dev in your environment variables
     2. Start the application normally - users will be created automatically
-    
+
     Or run manually:
     - Call setup_debug_passive_users() after database connection is established
 
@@ -53,48 +53,48 @@ DEBUG_PASSIVE_USERS: List[Tuple[str, str]] = [
 async def setup_debug_passive_users() -> None:
     """
     Create all debug passive users if they don't already exist.
-    
+
     This function iterates through the DEBUG_PASSIVE_USERS list and creates
     each user if they don't already exist in the database. It's safe to call
     multiple times as it checks for existing users before creating new ones.
-    
+
     Returns:
         None
-        
+
     Raises:
         Exception: If there are issues with database operations
     """
     logger.info("Starting passive user creation...")
-    
+
     created_count = 0
     existing_count = 0
     failed_count = 0
-    
+
     for first_name, last_name in DEBUG_PASSIVE_USERS:
         try:
             # Handle case where last name is empty string
             last_name_to_use = last_name if last_name.strip() else None
-            
+
             # Check if user already exists
             existing_user = await handlers.find_passive_user_by_name(
                 first_name=first_name,
                 last_name=last_name_to_use
             )
-            
+
             if existing_user:
                 logger.debug(f"User already exists: {existing_user.display_name}")
                 existing_count += 1
                 continue
-            
+
             # Create the passive user
             new_user = await handlers.create_passive_user(
                 first_name=first_name,
                 last_name=last_name_to_use
             )
-            
+
             logger.info(f"Created: {new_user.display_name}")
             created_count += 1
-            
+
         except ValueError as e:
             # User already exists as Telegram user - this is expected, not an error
             logger.debug(f"Skipped {first_name} {last_name}: {str(e)}")
@@ -106,54 +106,54 @@ async def setup_debug_passive_users() -> None:
                 exc=e,
             )
             failed_count += 1
-    
+
     logger.info(f"Debug setup complete: {created_count} created, {existing_count} existing, {failed_count} failed")
 
 
 async def cleanup_debug_passive_users() -> None:
     """
     Remove all debug passive users from the database.
-    
+
     This function is the opposite of setup_debug_passive_users(). It finds
     and removes all users that match the names in DEBUG_PASSIVE_USERS.
     Use this for cleanup after testing.
-    
+
     WARNING: This will permanently delete users and their associated data!
-    
+
     Returns:
         None
-        
+
     Raises:
         Exception: If there are issues with database operations
     """
     logger.info("Starting passive user removal...")
-    
+
     removed_count = 0
     not_found_count = 0
     failed_count = 0
-    
+
     for first_name, last_name in DEBUG_PASSIVE_USERS:
         try:
             # Handle case where last name is empty string
             last_name_to_use = last_name if last_name.strip() else None
-            
+
             # Find the user
             existing_user = await handlers.find_passive_user_by_name(
                 first_name=first_name,
                 last_name=last_name_to_use
             )
-            
+
             if not existing_user:
                 logger.debug(f"User not found: {first_name} {last_name or '(no last name)'}")
                 not_found_count += 1
                 continue
-            
+
             # Remove the user (you'll need to implement this method)
             # await repo.delete_passive_user(existing_user.id)
             logger.debug(f"Would remove: {existing_user.display_name} (deletion not implemented)")
             # For now, just count as removed since deletion method needs to be implemented
             removed_count += 1
-            
+
         except Exception as e:
             logger.error(
                 f"Failed to remove passive user (first_name={first_name}, last_name={last_name})",
@@ -161,17 +161,17 @@ async def cleanup_debug_passive_users() -> None:
                 exc=e,
             )
             failed_count += 1
-    
+
     logger.info(f"Debug cleanup complete: {removed_count} removed, {not_found_count} not found, {failed_count} failed")
 
 
 def is_debug_mode() -> bool:
     """
     Check if the application is running in debug mode.
-    
+
     This function checks environment variables or configuration to determine
     if debug features should be enabled.
-    
+
     Returns:
         bool: True if debug mode is enabled, False otherwise
     """
@@ -186,18 +186,18 @@ def is_debug_mode() -> bool:
 async def initialize_log_settings() -> None:
     """
     Initialize runtime log settings from database configuration.
-    
+
     This function loads the logging settings from the AppSettings document
     and updates the runtime log settings accordingly. Should be called
     on application startup after database connection is established.
-    
+
     Returns:
         None
     """
     try:
         repo = get_repo()
         db_log_settings = await repo.get_log_settings()
-        
+
         if db_log_settings:
             # Update runtime settings
             log_settings.show_time = db_log_settings.get("log_show_time", False)
@@ -211,7 +211,7 @@ async def initialize_log_settings() -> None:
             )
         else:
             logger.warning("No log settings found in database, using defaults")
-            
+
     except Exception as e:
         logger.error("Failed to initialize log settings", extra_tag="LOG", exc=e)
 
@@ -219,10 +219,10 @@ async def initialize_log_settings() -> None:
 async def run_debug_setup_if_enabled() -> None:
     """
     Run debug setup only if debug mode is enabled.
-    
+
     This is a safe wrapper function that checks if debug mode is enabled
     before running the setup. Call this from your application startup.
-    
+
     Returns:
         None
     """
@@ -234,7 +234,7 @@ async def run_debug_setup_if_enabled() -> None:
         # IMPORTANT: do not reset defaults on every startup.
         # setup_defaults() deletes AppSettings/Config/Password and will wipe persisted admin settings.
         # Only run it when required (fresh DB) or explicitly forced.
-        
+
         have_config = await models.Config.find_one() is not None
         have_password = await models.Password.find_one() is not None
         have_app_settings = await models.AppSettings.find_one() is not None
