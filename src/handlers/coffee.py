@@ -227,32 +227,14 @@ async def settle_debts_for_payment(payment: Payment) -> None:
         
         await debt.save()
 
-        try:
-            card_id = ""
-            debtor_id = ""
-            if isinstance(debt.coffee_card, BeanieLink):
-                card_id = str(debt.coffee_card.ref.id)
-            else:
-                card_id = str(debt.coffee_card.id)  # type: ignore[union-attr]
-
-            if isinstance(debt.debtor, BeanieLink):
-                debtor_id = str(debt.debtor.ref.id)
-            else:
-                debtor_id = str(debt.debtor.id)  # type: ignore[union-attr]
-
-            if not card_id or not debtor_id:
-                continue
-
-            paid_changes.append(
-                LocalPaidAmountChange(
-                    card_id=card_id,
-                    debtor_id=debtor_id,
-                    value_before=paid_before,
-                    value_after=float(debt.paid_amount),
-                )
+        paid_changes.append(
+            LocalPaidAmountChange(
+                card_id=str(debt.coffee_card.ref.id),  # type: ignore[union-attr]
+                debtor_id=str(payer_id),  # query guarantees debtor == payer
+                value_before=paid_before,
+                value_after=float(debt.paid_amount),
             )
-        except Exception:
-            pass
+        )
 
     if paid_changes:
         request_gsheet_sync_after_action(reason="debt_paid", paid_changes=paid_changes)
