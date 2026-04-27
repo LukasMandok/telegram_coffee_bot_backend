@@ -21,26 +21,26 @@ from .message_flow_helpers import format_money
 class DebtManager:
     """
     Manages debt tracking and payment processing for coffee consumption.
-    
+
     Key Concept:
     - Debts are created when a coffee card is marked as COMPLETED
     - Each debt represents total consumption for one user on one completed card
     - Ongoing/active cards do NOT have debts yet
     """
-    
+
     def __init__(self, api):
         self.api = api
         self.logger = Logger("DebtManager")
-    
+
     @staticmethod
     def calculate_debt_amount(total_coffees: int, cost_per_coffee: float) -> float:
         """
         Calculate the total debt amount.
-        
+
         Args:
             total_coffees: Number of coffees consumed
             cost_per_coffee: Cost per coffee
-            
+
         Returns:
             Total debt amount
         """
@@ -88,21 +88,21 @@ class DebtManager:
             }
         else:
             return {}
-    
+
     async def create_or_update_debts_for_card(self, card: CoffeeCard) -> List[UserDebt]:
         """
         Create or update debt records for all consumers of a coffee card.
-        
+
         If a debt already exists for a debtor on this card, it will be updated
         with the current total_coffees from consumer_stats. This allows for
         corrections if coffees are missing or need adjustment.
-        
+
         This method can be called on both active and inactive cards to create
         or update debts as needed.
-        
+
         Args:
             card: Coffee card to create/update debts for
-            
+
         Returns:
             List of created or updated UserDebt documents
         """
@@ -123,19 +123,19 @@ class DebtManager:
             correction_method=correction_method,
             correction_threshold=correction_threshold,
         )
-        
+
         # Create or update debts for each consumer (except purchaser)
         processed_debts = []
-        
+
         for stable_id, stats in card.consumer_stats.items():
             # Skip purchaser - they don't owe themselves
             if stable_id == creditor_stable_id:
                 continue
-            
+
             # Skip if no coffees consumed
             if stats.total_coffees == 0:
                 continue
-            
+
             # Find the consumer: TelegramUser first, then PassiveUser
             consumer = await TelegramUser.find_one(TelegramUser.stable_id == stable_id)
             if not consumer:
@@ -143,18 +143,18 @@ class DebtManager:
             if not consumer:
                 self.logger.warning(f"Consumer with stable_id '{stable_id}' not found, skipping debt creation")
                 continue
-            
+
             # Check if debt already exists for this debtor and card
             # Query using MongoDB $oid comparison for Link fields
             existing_debt = await UserDebt.find_one(
                 {"debtor.$id": consumer.id, "coffee_card.$id": card.id}
             )
-            
+
             # Calculate amounts
             base_amount = self.calculate_debt_amount(stats.total_coffees, card.cost_per_coffee)
             debt_correction = corrections_by_user.get(stable_id, 0.0)
             total_amount = base_amount + debt_correction
-            
+
             now = datetime.now()
             if existing_debt:
                 # Update existing debt
@@ -197,7 +197,7 @@ class DebtManager:
                     f"Created debt: {stats.display_name} owes {creditor.display_name} €{total_amount:.2f} "
                     f"({stats.total_coffees} coffees, base=€{base_amount:.2f}, correction=€{debt_correction:.2f})"
                 )
-        
+
         return processed_debts
 
     class _DebtLike(Protocol):
@@ -322,7 +322,7 @@ class DebtManager:
 
             remaining_ab = debt_ab.total_amount - debt_ab.paid_amount
             remaining_ba = debt_ba.total_amount - debt_ba.paid_amount
-            
+
             # make sure these are not already fully paid but were not marked as settled (should not happen)
             if remaining_ab <= epsilon:
                 idx_ab += 1
@@ -566,19 +566,19 @@ class DebtManager:
                 )
 
         request_gsheet_sync_after_action(reason="debt_offset", paid_changes=paid_changes)
-    
+
     async def get_user_debts(
-        self, 
+        self,
         user: PassiveUser,
         include_settled: bool = False
     ) -> List[UserDebt]:
         """
         Get all debts where this user is the debtor (owes money).
-        
+
         Args:
             user: User to get debts for
             include_settled: Whether to include already settled debts
-            
+
         Returns:
             List of UserDebt documents with fetched links
         """
@@ -613,18 +613,18 @@ class DebtManager:
             self.logger.trace(
                 f"get_user_debts debt: debtor={debtor_name}, creditor={creditor_name}, total=€{debt.total_amount:.2f}, paid=€{debt.paid_amount:.2f}, correction=€{debt.debt_correction:.2f}, settled={debt.is_settled}"
             )
-        
+
         return results
-    
+
     async def get_debt_summary_by_creditor(self, user: PassiveUser) -> Dict[str, Dict[str, Any]]:
         """
         Get a summary of all outstanding debts grouped by creditor.
-        
+
         Only includes debts where paid_amount < total_amount (not fully paid).
-        
+
         Args:
             user: User to get debt summary for (the debtor)
-            
+
         Returns:
             Dict mapping creditor display_name to:
                 - creditor_id: creditor's user_id
@@ -635,18 +635,18 @@ class DebtManager:
         """
         # Get all unsettled debts for this user
         all_debts = await self.get_user_debts(user, include_settled=False)
-        
+
         # Group by creditor and calculate totals
         creditor_summary = {}
-        
+
         for debt in all_debts:
             # Skip if fully paid
             if debt.paid_amount >= debt.total_amount:
                 continue
-            
+
             creditor = debt.creditor  # type: ignore
             creditor_name = creditor.display_name  # type: ignore
-            
+
             # Initialize creditor entry if not exists
             if creditor_name not in creditor_summary:
                 creditor_summary[creditor_name] = {
@@ -656,52 +656,69 @@ class DebtManager:
                     "paypal_link": creditor.paypal_link,  # type: ignore
                     "debts": []
                 }
-            
+
             # Add outstanding amount to total
             outstanding = debt.total_amount - debt.paid_amount
             creditor_summary[creditor_name]["total_owed"] += outstanding
             creditor_summary[creditor_name]["debts"].append(debt)
-        
+
         return creditor_summary
-    
+
     async def get_user_credits(
         self,
-        user: TelegramUser,
+        user: PassiveUser,
         include_settled: bool = False
     ) -> List[UserDebt]:
         """
         Get all debts where this user is the creditor (owed money).
-        
+
         Args:
             user: User to get credits for
             include_settled: Whether to include already settled debts
-            
+
         Returns:
             List of UserDebt documents with fetched links
         """
-        query_filter: Dict[str, Any] = {"creditor.$id": user.id}
-        if not include_settled:
-            query_filter["is_settled"] = False
+        # Resolve TelegramUser (creditor links point to `telegram_users`)
+        telegram_user = user if isinstance(user, TelegramUser) else await TelegramUser.find_one(TelegramUser.stable_id == user.stable_id)
+        if not telegram_user:
+            return []
 
-        results = await UserDebt.find(query_filter, fetch_links=True).to_list()
-    
+        # Query by DBRef id and manually resolve links afterwards (working pattern)
+        if include_settled:
+            query = UserDebt.find({"creditor.$id": telegram_user.id})
+        else:
+            query = UserDebt.find({"creditor.$id": telegram_user.id, "is_settled": False})
+
+        # TODO: check, if we can also just fetch the query links
+        results = await query.to_list()
+
+        # Manually resolve Link placeholders to concrete documents
+        for debt in results:
+            if isinstance(debt.debtor, BeanieLink):
+                debt.debtor = cast(Any, await PassiveUser.get(debt.debtor.ref.id) or await TelegramUser.get(debt.debtor.ref.id))
+            if isinstance(debt.creditor, BeanieLink):
+                debt.creditor = cast(Any, await TelegramUser.get(debt.creditor.ref.id))
+            if isinstance(debt.coffee_card, BeanieLink):
+                debt.coffee_card = cast(Any, await CoffeeCard.get(debt.coffee_card.ref.id))
+
         return results
-    
+
     async def get_debts_for_card(self, card: CoffeeCard) -> List[UserDebt]:
         """
         Get all debt records for a specific coffee card.
-        
+
         Args:
             card: Coffee card to get debts for
-            
+
         Returns:
             List of UserDebt documents with fetched links
         """
         # Fetch linked debtor and creditor together
         return await UserDebt.find(UserDebt.coffee_card == card, fetch_links=True).to_list()  # type: ignore
-    
+
         # return await UserDebt.find({"coffee_card.$id": card.id}, fetch_links=True).to_list()  # type: ignore
-    
+
     async def record_payment(
         self,
         payer_id: int,
@@ -712,7 +729,7 @@ class DebtManager:
     ) -> List[Payment]:
         """
         Record a payment and apply it to debt(s).
-        
+
         Args:
             payer_id: Telegram user ID of person paying
             recipient_id: Telegram user ID of person receiving payment
@@ -720,7 +737,7 @@ class DebtManager:
             payment_method: Method of payment
             description: Optional payment description
             specific_debt: Optional specific debt to apply payment to
-            
+
         Returns:
             Created Payment document
         """
@@ -734,17 +751,17 @@ class DebtManager:
                 collections=("user_debts", "payments"),
                 save_in_background=True,
             )
-        
+
         payer = await repo.find_user_by_id(payer_id)
         recipient = await repo.find_user_by_id(recipient_id)
-        
+
         if not payer or not recipient:
             raise ValueError("Payer or recipient not found")
-        
+
         self.logger.info(f"Payment recorded: {payer.display_name} → {recipient.display_name}: €{amount:.2f}")
 
         payment_events: List[Payment] = []
-        
+
         # Apply payment to debts
         if specific_debt:
             # Apply to specific debt
@@ -762,9 +779,15 @@ class DebtManager:
                 {"debtor.$id": payer.id, "creditor.$id": recipient.id, "is_settled": False}
             ).to_list()
             
+            # debts = await UserDebt.find({
+            #     UserDebt.debtor.id: payer.id, 
+            #     UserDebt.creditor.id: recipient.id,
+            #     UserDebt.is_settled: False
+            # }).to_list()
+
             # Sort by creation date (oldest first)
             debts.sort(key=lambda d: d.created_at)
-            
+
             remaining = amount
             for debt in debts:
                 if remaining <= 0:
@@ -779,7 +802,7 @@ class DebtManager:
                     payment_events.append(event)
 
         request_gsheet_sync_after_action(reason="debt_paid")
-        
+
         return payment_events
 
     async def apply_debtor_quick_confirm_payment(
@@ -866,7 +889,7 @@ class DebtManager:
         request_gsheet_sync_after_action(reason="debt_paid")
 
         return debt, card_name, outstanding
-    
+
     async def _apply_payment_to_debt(
         self,
         debt: UserDebt,
@@ -877,11 +900,11 @@ class DebtManager:
     ) -> Tuple[float, Optional[Payment]]:
         """
         Apply a payment amount to a debt.
-        
+
         Args:
             debt: UserDebt to apply payment to
             amount: Amount to apply
-            
+
         Returns:
             Remaining amount after application
         """
@@ -909,10 +932,10 @@ class DebtManager:
             debtor_id = ""
 
         paid_before = float(getattr(debt, "paid_amount", 0.0) or 0.0)
-        
+
         if unpaid <= epsilon:
             return amount, None  # Debt already paid, return full amount
-        
+
         # Apply as much as possible
         to_apply = min(amount, unpaid)
         debt.paid_amount += to_apply
@@ -921,7 +944,7 @@ class DebtManager:
         self._update_debt_settlement_state(debt, now=now, epsilon=epsilon)
         if debt.is_settled:
             # TODO: improve this and make it less bloated (maybe dont fetch at all)
-            
+
             # Only fetch links if they haven't been loaded yet
             if isinstance(debt.debtor, BeanieLink):
                 await debt.fetch_link("debtor")
@@ -929,7 +952,7 @@ class DebtManager:
                 await debt.fetch_link("creditor")
             if isinstance(debt.coffee_card, BeanieLink):
                 await debt.fetch_link("coffee_card")
-            
+
             self.logger.info(f"Debt settled: {debt.debtor.display_name} → {debt.creditor.display_name} for card '{debt.coffee_card.name}'")  # type: ignore
 
         debt.updated_at = now
@@ -956,11 +979,11 @@ class DebtManager:
         )
 
         return amount - to_apply, payment_event
-    
+
     async def get_debt_summary(self, user: TelegramUser) -> Dict[str, Any]:
         """
         Get comprehensive debt summary for a user.
-        
+
         Returns dict with:
         - debts_i_owe: List of debts where user owes money
         - debts_owed_to_me: List of debts where others owe user
@@ -971,24 +994,24 @@ class DebtManager:
         # Get actual debts from completed cards
         debts_i_owe = await self.get_user_debts(user, include_settled=False)
         debts_owed_to_me = await self.get_user_credits(user, include_settled=False)
-        
+
         total_i_owe = sum(d.total_amount - d.paid_amount for d in debts_i_owe)
         total_owed_to_me = sum(d.total_amount - d.paid_amount for d in debts_owed_to_me)
-        
+
         # Calculate estimated debt on active cards (not yet completed)
         # Fetch purchaser links up-front to avoid per-card fetch_link
         active_cards = await CoffeeCard.find(CoffeeCard.is_active == True, fetch_links=True).to_list()
         estimated_debt_on_active = 0.0
-        
+
         user_stable_id = user.stable_id
         for card in active_cards:
             purchaser: TelegramUser = card.purchaser  # type: ignore
-            
+
             # If I consumed from someone else's active card
             if purchaser.stable_id != user_stable_id and user_stable_id in card.consumer_stats:
                 stats = card.consumer_stats[user_stable_id]
                 estimated_debt_on_active += stats.total_coffees * card.cost_per_coffee
-        
+
         return {
             "debts_i_owe": [
                 {

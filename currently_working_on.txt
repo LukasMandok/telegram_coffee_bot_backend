@@ -30,7 +30,6 @@ Spreadsheet:
 
 Credit menu:
 - Schredder still appears with 0 outstandign credit, so I think that debts might not be correctly marked as paid at all places
-- Credit menu is currently not correctly working (doesnt find certain debts)
 
 General:
 - unify certain repeating code snippets as functions
