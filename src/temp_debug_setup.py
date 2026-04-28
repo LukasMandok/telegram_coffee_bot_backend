@@ -1,27 +1,30 @@
 """
-Temporary debug setup file for creating test passive users.
+Temporary debug setup file for creating passive users during development.
 
-This module contains functions to create a predefined set of passive users
-on application startup if they don't already exist. This is meant for
-development and testing purposes only.
+This module provides helpers to create or remove passive users for
+development/testing when `users` environment variable is set. There are
+no built-in default users in this module; use the `users` env var to list
+names or rely on the production `src.initial_setup` fallback.
 
 Usage:
-    1. Set DEBUG_MODE=true or ENVIRONMENT=dev in your environment variables
-    2. Start the application normally - users will be created automatically
+    1. Set `DEBUG_MODE=true` or `ENVIRONMENT=dev` in your environment
+    2. Set `users` env var to a comma-separated list of names
+       (e.g. users=[Lukas Mandok, Joey])
+    3. Start the application normally - debug setup will create users only
+       when `users` is provided.
 
     Or run manually:
-    - Call setup_debug_passive_users() after database connection is established
+    - Call `setup_debug_passive_users()` after database connection is established
 
 Environment Variables:
     DEBUG_MODE=true         # Enable debug mode
     ENVIRONMENT=development # Alternative way to enable debug mode
+    users=[First Last, SingleName, ...]  # Passive users to create for debug
 """
 
 import asyncio
 import os
 import sys
-from typing import List, Tuple
-from .handlers import users as handlers
 from .dependencies.dependencies import get_repo
 from .common.log import Logger, log_settings
 from .config import app_config
@@ -29,140 +32,17 @@ from .models import beanie_models as models
 
 logger = Logger("DebugSetup")
 
-# Predefined list of passive users to create for debugging/testing
-DEBUG_PASSIVE_USERS: List[Tuple[str, str]] = [
-    ("Lukas", "Mandok"),
-    ("Borys", "Oppenländer"),
-    ("Heiko", "Augustin"),
-    ("David", "Immig"),
-    ("David", "Fritz"),
-    ("André", "Schöning"),
-    ("Tamasi", "Kar"),
-    ("Benjamin", "Weinläder"),
-    ("Joey", ""),  # Only first name provided
-    ("Luigi", "Vingani"),
-    ("Lelia", "Fuchs"),
-    ("Jasper", "Sammer"),
-    ("Frosso", "Zachou"),
-    ("Sebastian", "Dittmeier"),
-    ("Giulia", "Fazzino"),
-    ("Abhi", "Nandi")
-]
+# Debug-only passive user creation will only use users configured via
+# the `users` environment variable. If no env var is present, the
+# debug setup will skip creating passive users (no built-in defaults).
 
 
-async def setup_debug_passive_users() -> None:
-    """
-    Create all debug passive users if they don't already exist.
-
-    This function iterates through the DEBUG_PASSIVE_USERS list and creates
-    each user if they don't already exist in the database. It's safe to call
-    multiple times as it checks for existing users before creating new ones.
-
-    Returns:
-        None
-
-    Raises:
-        Exception: If there are issues with database operations
-    """
-    logger.info("Starting passive user creation...")
-
-    created_count = 0
-    existing_count = 0
-    failed_count = 0
-
-    for first_name, last_name in DEBUG_PASSIVE_USERS:
-        try:
-            # Handle case where last name is empty string
-            last_name_to_use = last_name if last_name.strip() else None
-
-            # Check if user already exists
-            existing_user = await handlers.find_passive_user_by_name(
-                first_name=first_name,
-                last_name=last_name_to_use
-            )
-
-            if existing_user:
-                logger.debug(f"User already exists: {existing_user.display_name}")
-                existing_count += 1
-                continue
-
-            # Create the passive user
-            new_user = await handlers.create_passive_user(
-                first_name=first_name,
-                last_name=last_name_to_use
-            )
-
-            logger.info(f"Created: {new_user.display_name}")
-            created_count += 1
-
-        except ValueError as e:
-            # User already exists as Telegram user - this is expected, not an error
-            logger.debug(f"Skipped {first_name} {last_name}: {str(e)}")
-            existing_count += 1
-        except Exception as e:
-            logger.error(
-                f"Failed to create passive user (first_name={first_name}, last_name={last_name})",
-                extra_tag="DB",
-                exc=e,
-            )
-            failed_count += 1
-
-    logger.info(f"Debug setup complete: {created_count} created, {existing_count} existing, {failed_count} failed")
+# Debug passive-user creation helpers have been removed; debug setup
+# now only manages development-only defaults. Use `src.initial_setup` for
+# production first-start behavior and env-driven passive-user creation.
 
 
-async def cleanup_debug_passive_users() -> None:
-    """
-    Remove all debug passive users from the database.
-
-    This function is the opposite of setup_debug_passive_users(). It finds
-    and removes all users that match the names in DEBUG_PASSIVE_USERS.
-    Use this for cleanup after testing.
-
-    WARNING: This will permanently delete users and their associated data!
-
-    Returns:
-        None
-
-    Raises:
-        Exception: If there are issues with database operations
-    """
-    logger.info("Starting passive user removal...")
-
-    removed_count = 0
-    not_found_count = 0
-    failed_count = 0
-
-    for first_name, last_name in DEBUG_PASSIVE_USERS:
-        try:
-            # Handle case where last name is empty string
-            last_name_to_use = last_name if last_name.strip() else None
-
-            # Find the user
-            existing_user = await handlers.find_passive_user_by_name(
-                first_name=first_name,
-                last_name=last_name_to_use
-            )
-
-            if not existing_user:
-                logger.debug(f"User not found: {first_name} {last_name or '(no last name)'}")
-                not_found_count += 1
-                continue
-
-            # Remove the user (you'll need to implement this method)
-            # await repo.delete_passive_user(existing_user.id)
-            logger.debug(f"Would remove: {existing_user.display_name} (deletion not implemented)")
-            # For now, just count as removed since deletion method needs to be implemented
-            removed_count += 1
-
-        except Exception as e:
-            logger.error(
-                f"Failed to remove passive user (first_name={first_name}, last_name={last_name})",
-                extra_tag="DB",
-                exc=e,
-            )
-            failed_count += 1
-
-    logger.info(f"Debug cleanup complete: {removed_count} removed, {not_found_count} not found, {failed_count} failed")
+# cleanup helper removed
 
 
 def is_debug_mode() -> bool:
@@ -228,7 +108,7 @@ async def run_debug_setup_if_enabled() -> None:
     """
     # Only setup defaults and passive users if in debug mode
     if is_debug_mode():
-        logger.info("Debug mode detected, setting up defaults and passive users...")
+        logger.info("Debug mode detected, setting up development defaults (passive-user creation handled via .env or initial_setup)")
         repo = get_repo()
 
         # IMPORTANT: do not reset defaults on every startup.
@@ -243,8 +123,6 @@ async def run_debug_setup_if_enabled() -> None:
             await repo.setup_defaults()  # type: ignore - repo is BeanieRepository at runtime
         else:
             logger.info("Defaults already exist; skipping setup_defaults()")
-
-        await setup_debug_passive_users()
     else:
         logger.debug("Debug mode not enabled, skipping debug setup")
 
@@ -253,9 +131,5 @@ if __name__ == "__main__":
     """
     Allow running this module directly for manual testing.
     """
-    if len(sys.argv) > 1 and sys.argv[1] == "cleanup":
-        # Run cleanup
-        asyncio.run(cleanup_debug_passive_users())
-    else:
-        # Run setup
-        asyncio.run(setup_debug_passive_users())
+    # Run debug-only setup (defaults) when invoked directly
+    asyncio.run(run_debug_setup_if_enabled())

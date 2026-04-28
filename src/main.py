@@ -11,7 +11,7 @@ from src.api.telethon_api import TelethonAPI
 from src.routers import users, admin, coffee
 from src.dependencies.dependencies import get_repo
 from src.common.log import Logger
-from src.temp_debug_setup import run_debug_setup_if_enabled
+from src.initial_setup import run_initial_setup
 from src.bot.settings_manager import SettingsManager
 from src.services.gsheet_sync import run_periodic_gsheet_sync, set_gsheet_sync_api, warmup_gsheet_api
 from src.services.weekly_snapshots import run_periodic_weekly_full_snapshots
@@ -53,8 +53,8 @@ async def lifespan(app: FastAPI):
         # Allow gsheet sync service to send Telegram notifications (conflicts).
         set_gsheet_sync_api(telethon_api)
 
-        # Run debug setup (dev-only operations like defaults and passive users)
-        await run_debug_setup_if_enabled()
+        # Run initial one-time setup (defaults + passive users)
+        await run_initial_setup()
         
         # Initialize application settings from database
         await SettingsManager.initialize_log_settings_from_db()

@@ -58,15 +58,6 @@ not working:
 
 
 
-## Adding default users:
-
-Can you add a list to the .env file and .env.examplse, which will be interpreted as passive users, which are predefined.
-This list will be used to define new passive users on the first startup, with the first word being the first name and the last word the last name. If there is only one, leave a way the last name, for more than two ignore the middle ones
-
-users=[Lukas Mandok, Borys Oppenländer, Heiko Augustin, David Immig, David Fritz, André Schöning, Tamasi Kar, Benjamin Weinläder, Joey, Lelia Fuchs, Frosso Zachou, Sebasitian Dittmeier, Giulia Fazzino, Abhi Nadi, Luigi Vigani, Antonis Kontopoulos, Thomas Schwartze, Abhi Nandi]
-[@.env](file:///C:/Users/Lukas/git/coffee%20bot/telegram_coffee_bot_backend/.env) [@.env.example](file:///C:/Users/Lukas/git/coffee%20bot/telegram_coffee_bot_backend/.env.example)
-
-
 ## Settings
 
 The Settings Menu is the last remaining big construction site.

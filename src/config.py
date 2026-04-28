@@ -57,6 +57,9 @@ class AppConfig(BaseSettings):
     GSHEET_SYNC_INTERVAL_SECONDS: int = 900
     
     DEBUG_MODE: bool = False  # Enable debug mode for development/testing
+    # Optional env var to provide a comma-separated/passive-user list.
+    # Stored as raw string; parsing is handled by `src.initial_setup`.
+    USERS: Optional[str] = None
     
     @field_validator('SERVICE_ACCOUNT_PRIVATE_KEY')
     @classmethod
