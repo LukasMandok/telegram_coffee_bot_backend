@@ -13,10 +13,6 @@ remaining:
 - settings submenu inntegration
 
 
-Signup:
-- convert to message flow
-- allow a skip button for the last name
-
 Coffee Cards:
 - Royalty system (adjustable in the settings). either an adjustable amount of free coffee for the creditor or that he doesn't have to contribute to missing coffees.
 
@@ -27,6 +23,7 @@ Snapshots:
 Spreadsheet:
 - after a card is completed, in the syncing process to GSHEET, the card is still marked as active there
 (- if a card is completed because all coffees were used up it does not update the spreadsheet but earlier when the session was closed, so the card is not marked as completed in google spreadsheet yet)
+- prevent from periodic checking if syncs are enabled if it is turned off -> this should only be sheduled, if the settings is turned on (or is already on at bot startup)
 
 Credit menu:
 - Schredder still appears with 0 outstandign credit, so I think that debts might not be correctly marked as paid at all places
@@ -76,3 +73,6 @@ maybe it makes sense to implement an own toggle button in message flow (message_
 - allow users changing their own Display Name in the settings
 - allow the admin to modify the admin password in the settings
 - Settings for vanishing messages are currently not consistent between bot restarts. It looks like they are not correctly saved in the database or are overwritten by another place. (But maybe this is not the case anymore.)
+
+
+- refactor users handler to a full user_manager

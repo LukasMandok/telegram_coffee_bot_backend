@@ -20,6 +20,15 @@ from ..common.helpers import hash_password
 from .snapshot_manager import SnapshotManager
 
 
+# Raised when an automatic display-name cannot be generated because an existing
+# user already has the identical first+last name. The flow should catch this
+# and ask the registering user to pick a custom display name.
+class DisplayNameConflictError(Exception):
+    def __init__(self, existing_display_name: str):
+        super().__init__(f"Display name conflict with existing display name: {existing_display_name}")
+        self.existing_display_name = existing_display_name
+
+
 class BeanieRepository(BaseRepository):
     _instance = None
 
@@ -274,6 +283,7 @@ class BeanieRepository(BaseRepository):
         photo_id: Optional[int] = None,
         lang_code: str = "en",
         paypal_link: Optional[str] = None,
+        display_name: Optional[str] = None,
     ):
         """Create a new TelegramUser in the database."""
         try:
@@ -282,8 +292,9 @@ class BeanieRepository(BaseRepository):
             if existing_user:
                 self.logger.warning(f"create_telegram_user skipped (user_id={user_id} already exists)", extra_tag="DB")
                 return existing_user
-
-            display_name = await self._generate_unique_display_name(first_name, last_name)
+            # Use provided display_name if given, otherwise generate a unique one
+            if display_name is None:
+                display_name = await self._generate_unique_display_name(first_name, last_name)
             self.logger.debug(f"Creating user: {display_name} (id={user_id})")
             
             new_user = models.TelegramUser(
@@ -336,13 +347,29 @@ class BeanieRepository(BaseRepository):
             str: Unique display name
         """
         candidate_name = first_name
-        
+
+        # If a user with the exact same first+last name already exists (either
+        # PassiveUser or TelegramUser), treat this as a conflict that requires
+        # manual display-name selection by the registering user.
+        if first_name and (last_name is not None):
+            existing_same_telegram = await models.TelegramUser.find_one(
+                models.TelegramUser.first_name == first_name,
+                models.TelegramUser.last_name == last_name,
+            )
+            existing_same_passive = await models.PassiveUser.find_one(
+                models.PassiveUser.first_name == first_name,
+                models.PassiveUser.last_name == last_name,
+            )
+            existing_same = existing_same_telegram or existing_same_passive
+            if existing_same:
+                raise DisplayNameConflictError(existing_same.display_name)
+
         # Check for conflicts in both TelegramUser and PassiveUser collections
         existing_telegram_user = await models.TelegramUser.find_one(models.TelegramUser.display_name == candidate_name)
         existing_passive_user = await models.PassiveUser.find_one(models.PassiveUser.display_name == candidate_name)
-        
+
         existing_user = existing_telegram_user or existing_passive_user
-        
+
         if not existing_user:
             return candidate_name
 
@@ -457,14 +484,16 @@ class BeanieRepository(BaseRepository):
         photo_id: Optional[int] = None,
         lang_code: str = "en",
         paypal_link: Optional[str] = None,
+        display_name: Optional[str] = None,
     ) -> models.TelegramUser:
         """Convert a PassiveUser to a TelegramUser by transferring data and deleting the passive user."""
         try:
             # Use provided names or fall back to passive user's names
             final_first_name = first_name if first_name is not None else passive_user.first_name
             final_last_name = last_name if last_name is not None else passive_user.last_name
-            # Use the existing display name from the passive user (it's already unique and correct)
-            display_name = passive_user.display_name
+            # Use provided display_name if present, otherwise use the passive user's display name
+            if display_name is None:
+                display_name = passive_user.display_name
             self.logger.info(f"Converting passive user '{display_name}' to Telegram user (id={user_id})")
             
             # Create new TelegramUser with data from PassiveUser

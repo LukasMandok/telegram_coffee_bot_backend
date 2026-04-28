@@ -44,7 +44,7 @@ class BaseRepository(ABC):
         pass
     
     @abstractmethod
-    async def create_telegram_user(self, user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en", paypal_link: Optional[str] = None) -> Any:
+    async def create_telegram_user(self, user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en", paypal_link: Optional[str] = None, display_name: Optional[str] = None) -> Any:
         pass
     
     @abstractmethod
@@ -56,7 +56,7 @@ class BaseRepository(ABC):
         pass
     
     @abstractmethod
-    async def convert_passive_to_telegram_user(self, passive_user: Any, user_id: int, username: str, first_name: Optional[str] = None, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en", paypal_link: Optional[str] = None) -> Any:
+    async def convert_passive_to_telegram_user(self, passive_user: Any, user_id: int, username: str, first_name: Optional[str] = None, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en", paypal_link: Optional[str] = None, display_name: Optional[str] = None) -> Any:
         pass
     
     @abstractmethod
