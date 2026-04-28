@@ -15,6 +15,7 @@ from .common.log import Logger
 from .dependencies.dependencies import get_repo
 from .handlers import users as handlers
 from .models import beanie_models as models
+from .config import app_config
 
 logger = Logger("InitialSetup")
 
@@ -31,7 +32,13 @@ def parse_passive_users_env() -> List[Tuple[str, str]]:
     If only one word is provided, last name will be an empty string.
     Middle names (when more than two words) are ignored.
     """
-    raw = os.getenv("users") or os.getenv("USERS") or ""
+    # Prefer pydantic-loaded config value if available (app_config.USERS),
+    # fall back to environment variables for backwards compatibility.
+    raw = None
+    if getattr(app_config, "USERS", None):
+        raw = app_config.USERS
+    else:
+        raw = os.getenv("users") or os.getenv("USERS") or ""
     raw = raw.strip()
     if not raw:
         return []
@@ -56,7 +63,7 @@ def parse_passive_users_env() -> List[Tuple[str, str]]:
         first = parts[0]
         last = parts[-1] if len(parts) > 1 else ""
         parsed.append((first, last))
-
+    logger.debug(f"Parsed passive users from env: {parsed}")
     return parsed
 
 

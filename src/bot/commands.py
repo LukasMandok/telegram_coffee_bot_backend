@@ -174,6 +174,7 @@ class CommandManager:
             )
 
     @dep.verify_admin
+    @dep.verify_user
     async def handle_sync_command(self, event: events.NewMessage.Event) -> None:
         """Admin command to trigger a one-shot export to Google Sheets."""
         user_id = event.sender_id
@@ -279,6 +280,7 @@ class CommandManager:
             )
 
     @dep.verify_admin
+    @dep.verify_user
     async def handle_snapshots_command(self, event: events.NewMessage.Event) -> None:
         """Admin command to manage snapshots via a MessageFlow conversation."""
         user_id = event.sender_id
@@ -290,6 +292,7 @@ class CommandManager:
         await self.api.conversation_manager.snapshots_conversation(user_id)
 
     @dep.verify_admin
+    @dep.verify_user
     async def handle_users_command(self, event: events.NewMessage.Event) -> None:
         """Admin command to manage users via a MessageFlow conversation."""
         user_id = event.sender_id
