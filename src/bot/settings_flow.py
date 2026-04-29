@@ -25,7 +25,9 @@ from .message_flow_helpers import (
     NavigationButtons,
     toggle_button,
     ExitStateBuilder,
+    StagingManager,
     IntegerParser,
+        apply_update_or_notify,
     CommonCallbacks,
     CommonStateIds,
 )
@@ -64,6 +66,27 @@ STATE_SAVE_RESULT = "settings_saved"
 def create_settings_flow() -> MessageFlow:
     """Create the MessageFlow that implements the settings UI."""
     flow = MessageFlow()
+
+    # Small helpers to reduce repetition when updating settings
+    async def _user_update(flow_state, api, user_id: int, **kwargs) -> bool:
+        repo = api.conversation_manager.repo
+        return await apply_update_or_notify(
+            flow_state,
+            api,
+            user_id,
+            repo.update_user_settings(user_id, **kwargs),
+            clear_keys=["user_settings"],
+        )
+
+    async def _global_update(flow_state, api, user_id: int, coro) -> bool:
+        # `coro` is a coroutine returned by a repo.update_* call
+        return await apply_update_or_notify(flow_state, api, user_id, coro)
+
+    async def _toggle_user(flow_state, api, user_id: int, attr: str, field: Optional[str] = None) -> bool:
+        us = await api.conversation_manager.repo.get_user_settings(user_id)
+        new_val = not bool(getattr(us, attr, False))
+        return await _user_update(flow_state, api, user_id, **{field or attr: new_val})
+
 
     # ------------------ Main menu ------------------
     async def build_main_text(flow_state, api, user_id) -> str:
@@ -161,19 +184,9 @@ def create_settings_flow() -> MessageFlow:
             )
             return STATE_PAGE_SIZE
 
-        success = await api.conversation_manager.repo.update_user_settings(user_id, group_page_size=val)
-        if not success:
-            await api.message_manager.send_text(
-                user_id,
-                "❌ Failed to save settings. Please try again.",
-                vanish=True,
-                conv=False,
-                delete_after=3,
-            )
+        ok = await _user_update(flow_state, api, user_id, group_page_size=val)
+        if not ok:
             return STATE_PAGE_SIZE
-
-        # Invalidate cached user_settings so parent will re-fetch
-        flow_state.clear("user_settings")
         return STATE_ORDERING
 
     flow.add_state(MessageDefinition(
@@ -202,11 +215,9 @@ def create_settings_flow() -> MessageFlow:
     async def handle_sorting_button(data: str, flow_state, api, user_id) -> Optional[str]:
         if data not in ("alphabetical", "coffee_count"):
             return None
-        success = await api.conversation_manager.repo.update_user_settings(user_id, group_sort_by=data)
-        if not success:
-            await api.message_manager.send_text(user_id, "❌ Failed to update settings", vanish=True, conv=False, delete_after=3)
+        ok = await _user_update(flow_state, api, user_id, group_sort_by=data)
+        if not ok:
             return STATE_SORTING
-        flow_state.clear("user_settings")
         return STATE_ORDERING
 
     flow.add_state(make_state(
@@ -232,14 +243,8 @@ def create_settings_flow() -> MessageFlow:
         return sm.get_vanishing_submenu_keyboard(settings)
 
     async def handle_vanishing_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        settings = await api.conversation_manager.repo.get_user_settings(user_id)
         if data == "toggle":
-            new_value = not bool(getattr(settings, "vanishing_enabled", False))
-            success = await api.conversation_manager.repo.update_user_settings(user_id, vanishing_enabled=new_value)
-            if not success:
-                await api.message_manager.send_text(user_id, "❌ Failed to update settings", vanish=True, conv=False, delete_after=3)
-                return STATE_VANISHING
-            flow_state.clear("user_settings")
+            await _toggle_user(flow_state, api, user_id, "vanishing_enabled")
             return STATE_VANISHING
         if data == "threshold":
             return STATE_VANISHING_THRESHOLD
@@ -271,11 +276,9 @@ def create_settings_flow() -> MessageFlow:
         if val is None or val < 1 or val > 10:
             await api.message_manager.send_text(user_id, "❌ Invalid input. Please enter a number between 1 and 10.", vanish=True, conv=True, delete_after=3)
             return STATE_VANISHING_THRESHOLD
-        success = await api.conversation_manager.repo.update_user_settings(user_id, vanishing_threshold=val)
-        if not success:
-            await api.message_manager.send_text(user_id, "❌ Failed to save settings. Please try again.", vanish=True, conv=False, delete_after=3)
+        ok = await _user_update(flow_state, api, user_id, vanishing_threshold=val)
+        if not ok:
             return STATE_VANISHING_THRESHOLD
-        flow_state.clear("user_settings")
         return STATE_VANISHING
 
     flow.add_state(MessageDefinition(
@@ -303,23 +306,12 @@ def create_settings_flow() -> MessageFlow:
         return sm.get_user_notifications_submenu_keyboard(user_settings, notification_settings)
 
     async def handle_user_notifications_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        user_settings = await api.conversation_manager.repo.get_user_settings(user_id)
         if data == "toggle_user_notifications":
-            new_value = not bool(getattr(user_settings, "notifications_enabled", True))
-            updated = await api.conversation_manager.repo.update_user_settings(user_id, notifications_enabled=new_value)
-            if not updated:
-                await api.message_manager.send_text(user_id, "❌ Failed to update settings", vanish=True, conv=False, delete_after=3)
-                return STATE_USER_NOTIFICATIONS
-            flow_state.clear("user_settings")
+            await _toggle_user(flow_state, api, user_id, "notifications_enabled")
             return STATE_USER_NOTIFICATIONS
 
         if data == "toggle_user_silent":
-            new_value = not bool(getattr(user_settings, "notifications_silent", False))
-            updated = await api.conversation_manager.repo.update_user_settings(user_id, notifications_silent=new_value)
-            if not updated:
-                await api.message_manager.send_text(user_id, "❌ Failed to update settings", vanish=True, conv=False, delete_after=3)
-                return STATE_USER_NOTIFICATIONS
-            flow_state.clear("user_settings")
+            await _toggle_user(flow_state, api, user_id, "notifications_silent")
             return STATE_USER_NOTIFICATIONS
 
         return None
@@ -417,21 +409,15 @@ def create_settings_flow() -> MessageFlow:
         log_settings = await repo.get_log_settings() or {}
         if data == "toggle_time":
             new_value = not log_settings.get("log_show_time", True)
-            success = await repo.update_log_settings(log_show_time=new_value)
-            if not success:
-                await api.message_manager.send_text(user_id, "❌ Failed to update settings", vanish=True, conv=False, delete_after=3)
+            await _global_update(flow_state, api, user_id, repo.update_log_settings(log_show_time=new_value))
             return STATE_LOGGING_FORMAT
         if data == "toggle_caller":
             new_value = not log_settings.get("log_show_caller", True)
-            success = await repo.update_log_settings(log_show_caller=new_value)
-            if not success:
-                await api.message_manager.send_text(user_id, "❌ Failed to update settings", vanish=True, conv=False, delete_after=3)
+            await _global_update(flow_state, api, user_id, repo.update_log_settings(log_show_caller=new_value))
             return STATE_LOGGING_FORMAT
         if data == "toggle_class":
             new_value = not log_settings.get("log_show_class", True)
-            success = await repo.update_log_settings(log_show_class=new_value)
-            if not success:
-                await api.message_manager.send_text(user_id, "❌ Failed to update settings", vanish=True, conv=False, delete_after=3)
+            await _global_update(flow_state, api, user_id, repo.update_log_settings(log_show_class=new_value))
             return STATE_LOGGING_FORMAT
         return None
 
@@ -461,9 +447,8 @@ def create_settings_flow() -> MessageFlow:
         repo = api.conversation_manager.repo
         if not data:
             return None
-        success = await repo.update_log_settings(log_level=data)
-        if not success:
-            await api.message_manager.send_text(user_id, "❌ Failed to update settings", vanish=True, conv=False, delete_after=3)
+        ok = await _global_update(flow_state, api, user_id, repo.update_log_settings(log_level=data))
+        if not ok:
             return STATE_LOG_LEVEL
         return STATE_LOGGING
 
@@ -478,53 +463,25 @@ def create_settings_flow() -> MessageFlow:
         parent_state=STATE_LOGGING,
     ))
 
-    # Logging modules editor (paginated)
-    def _make_module_button(module_name: str, display: str, idx: int, current_state_getter: Callable[[], str]):
-        label = display
-        callback = f"m_{idx}"
-
-        async def _handler(flow_state, api, user_id) -> Optional[str]:
-            # Toggle staging for this module
-            pending: Dict[str, str] = flow_state.get("logging_pending_overrides", {}) or {}
-            db_overrides = (await api.conversation_manager.repo.get_log_settings()) or {}
-            existing = dict(db_overrides.get("log_module_overrides", {}) or {})
-            current_state = flow_state.get("logging_current_state_index")
-            if current_state is None:
-                # Initialize
-                cur_level = (db_overrides.get("log_level") or "INFO").upper()
-                flow_state.set("logging_current_state_index", LOG_STATE_SEQUENCE.index(cur_level) if cur_level in LOG_STATE_SEQUENCE else 2)
-                current_state = flow_state.get("logging_current_state_index")
-
-            cur_idx = int(flow_state.get("logging_current_state_index") or 0)
-            target_level = LOG_STATE_SEQUENCE[cur_idx]
-
-            if module_name in pending:
-                pending.pop(module_name, None)
-            else:
-                pending[module_name] = target_level
-
-            flow_state.set("logging_pending_overrides", pending)
-            # Refresh cached pagination items so the button labels update immediately
-            try:
-                if STATE_LOGGING_MODULES in flow_state.pagination_state:
-                    new_items = await pagination_items_builder(flow_state, api, user_id)
-                    flow_state.pagination_state[STATE_LOGGING_MODULES]["items"] = new_items
-            except Exception:
-                # Best-effort refresh; ignore errors so UI still functions
-                pass
-            return STATE_LOGGING_MODULES
-
-        return ButtonCallback(f"{label}", callback, callback_handler=_handler)
+    # Logging modules editor (paginated) — simplified using StagingManager
+    async def _ensure_logging_current_state(flow_state, api):
+        db_log_settings = await api.conversation_manager.repo.get_log_settings() or {}
+        global_level = (db_log_settings.get("log_level") or "INFO").upper()
+        if global_level not in LOG_STATE_SEQUENCE:
+            global_level = "INFO"
+        if flow_state.get("logging_current_state_index") is None:
+            idx = LOG_STATE_SEQUENCE.index(global_level) if global_level in LOG_STATE_SEQUENCE else 2
+            flow_state.set("logging_current_state_index", idx)
 
     async def pagination_items_builder(flow_state, api, user_id):
-        # Build list of (module_name, label) where label includes current state icon
         repo = api.conversation_manager.repo
         db_log_settings = await repo.get_log_settings() or {}
         global_level = (db_log_settings.get("log_level") or "INFO").upper()
         if global_level not in LOG_STATE_SEQUENCE:
             global_level = "INFO"
 
-        pending = flow_state.get("logging_pending_overrides") or {}
+        staging = StagingManager(flow_state, "logging_pending_overrides")
+        pending = staging.get_staged() or {}
         existing_overrides = dict(db_log_settings.get("log_module_overrides", {}) or {})
 
         items: list[tuple[str, str]] = []
@@ -547,8 +504,31 @@ def create_settings_flow() -> MessageFlow:
 
     def pagination_item_button_builder(item, idx):
         module_name, label = item
-        # Use a simple string getter; actual handler closure created above will access flow_state
-        return _make_module_button(module_name, label, idx, lambda: "")
+
+        def _make_toggle(module: str):
+            async def _handler(flow_state, api, user_id) -> Optional[str]:
+                await _ensure_logging_current_state(flow_state, api)
+                staging = StagingManager(flow_state, "logging_pending_overrides")
+                cur_idx = int(flow_state.get("logging_current_state_index") or 0)
+                target_level = LOG_STATE_SEQUENCE[cur_idx]
+
+                if module in staging.get_staged():
+                    staging.unstage(module)
+                else:
+                    staging.stage(module, target_level)
+
+                # Refresh pagination items so labels update immediately
+                try:
+                    if STATE_LOGGING_MODULES in flow_state.pagination_state:
+                        new_items = await pagination_items_builder(flow_state, api, user_id)
+                        flow_state.pagination_state[STATE_LOGGING_MODULES]["items"] = new_items
+                except Exception:
+                    pass
+                return STATE_LOGGING_MODULES
+
+            return _handler
+
+        return ButtonCallback(label, f"m_{idx}", callback_handler=_make_toggle(module_name))
 
     async def pagination_extras(flow_state, api, user_id) -> List[List[ButtonCallback]]:
         # Build state selector and apply/back row
@@ -583,7 +563,8 @@ def create_settings_flow() -> MessageFlow:
             current_index = LOG_STATE_SEQUENCE.index(global_level) if global_level in LOG_STATE_SEQUENCE else 2
             flow_state.set("logging_current_state_index", current_index)
 
-        pending = flow_state.get("logging_pending_overrides") or {}
+        staging = StagingManager(flow_state, "logging_pending_overrides")
+        pending = staging.get_staged() or {}
         lines = [
             "🧩 **Module Logging**",
             "",
@@ -609,18 +590,24 @@ def create_settings_flow() -> MessageFlow:
             flow_state.set("logging_current_state_index", idx)
             return STATE_LOGGING_MODULES
         if data == "apply":
-            pending = flow_state.get("logging_pending_overrides") or {}
+            staging = StagingManager(flow_state, "logging_pending_overrides")
+            pending = staging.get_staged() or {}
             db_log_settings = await api.conversation_manager.repo.get_log_settings() or {}
             existing_overrides = dict(db_log_settings.get("log_module_overrides", {}) or {})
             new_overrides = dict(existing_overrides)
             for k, v in (pending or {}).items():
                 new_overrides[k] = v
-            success = await api.conversation_manager.repo.update_log_settings(log_module_overrides=new_overrides)
-            if not success:
-                await api.message_manager.send_text(user_id, "❌ Failed to apply module logging settings.", vanish=True, conv=False, delete_after=3)
+            ok = await apply_update_or_notify(
+                flow_state,
+                api,
+                user_id,
+                api.conversation_manager.repo.update_log_settings(log_module_overrides=new_overrides),
+                error_text="❌ Failed to apply module logging settings.",
+            )
+            if not ok:
                 return STATE_LOGGING_MODULES
             # clear staging
-            flow_state.set("logging_pending_overrides", {})
+            staging.clear()
             return STATE_LOGGING
         if data == "noop":
             return STATE_LOGGING_MODULES
@@ -657,21 +644,16 @@ def create_settings_flow() -> MessageFlow:
         if data == "toggle_notifications":
             ns = await api.conversation_manager.repo.get_notification_settings()
             new_value = not bool(ns.get("notifications_enabled", True))
-            success = await api.conversation_manager.repo.update_notification_settings(notifications_enabled=new_value)
-            if not success:
-                await api.message_manager.send_text(user_id, "❌ Failed to update settings", vanish=True, conv=False, delete_after=3)
+            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_notification_settings(notifications_enabled=new_value))
             return STATE_NOTIFICATIONS
 
         if data == "toggle_silent":
             ns = await api.conversation_manager.repo.get_notification_settings()
             if not ns.get("notifications_enabled", True):
-                # notify via popup-like message
                 await api.message_manager.send_text(user_id, "❌ Enable notifications first!", vanish=True, conv=False, delete_after=3)
                 return STATE_NOTIFICATIONS
             new_value = not bool(ns.get("notifications_silent", False))
-            success = await api.conversation_manager.repo.update_notification_settings(notifications_silent=new_value)
-            if not success:
-                await api.message_manager.send_text(user_id, "❌ Failed to update settings", vanish=True, conv=False, delete_after=3)
+            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_notification_settings(notifications_silent=new_value))
             return STATE_NOTIFICATIONS
 
         return None
@@ -728,9 +710,8 @@ def create_settings_flow() -> MessageFlow:
         if data not in ("debt_method_absolute", "debt_method_proportional"):
             return None
         new_method = "absolute" if data == "debt_method_absolute" else "proportional"
-        success = await api.conversation_manager.repo.update_debt_settings(correction_method=new_method)
-        if not success:
-            await api.message_manager.send_text(user_id, "❌ Failed to save settings. Please try again.", vanish=True, conv=False, delete_after=3)
+        ok = await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_debt_settings(correction_method=new_method))
+        if not ok:
             return STATE_DEBT_METHOD
         return STATE_DEBTS
 
@@ -763,9 +744,8 @@ def create_settings_flow() -> MessageFlow:
         if val is None or val < 0 or val > 50:
             await api.message_manager.send_text(user_id, "❌ Invalid input. Please enter a number between 0 and 50.", vanish=True, conv=True, delete_after=3)
             return STATE_DEBT_THRESHOLD
-        success = await api.conversation_manager.repo.update_debt_settings(correction_threshold=val)
-        if not success:
-            await api.message_manager.send_text(user_id, "❌ Failed to save settings. Please try again.", vanish=True, conv=False, delete_after=3)
+        ok = await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_debt_settings(correction_threshold=val))
+        if not ok:
             return STATE_DEBT_THRESHOLD
         return STATE_DEBTS
 
@@ -797,21 +777,15 @@ def create_settings_flow() -> MessageFlow:
             return STATE_GSHEET_SET_PERIOD
         if data == "toggle_periodic":
             new_value = not bool(getattr(g, "periodic_sync_enabled", False))
-            success = await api.conversation_manager.repo.update_gsheet_settings(periodic_sync_enabled=new_value)
-            if not success:
-                await api.message_manager.send_text(user_id, "❌ Failed to save settings. Please try again.", vanish=True, conv=False, delete_after=3)
+            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_gsheet_settings(periodic_sync_enabled=new_value))
             return STATE_GSHEET
         if data == "toggle_two_way":
             new_value = not bool(getattr(g, "two_way_sync_enabled", False))
-            success = await api.conversation_manager.repo.update_gsheet_settings(two_way_sync_enabled=new_value)
-            if not success:
-                await api.message_manager.send_text(user_id, "❌ Failed to save settings. Please try again.", vanish=True, conv=False, delete_after=3)
+            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_gsheet_settings(two_way_sync_enabled=new_value))
             return STATE_GSHEET
         if data == "toggle_after_actions":
             new_value = not bool(getattr(g, "sync_after_actions_enabled", False))
-            success = await api.conversation_manager.repo.update_gsheet_settings(sync_after_actions_enabled=new_value)
-            if not success:
-                await api.message_manager.send_text(user_id, "❌ Failed to save settings. Please try again.", vanish=True, conv=False, delete_after=3)
+            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_gsheet_settings(sync_after_actions_enabled=new_value))
             return STATE_GSHEET
         return None
 
@@ -841,9 +815,8 @@ def create_settings_flow() -> MessageFlow:
         if val is None or val < 1 or val > 24 * 60:
             await api.message_manager.send_text(user_id, "❌ Invalid input. Please enter a number between 1 and 1440.", vanish=True, conv=True, delete_after=3)
             return STATE_GSHEET_SET_PERIOD
-        success = await api.conversation_manager.repo.update_gsheet_settings(sync_period_minutes=val)
-        if not success:
-            await api.message_manager.send_text(user_id, "❌ Failed to save settings. Please try again.", vanish=True, conv=False, delete_after=3)
+        ok = await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_gsheet_settings(sync_period_minutes=val))
+        if not ok:
             return STATE_GSHEET_SET_PERIOD
         return STATE_GSHEET
 
@@ -902,9 +875,8 @@ def create_settings_flow() -> MessageFlow:
         if val is None or val < 1 or val > 200:
             await api.message_manager.send_text(user_id, "❌ Invalid input. Please enter a number between 1 and 200.", vanish=True, conv=True, delete_after=3)
             return STATE_SNAPSHOT_SET_KEEP_LAST
-        success = await api.conversation_manager.repo.update_snapshot_settings(keep_last=val)
-        if not success:
-            await api.message_manager.send_text(user_id, "❌ Failed to save settings. Please try again.", vanish=True, conv=False, delete_after=3)
+        ok = await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_snapshot_settings(keep_last=val))
+        if not ok:
             return STATE_SNAPSHOT_SET_KEEP_LAST
         return STATE_SNAPSHOTS
 
@@ -934,27 +906,19 @@ def create_settings_flow() -> MessageFlow:
         s = await api.conversation_manager.repo.get_snapshot_settings()
         if data == "toggle_card_closed":
             new = not bool(getattr(s, "card_closed", True))
-            success = await api.conversation_manager.repo.update_snapshot_settings(card_closed=new)
-            if not success:
-                await api.message_manager.send_text(user_id, "❌ Failed to save settings. Please try again.", vanish=True, conv=False, delete_after=3)
+            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_snapshot_settings(card_closed=new))
             return STATE_SNAPSHOT_CREATION_POINTS
         if data == "toggle_session_completed":
             new = not bool(getattr(s, "session_completed", True))
-            success = await api.conversation_manager.repo.update_snapshot_settings(session_completed=new)
-            if not success:
-                await api.message_manager.send_text(user_id, "❌ Failed to save settings. Please try again.", vanish=True, conv=False, delete_after=3)
+            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_snapshot_settings(session_completed=new))
             return STATE_SNAPSHOT_CREATION_POINTS
         if data == "toggle_quick_order":
             new = not bool(getattr(s, "quick_order", False))
-            success = await api.conversation_manager.repo.update_snapshot_settings(quick_order=new)
-            if not success:
-                await api.message_manager.send_text(user_id, "❌ Failed to save settings. Please try again.", vanish=True, conv=False, delete_after=3)
+            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_snapshot_settings(quick_order=new))
             return STATE_SNAPSHOT_CREATION_POINTS
         if data == "toggle_card_created":
             new = not bool(getattr(s, "card_created", True))
-            success = await api.conversation_manager.repo.update_snapshot_settings(card_created=new)
-            if not success:
-                await api.message_manager.send_text(user_id, "❌ Failed to save settings. Please try again.", vanish=True, conv=False, delete_after=3)
+            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_snapshot_settings(card_created=new))
             return STATE_SNAPSHOT_CREATION_POINTS
         return None
 

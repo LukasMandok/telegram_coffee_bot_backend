@@ -19,6 +19,7 @@ from .message_flow_helpers import (
     CommonCallbacks,
     NavigationButtons,
     format_money,
+    apply_update_or_notify,
 )
 from .payment_flow import (
     build_staged_payments_keyboard,
@@ -170,9 +171,11 @@ async def handle_main_buttons(data: str, flow_state, api, user_id) -> Optional[s
         current_mode = _get_view_mode(flow_state)
         new_mode = VIEW_BY_DEBTOR if current_mode == VIEW_BY_CARD else VIEW_BY_CARD
         flow_state.set(KEY_VIEW_MODE, new_mode)
-        await api.conversation_manager.repo.update_user_settings(
+        await apply_update_or_notify(
+            flow_state,
+            api,
             user_id,
-            credit_overview_view_mode=new_mode,
+            api.conversation_manager.repo.update_user_settings(user_id, credit_overview_view_mode=new_mode),
         )
         return None
     

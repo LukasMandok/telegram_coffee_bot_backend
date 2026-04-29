@@ -251,6 +251,38 @@ class IntegerParser:
             return None
 
 
+async def apply_update_or_notify(
+    flow_state: MessageFlowState,
+    api: Any,
+    user_id: int,
+    coro: Awaitable[Any],
+    *,
+    clear_keys: Optional[List[str]] = None,
+    error_text: str = "❌ Failed to save settings. Please try again.",
+    vanish: bool = True,
+    conv: bool = False,
+    delete_after: int = 3,
+) -> bool:
+    """
+    Await a repository-style update coroutine and show a failure notification
+    on error. Optionally clear `flow_state` keys on success.
+    Returns True on success, False on failure.
+    """
+    res = await coro
+    if not res:
+        await api.message_manager.send_text(
+            user_id,
+            error_text,
+            vanish=vanish,
+            conv=conv,
+            delete_after=delete_after,
+        )
+        return False
+    if clear_keys:
+        flow_state.clear(*clear_keys)
+    return True
+
+
 U = TypeVar("U")
 
 
