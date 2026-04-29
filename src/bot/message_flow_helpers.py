@@ -626,6 +626,49 @@ class NavigationButtons:
             ButtonCallback(cancel_text, cancel_callback)
         ]
 
+
+def toggle_button(state: bool, label: str, callback: str, notify_text: Optional[str] = None) -> ButtonCallback:
+    """
+    Create a toggle `ButtonCallback` for use in MessageFlow keyboards.
+
+    - `state`: current boolean state (True = active)
+    - `label`: descriptive label for the toggle (e.g., "Notifications")
+    - `callback`: callback_data string used when the button is pressed
+
+    Visuals/behavior:
+    - Active state -> green dot (🟢)
+    - Inactive state -> red dot (🔴)
+    - Button text shows the action ("Turn Off" / "Turn On") followed by the label
+    """
+    icon = "🟢" if state else "🔴"
+    action = "Turn Off" if state else "Turn On"
+    # `notify_text` can carry an optional short confirmation message that
+    # higher-level flow code or MessageFlow handlers may choose to display
+    # when the button is activated. It is disabled by default (None).
+    if notify_text:
+        register_notify(callback, notify_text)
+    return ButtonCallback(f"{icon} {action} {label}", callback, callback_handler=None, notify_text=notify_text)
+
+
+# Lightweight registry mapping callback_data -> notify_text for keyboards
+# When a button with a registered `notify_text` is pressed, ConversationManager
+# will pop the text and send a short confirmation message to the user.
+_notify_registry: dict[str, str] = {}
+
+
+def register_notify(callback_data: str, notify_text: str) -> None:
+    """Register a short notification text for a callback id."""
+    if not callback_data or not notify_text:
+        return
+    _notify_registry[str(callback_data)] = notify_text
+
+
+def pop_notify(callback_data: str) -> Optional[str]:
+    """Pop and return a registered notify text for a callback id, or None."""
+    if callback_data is None:
+        return None
+    return _notify_registry.pop(str(callback_data), None)
+
 class DynamicListFlow:
     """
     Helper for creating common "list items -> select item -> edit item" flows.

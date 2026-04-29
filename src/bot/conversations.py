@@ -34,6 +34,7 @@ from .message_flow_helpers import (
     CommonFlowKeys,
     IntegerParser,
     MoneyParser,
+    pop_notify,
     get_confirmation_keyboard,
     get_keyboard_callback_filter,
     get_persistent_keyboard,
@@ -589,6 +590,22 @@ class ConversationManager:
 
         data = button_event.data.decode('utf8')
         self.logger.trace(f"callback_received (user_id={user_id}, data={data})", extra_tag="TELEGRAM")
+
+        # If a short notify_text was registered for this callback, send it now.
+        try:
+            notify_text = pop_notify(data)
+            if notify_text:
+                # Send a small transient text message (not a popup)
+                await self.api.message_manager.send_text(
+                    user_id,
+                    notify_text,
+                    vanish=False,
+                    conv=False,
+                    delete_after=2,
+                )
+        except Exception:
+            # Don't let notify failures break the conversation flow
+            pass
 
         if return_event:
             # Don't answer yet - let caller send custom popup notification
@@ -1235,7 +1252,7 @@ class ConversationManager:
             
             # Use SettingsManager to generate user notifications submenu
             notifications_text = self.settings_manager.get_user_notifications_submenu_text(user_settings, notification_settings)
-            keyboard = self.settings_manager.get_user_notifications_submenu_keyboard()
+            keyboard = self.settings_manager.get_user_notifications_submenu_keyboard(user_settings, notification_settings)
             
             # Edit the existing message and get button event
             data, message, event = await self.edit_keyboard_and_wait_response(
@@ -1258,13 +1275,14 @@ class ConversationManager:
                 if updated_settings:
                     user_settings = updated_settings
                     status = "enabled" if new_value else "disabled"
-                    await self.api.message_manager.send_text(
-                        user_id,
-                        f"✅ **Notifications {status}!**",
-                        vanish=False,
-                        conv=False,
-                        delete_after=2,
-                    )
+                    # Short success notification suppressed (button reflects state)
+                    # await self.api.message_manager.send_text(
+                    #     user_id,
+                    #     f"✅ **Notifications {status}!**",
+                    #     vanish=False,
+                    #     conv=False,
+                    #     delete_after=2,
+                    # )
                 else:
                     await self.api.message_manager.send_text(
                         user_id,
@@ -1287,13 +1305,14 @@ class ConversationManager:
                     user_settings = updated_settings
                     status = "enabled" if new_value else "disabled"
                     # Show self-deleting success message
-                    await self.api.message_manager.send_text(
-                        user_id,
-                        f"✅ **Silent mode {status}!**",
-                        vanish=False,
-                        conv=False,
-                        delete_after=2
-                    )
+                    # Short success notification suppressed (button reflects state)
+                    # await self.api.message_manager.send_text(
+                    #     user_id,
+                    #     f"✅ **Silent mode {status}!**",
+                    #     vanish=False,
+                    #     conv=False,
+                    #     delete_after=2
+                    # )
                 else:
                     # Show self-deleting error message
                     await self.api.message_manager.send_text(
@@ -1366,7 +1385,7 @@ class ConversationManager:
         while True:
             # Use SettingsManager to generate submenu
             vanishing_text = self.settings_manager.get_vanishing_submenu_text(user_settings)
-            keyboard = self.settings_manager.get_vanishing_submenu_keyboard()
+            keyboard = self.settings_manager.get_vanishing_submenu_keyboard(user_settings)
             
             # Edit the existing message and get button event for popup notifications
             data, message, event = await self.edit_keyboard_and_wait_response(
@@ -1392,14 +1411,14 @@ class ConversationManager:
                 if updated_settings:
                     user_settings = updated_settings
                     status = "enabled" if new_value else "disabled"
-                    # Show self-deleting success message
-                    await self.api.message_manager.send_text(
-                        user_id,
-                        f"✅ **Vanishing messages {status}!**",
-                        vanish=False,
-                        conv=False,
-                        delete_after=2
-                    )
+                    # Short success notification suppressed (button reflects state)
+                    # await self.api.message_manager.send_text(
+                    #     user_id,
+                    #     f"✅ **Vanishing messages {status}!**",
+                    #     vanish=False,
+                    #     conv=False,
+                    #     delete_after=2
+                    # )
                 else:
                     # Show self-deleting error message
                     await self.api.message_manager.send_text(
@@ -1505,14 +1524,14 @@ class ConversationManager:
         
         if updated_settings:
             sort_name = "Alphabetical" if data == "alphabetical" else "Coffee Count"
-            # Show self-deleting success message
-            await self.api.message_manager.send_text(
-                user_id,
-                f"✅ **Sorting set to {sort_name}!**",
-                vanish=False,
-                conv=False,
-                delete_after=2
-            )
+            # Short success notification suppressed (button reflects state)
+            # await self.api.message_manager.send_text(
+            #     user_id,
+            #     f"✅ **Sorting set to {sort_name}!**",
+            #     vanish=False,
+            #     conv=False,
+            #     delete_after=2
+            # )
             return True
         else:
             # Show self-deleting error message
@@ -1938,13 +1957,14 @@ class ConversationManager:
         success = await self.repo.update_debt_settings(correction_method=new_method)
         if success:
             pretty = "Absolute" if new_method == "absolute" else "Proportional"
-            await self.api.message_manager.send_text(
-                user_id,
-                f"✅ **Debt correction method set to {pretty}!**",
-                vanish=False,
-                conv=False,
-                delete_after=2,
-            )
+            # Short success notification suppressed (button reflects state)
+            # await self.api.message_manager.send_text(
+            #     user_id,
+            #     f"✅ **Debt correction method set to {pretty}!**",
+            #     vanish=False,
+            #     conv=False,
+            #     delete_after=2,
+            # )
             return True
 
         await self.api.message_manager.send_text(
@@ -1980,13 +2000,14 @@ class ConversationManager:
 
         success = await self.repo.update_debt_settings(correction_threshold=threshold)
         if success:
-            await self.api.message_manager.send_text(
-                user_id,
-                f"✅ **Debt correction threshold set to {threshold}!**",
-                vanish=False,
-                conv=False,
-                delete_after=2
-            )
+            # Short success notification suppressed (button reflects state)
+            # await self.api.message_manager.send_text(
+            #     user_id,
+            #     f"✅ **Debt correction threshold set to {threshold}!**",
+            #     vanish=False,
+            #     conv=False,
+            #     delete_after=2
+            # )
             return True
 
         await self.api.message_manager.send_text(
@@ -2376,13 +2397,14 @@ class ConversationManager:
         success = await self.repo.update_log_settings(log_level=data)
         
         if success:
-            await self.api.message_manager.send_text(
-                user_id,
-                f"✅ **Log level set to {data}!**",
-                vanish=False,
-                conv=False,
-                delete_after=2
-            )
+            # Short success notification suppressed (button reflects state)
+            # await self.api.message_manager.send_text(
+            #     user_id,
+            #     f"✅ **Log level set to {data}!**",
+            #     vanish=False,
+            #     conv=False,
+            #     delete_after=2
+            # )
             return True
         else:
             await self.api.message_manager.send_text(
@@ -2445,14 +2467,14 @@ class ConversationManager:
                 if success:
                     notification_settings["notifications_enabled"] = new_value
                     status = "enabled" if new_value else "disabled"
-                    # Show self-deleting success message
-                    await self.api.message_manager.send_text(
-                        user_id,
-                        f"✅ **Notifications {status} globally!**",
-                        vanish=False,
-                        conv=False,
-                        delete_after=2
-                    )
+                    # Short success notification suppressed (button reflects state)
+                    # await self.api.message_manager.send_text(
+                    #     user_id,
+                    #     f"✅ **Notifications {status} globally!**",
+                    #     vanish=False,
+                    #     conv=False,
+                    #     delete_after=2
+                    # )
                 else:
                     # Show self-deleting error message
                     await self.api.message_manager.send_text(
@@ -2480,14 +2502,14 @@ class ConversationManager:
                 if success:
                     notification_settings["notifications_silent"] = new_value
                     status = "enabled" if new_value else "disabled"
-                    # Show self-deleting success message
-                    await self.api.message_manager.send_text(
-                        user_id,
-                        f"✅ **Global silent mode {status}!**",
-                        vanish=False,
-                        conv=False,
-                        delete_after=2
-                    )
+                    # Short success notification suppressed (button reflects state)
+                    # await self.api.message_manager.send_text(
+                    #     user_id,
+                    #     f"✅ **Global silent mode {status}!**",
+                    #     vanish=False,
+                    #     conv=False,
+                    #     delete_after=2
+                    # )
                 else:
                     # Show self-deleting error message
                     await self.api.message_manager.send_text(

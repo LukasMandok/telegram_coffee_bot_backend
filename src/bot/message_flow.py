@@ -140,6 +140,7 @@ class ButtonCallback:
     text: str
     callback_data: str
     callback_handler: Optional[Callable[..., Awaitable[Optional[str]]]] = None  # Returns next state or None
+    notify_text: Optional[str] = None
 
 
 @dataclass

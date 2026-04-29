@@ -14,6 +14,7 @@ from telethon.tl.custom import Conversation
 from ..dependencies.dependencies import get_repo
 from ..common.log import log_settings
 from ..common.log import LOG_STATE_ICON, format_log_state
+from .message_flow_helpers import toggle_button
 
 logger = logging.getLogger(__name__)
 
@@ -143,10 +144,15 @@ class SettingsManager:
             "Select a setting to adjust:"
         )
     
-    def get_vanishing_submenu_keyboard(self) -> InlineKeyboard:
-        """Generate the vanishing messages submenu keyboard."""
+    def get_vanishing_submenu_keyboard(self, settings=None) -> InlineKeyboard:
+        """Generate the vanishing messages submenu keyboard.
+
+        `settings` is optional; when provided the button reflects the current state.
+        """
+        enabled = bool(getattr(settings, "vanishing_enabled", False)) if settings is not None else False
+        tb = toggle_button(enabled, "Vanishing Messages", "toggle")
         return [
-            [Button.inline("🔄 Toggle On/Off", b"toggle")],
+            [Button.inline(tb.text, tb.callback_data)],
             [Button.inline("🔢 Vanish Threshold", b"threshold")],
             [Button.inline(f"{self.ICON_BACK} Back", b"back")]
         ]
@@ -204,11 +210,28 @@ class SettingsManager:
         lines.append("\nToggle below:")
         return "\n".join(lines)
     
-    def get_user_notifications_submenu_keyboard(self) -> InlineKeyboard:
-        """Generate the user notification preference submenu keyboard."""
+    def get_user_notifications_submenu_keyboard(self, user_settings=None, notification_settings=None) -> InlineKeyboard:
+        """Generate the user notification preference submenu keyboard.
+
+        Optional `user_settings` may be provided so the buttons reflect current values.
+        """
+        user_enabled = bool(getattr(user_settings, "notifications_enabled", True)) if user_settings is not None else True
+        user_silent = bool(getattr(user_settings, "notifications_silent", False)) if user_settings is not None else False
+        app_enabled = bool(notification_settings.get("notifications_enabled", True)) if notification_settings is not None else True
+
+        # Use callback IDs expected by the conversation handlers (user-specific)
+        notif_btn = toggle_button(user_enabled, "Notifications", "toggle_user_notifications")
+
+        # If global notifications are disabled, indicate Silent is N/A; otherwise render toggle
+        if not app_enabled:
+            silent_row = [Button.inline("⏸ Silent: N/A", b"toggle_user_silent")]
+        else:
+            silent_btn = toggle_button(user_silent, "Silent", "toggle_user_silent")
+            silent_row = [Button.inline(silent_btn.text, silent_btn.callback_data)]
+
         return [
-            [Button.inline("🔔 Toggle Notifications", b"toggle_user_notifications")],
-            [Button.inline("🔇 Toggle Silent Mode", b"toggle_user_silent")],
+            [Button.inline(notif_btn.text, notif_btn.callback_data)],
+            silent_row,
             [Button.inline(f"{self.ICON_BACK} Back", b"back")]
         ]
     
@@ -313,18 +336,14 @@ class SettingsManager:
         quick_order = bool(getattr(snapshot_settings, "quick_order", False))
         card_created = bool(getattr(snapshot_settings, "card_created", True))
 
-        def _state_label(on: bool, label: str) -> str:
-            return f"✅ {label}" if on else f"❌ {label}"
+        b1 = toggle_button(card_closed, "Card Closed", "toggle_card_closed")
+        b2 = toggle_button(session_completed, "Session Completed", "toggle_session_completed")
+        b3 = toggle_button(quick_order, "Quick Order", "toggle_quick_order")
+        b4 = toggle_button(card_created, "Card Created", "toggle_card_created")
 
         return [
-            [
-                Button.inline(_state_label(card_closed, "Card Closed"), b"toggle_card_closed"),
-                Button.inline(_state_label(session_completed, "Session Completed"), b"toggle_session_completed"),
-            ],
-            [
-                Button.inline(_state_label(quick_order, "Quick Order"), b"toggle_quick_order"),
-                Button.inline(_state_label(card_created, "Card Created"), b"toggle_card_created"),
-            ],
+            [Button.inline(b1.text, b1.callback_data), Button.inline(b2.text, b2.callback_data)],
+            [Button.inline(b3.text, b3.callback_data), Button.inline(b4.text, b4.callback_data)],
             [Button.inline(f"{self.ICON_BACK} Back", b"back")],
         ]
 
@@ -367,15 +386,19 @@ class SettingsManager:
         )
 
     def get_gsheet_submenu_keyboard(self, gsheet_settings) -> InlineKeyboard:
-        enabled_label = "🔴 Disable Periodic Sync" if gsheet_settings.periodic_sync_enabled else "🟢 Enable Periodic Sync"
-        two_way_label = "🔁 Disable Two-Way Sync" if gsheet_settings.two_way_sync_enabled else "🔁 Enable Two-Way Sync"
-        after_actions_enabled = bool(gsheet_settings.sync_after_actions_enabled)
-        after_actions_label = "🔴 Disable Sync After Actions" if after_actions_enabled else "🟢 Enable Sync After Actions"
+        periodic_enabled = bool(getattr(gsheet_settings, "periodic_sync_enabled", False))
+        two_way_enabled = bool(getattr(gsheet_settings, "two_way_sync_enabled", False))
+        after_actions_enabled = bool(getattr(gsheet_settings, "sync_after_actions_enabled", False))
+
+        b_periodic = toggle_button(periodic_enabled, "Periodic Sync", "toggle_periodic")
+        b_two_way = toggle_button(two_way_enabled, "Two-Way Sync", "toggle_two_way")
+        b_after = toggle_button(after_actions_enabled, "Sync After Actions", "toggle_after_actions")
+
         return [
-            [Button.inline(enabled_label, b"toggle_periodic")],
+            [Button.inline(b_periodic.text, b_periodic.callback_data)],
             [Button.inline("⏱ Set Sync Period (min)", b"set_period")],
-            [Button.inline(two_way_label, b"toggle_two_way")],
-            [Button.inline(after_actions_label, b"toggle_after_actions")],
+            [Button.inline(b_two_way.text, b_two_way.callback_data)],
+            [Button.inline(b_after.text, b_after.callback_data)],
             [Button.inline(f"{self.ICON_BACK} Back", b"back")],
         ]
     
@@ -472,13 +495,17 @@ class SettingsManager:
         app_enabled = bool(notification_settings.get("notifications_enabled", True))
         app_silent = bool(notification_settings.get("notifications_silent", False))
 
-        enabled_label = "✅ On" if app_enabled else "❌ Off"
-        silent_label = "✅ On" if app_silent else "❌ Off"
-        silent_button_label = f"🔇 Silent: {silent_label}" if app_enabled else "⏸ Silent: N/A"
+        notif_btn = toggle_button(app_enabled, "Notifications", "toggle_notifications")
+        # Show silent toggle only when notifications are enabled; otherwise indicate N/A
+        if app_enabled:
+            silent_btn = toggle_button(app_silent, "Silent", "toggle_silent")
+            silent_row = [Button.inline(silent_btn.text, silent_btn.callback_data)]
+        else:
+            silent_row = [Button.inline("⏸ Silent: N/A", b"toggle_silent")]
 
         return [
-            [Button.inline(f"🔔 Notifications: {enabled_label}", b"toggle_notifications")],
-            [Button.inline(silent_button_label, b"toggle_silent")],
+            [Button.inline(notif_btn.text, notif_btn.callback_data)],
+            silent_row,
             [Button.inline(f"{self.ICON_BACK} Back", b"back")],
         ]
     
@@ -526,16 +553,16 @@ class SettingsManager:
         Returns:
             Keyboard with toggle buttons
         """
-        time_icon = "✅" if log_settings.get("log_show_time", True) else "❌"
-        caller_icon = "✅" if log_settings.get("log_show_caller", True) else "❌"
-        class_icon = "✅" if log_settings.get("log_show_class", True) else "❌"
-        
+        time_enabled = bool(log_settings.get("log_show_time", True))
+        caller_enabled = bool(log_settings.get("log_show_caller", True))
+        class_enabled = bool(log_settings.get("log_show_class", True))
+
+        bt = toggle_button(time_enabled, "Time", "toggle_time")
+        bc = toggle_button(caller_enabled, "Caller", "toggle_caller")
+        bj = toggle_button(class_enabled, "Class", "toggle_class")
+
         return [
-            [
-                Button.inline(f"{time_icon} Time", b"toggle_time"),
-                Button.inline(f"{caller_icon} Caller", b"toggle_caller"),
-                Button.inline(f"{class_icon} Class", b"toggle_class")
-            ],
+            [Button.inline(bt.text, bt.callback_data), Button.inline(bc.text, bc.callback_data), Button.inline(bj.text, bj.callback_data)],
             [Button.inline(f"{self.ICON_BACK} Back", b"back")]
         ]
     
@@ -675,15 +702,14 @@ class SettingsManager:
                         except Exception:
                             pass  # Ignore if we can't delete
                         
-                        # Send a temporary success message that will auto-delete after 2 seconds
-                        # Don't add to vanish queue since it auto-deletes itself
-                        await self.api.message_manager.send_text(
-                            user_id,
-                            f"✅ **{setting_name} updated to {value}!**",
-                            vanish=False,  # Don't add to vanish queue - it auto-deletes
-                            conv=False,    # Not part of conversation group
-                            delete_after=2
-                        )
+                        # Short success notification suppressed (buttons convey state now)
+                        # await self.api.message_manager.send_text(
+                        #     user_id,
+                        #     f"✅ **{setting_name} updated to {value}!**",
+                        #     vanish=False,  # Don't add to vanish queue - it auto-deletes
+                        #     conv=False,    # Not part of conversation group
+                        #     delete_after=2
+                        # )
                         
                         return value
                         
