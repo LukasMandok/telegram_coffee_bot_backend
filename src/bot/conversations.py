@@ -1080,7 +1080,7 @@ class ConversationManager:
         Returns:
             bool: True if conversation completed successfully, False otherwise
         """
-        from .settings_flow import create_paypal_flow
+        from .paypal_flow import create_paypal_flow
         
         flow = create_paypal_flow()
         return await flow.run(conv, user_id, self.api, start_state="main")

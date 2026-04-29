@@ -1,7 +1,7 @@
-"""Settings-related flows using MessageFlow system.
+"""PayPal setup flow extracted from settings_flow.
 
-This module contains flows for user settings and configuration,
-including PayPal link setup.
+This module contains the `create_paypal_flow()` MessageFlow for adding,
+changing, validating and removing a user's PayPal.me link.
 """
 
 from typing import Optional, List
@@ -104,7 +104,6 @@ async def build_enter_link_text(flow_state, api, user_id) -> str:
         "ℹ️ Don't know your PayPal.me link? Check: https://www.paypal.com/myaccount/profile/\n\n"
         "💡 Type your username or link below:"
     )
-
 
 
 

@@ -45,7 +45,7 @@ from ...common.log import Logger
 from ...config import app_config
 from ...models.beanie_models import PassiveUser, TelegramUser
 from ...models.coffee_models import CoffeeCard, CoffeeOrder, CoffeeSession
-from ..settings_flow import create_paypal_flow
+from ..paypal_flow import create_paypal_flow
 
 
 _logger = Logger("CardFlow")
