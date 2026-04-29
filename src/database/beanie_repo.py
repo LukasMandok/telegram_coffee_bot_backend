@@ -861,6 +861,12 @@ class BeanieRepository(BaseRepository):
             if "correction_threshold" in kwargs:
                 settings.debt.correction_threshold = int(kwargs["correction_threshold"])
 
+            if "creditor_exempt_from_correction" in kwargs:
+                settings.debt.creditor_exempt_from_correction = bool(kwargs["creditor_exempt_from_correction"])
+
+            if "creditor_free_coffees" in kwargs:
+                settings.debt.creditor_free_coffees = int(kwargs["creditor_free_coffees"])
+
             await settings.save()
             self.logger.info(f"Updated debt settings: {kwargs}")
             return True

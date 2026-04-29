@@ -213,6 +213,16 @@ class DebtSettings(BaseModel):
         le=50,
         description="Users at or above this coffees-per-card threshold participate in missing-coffee correction"
     )
+    creditor_exempt_from_correction: bool = Field(
+        default=True,
+        description="If True, the purchaser (creditor) is excluded from missing-coffee correction calculations"
+    )
+    creditor_free_coffees: int = Field(
+        default=0,
+        ge=0,
+        le=200,
+        description="Number of free coffees the creditor may consume; their cost is distributed to other consumers on card closure"
+    )
 
     @field_validator("correction_method")
     @classmethod
@@ -221,6 +231,19 @@ class DebtSettings(BaseModel):
         if v not in {"absolute", "proportional"}:
             raise ValueError("correction_method must be 'absolute' or 'proportional'")
         return v
+
+    @field_validator("creditor_free_coffees")
+    @classmethod
+    def validate_free_coffees(cls, v: int) -> int:
+        if v is None:
+            return 0
+        try:
+            iv = int(v)
+        except Exception:
+            raise ValueError("creditor_free_coffees must be an integer")
+        if iv < 0:
+            raise ValueError("creditor_free_coffees must be >= 0")
+        return iv
 
 
 class GsheetSettings(BaseModel):

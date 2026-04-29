@@ -53,6 +53,9 @@ STATE_NOTIFICATIONS = "notifications"
 STATE_DEBTS = "debts"
 STATE_DEBT_METHOD = "debt_method"
 STATE_DEBT_THRESHOLD = "debt_threshold"
+STATE_DEBT_CORRECTION = "debt_correction"
+STATE_CREDITOR_ROYALTY = "creditor_royalty"
+STATE_CREDITOR_FREE_SET = "creditor_free_set"
 
 STATE_GSHEET = "gsheet"
 STATE_GSHEET_SET_PERIOD = "gsheet_set_period"
@@ -777,10 +780,10 @@ def create_settings_flow() -> MessageFlow:
         return sm.get_debts_submenu_keyboard()
 
     async def handle_debts_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        if data == "debt_method":
-            return STATE_DEBT_METHOD
-        if data == "debt_threshold":
-            return STATE_DEBT_THRESHOLD
+        if data == "debt_correction":
+            return STATE_DEBT_CORRECTION
+        if data == "creditor_royalty":
+            return STATE_CREDITOR_ROYALTY
         return None
 
     flow.add_state(make_state(
@@ -792,6 +795,34 @@ def create_settings_flow() -> MessageFlow:
         on_button_press=handle_debts_button,
         back_button=CommonCallbacks.BACK,
         parent_state=STATE_ADMIN,
+    ))
+
+    # Debt Correction submenu (parent of method/threshold)
+    async def build_debt_correction_text(flow_state, api, user_id) -> str:
+        ds = await api.conversation_manager.repo.get_debt_settings()
+        sm = SettingsManager(api)
+        return sm.get_debt_correction_submenu_text(ds)
+
+    async def build_debt_correction_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
+        sm = SettingsManager(api)
+        return sm.get_debt_correction_submenu_keyboard()
+
+    async def handle_debt_correction_button(data: str, flow_state, api, user_id) -> Optional[str]:
+        if data == "debt_method":
+            return STATE_DEBT_METHOD
+        if data == "debt_threshold":
+            return STATE_DEBT_THRESHOLD
+        return None
+
+    flow.add_state(make_state(
+        STATE_DEBT_CORRECTION,
+        text_builder=build_debt_correction_text,
+        keyboard_builder=build_debt_correction_keyboard,
+        action=MessageAction.EDIT,
+        timeout=120,
+        on_button_press=handle_debt_correction_button,
+        back_button=CommonCallbacks.BACK,
+        parent_state=STATE_DEBTS,
     ))
 
     # Debt method selector
@@ -810,7 +841,7 @@ def create_settings_flow() -> MessageFlow:
         ok = await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_debt_settings(correction_method=new_method))
         if not ok:
             return STATE_DEBT_METHOD
-        return STATE_DEBTS
+        return STATE_DEBT_CORRECTION
 
     flow.add_state(make_state(
         STATE_DEBT_METHOD,
@@ -823,7 +854,7 @@ def create_settings_flow() -> MessageFlow:
         timeout=120,
         on_button_press=handle_debt_method_button,
         back_button=CommonCallbacks.BACK,
-        parent_state=STATE_DEBTS,
+        parent_state=STATE_DEBT_CORRECTION,
     ))
 
     # Debt threshold input
@@ -844,7 +875,7 @@ def create_settings_flow() -> MessageFlow:
         ok = await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_debt_settings(correction_threshold=val))
         if not ok:
             return STATE_DEBT_THRESHOLD
-        return STATE_DEBTS
+        return STATE_DEBT_CORRECTION
 
     flow.add_state(MessageDefinition(
         state_id=STATE_DEBT_THRESHOLD,
@@ -854,7 +885,73 @@ def create_settings_flow() -> MessageFlow:
         on_input_received=handle_debt_threshold_input,
         action=MessageAction.EDIT,
         back_button=CommonCallbacks.BACK,
+        parent_state=STATE_DEBT_CORRECTION,
+    ))
+
+    # ------------------ Creditor Royalty submenu ------------------
+    async def build_creditor_royalty_text(flow_state, api, user_id) -> str:
+        ds = await api.conversation_manager.repo.get_debt_settings()
+        sm = SettingsManager(api)
+        return sm.get_creditor_royalty_submenu_text(ds)
+
+    async def build_creditor_royalty_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
+        ds = await api.conversation_manager.repo.get_debt_settings()
+        sm = SettingsManager(api)
+        return sm.get_creditor_royalty_submenu_keyboard(ds)
+
+    async def handle_creditor_royalty_button(data: str, flow_state, api, user_id) -> Optional[str]:
+        ds = await api.conversation_manager.repo.get_debt_settings()
+        if data == "toggle_creditor_exempt":
+            new_val = not bool(getattr(ds, "creditor_exempt_from_correction", True))
+            ok = await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_debt_settings(creditor_exempt_from_correction=new_val))
+            if not ok:
+                return STATE_CREDITOR_ROYALTY
+            return STATE_CREDITOR_ROYALTY
+        if data == "creditor_free_set":
+            return STATE_CREDITOR_FREE_SET
+        return None
+
+    flow.add_state(make_state(
+        STATE_CREDITOR_ROYALTY,
+        text_builder=build_creditor_royalty_text,
+        keyboard_builder=build_creditor_royalty_keyboard,
+        action=MessageAction.EDIT,
+        timeout=120,
+        on_button_press=handle_creditor_royalty_button,
+        back_button=CommonCallbacks.BACK,
         parent_state=STATE_DEBTS,
+    ))
+
+    # Creditor free coffees input
+    async def build_creditor_free_text(flow_state, api, user_id) -> str:
+        ds = await api.conversation_manager.repo.get_debt_settings()
+        current = int(getattr(ds, "creditor_free_coffees", 0) or 0)
+        return (
+            "🔢 **Creditor Free Coffees**\n\n"
+            f"Current value: {current}\n\n"
+            "Enter a new value (0-200):"
+        )
+
+    async def handle_creditor_free_input(input_text: str, flow_state, api, user_id) -> Optional[str]:
+        parser = IntegerParser()
+        val = parser.parse(input_text)
+        if val is None or val < 0 or val > 200:
+            await api.message_manager.send_text(user_id, "❌ Invalid input. Please enter a number between 0 and 200.", vanish=True, conv=True, delete_after=3)
+            return STATE_CREDITOR_FREE_SET
+        ok = await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_debt_settings(creditor_free_coffees=val))
+        if not ok:
+            return STATE_CREDITOR_FREE_SET
+        return STATE_CREDITOR_ROYALTY
+
+    flow.add_state(MessageDefinition(
+        state_id=STATE_CREDITOR_FREE_SET,
+        state_type=StateType.TEXT_INPUT,
+        text_builder=build_creditor_free_text,
+        input_storage_key=STATE_CREDITOR_FREE_SET,
+        on_input_received=handle_creditor_free_input,
+        action=MessageAction.EDIT,
+        back_button=CommonCallbacks.BACK,
+        parent_state=STATE_CREDITOR_ROYALTY,
     ))
 
     # ------------------ Google Sheets ------------------

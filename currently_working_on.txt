@@ -13,7 +13,6 @@ done:
 remaining:
 
 Coffee Cards:
-- Royalty system (adjustable in the settings). either an adjustable amount of free coffee for the creditor or that he doesn't have to contribute to missing coffees.
 
 Snapshots:
 (- an option to make specific snapshots as permanent, so they are not part of the fixed number of snapshots that are deleted, when more are created.)

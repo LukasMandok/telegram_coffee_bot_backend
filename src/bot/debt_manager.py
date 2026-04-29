@@ -52,19 +52,39 @@ class DebtManager:
         card: CoffeeCard,
         correction_method: str,
         correction_threshold: int,
+        creditor_stable_id: Optional[str] = None,
+        creditor_exempt_from_correction: bool = True,
+        creditor_free_coffees: int = 0,
     ) -> Dict[str, float]:
-        """Return mapping stable_id -> correction amount for this card."""
-        remaining_coffees = max(0, card.remaining_coffees)
-        if remaining_coffees <= 0:
-            return {}
+        """Return mapping stable_id -> correction amount for this card.
 
+        This distributes the cost of any remaining coffees as before, and
+        optionally includes the creditor_free_coffees cost into the total
+        correction amount to be covered by consumers. If
+        `creditor_exempt_from_correction` is True, the purchaser will be
+        excluded from the group of users who share the correction amount
+        (fixes previous bug where purchaser reduced the share but was not
+        charged).
+        """
+        remaining_coffees = max(0, card.remaining_coffees)
         remaining_cost = remaining_coffees * card.cost_per_coffee
+
+        # Include cost for creditor free coffees (those should be compensated
+        # by other consumers when the card is closed)
+        extra_creditor_cost = max(0, int(creditor_free_coffees)) * card.cost_per_coffee
+
+        total_correction_cost = remaining_cost + extra_creditor_cost
+        if total_correction_cost <= 0:
+            return {}
 
         correction_method = (correction_method or "absolute").strip().lower()
 
         eligible_coffees: Dict[str, int] = {}
         for stable_id, stats in card.consumer_stats.items():
             if stats.total_coffees <= 0:
+                continue
+            # Optionally exclude creditor from correction eligibility
+            if creditor_exempt_from_correction and creditor_stable_id is not None and stable_id == creditor_stable_id:
                 continue
             if stats.total_coffees >= correction_threshold:
                 eligible_coffees[stable_id] = stats.total_coffees
@@ -73,7 +93,7 @@ class DebtManager:
             return {}
 
         if correction_method == "absolute":
-            per_user = remaining_cost / len(eligible_coffees)
+            per_user = total_correction_cost / len(eligible_coffees)
             return {stable_id: per_user for stable_id in eligible_coffees.keys()}
 
         # proportional
@@ -83,7 +103,7 @@ class DebtManager:
                 return {}
 
             return {
-                stable_id: remaining_cost * (coffees / total_eligible_coffees)
+                stable_id: total_correction_cost * (coffees / total_eligible_coffees)
                 for stable_id, coffees in eligible_coffees.items()
             }
         else:
@@ -118,10 +138,20 @@ class DebtManager:
         else:
             correction_method = debt_settings.correction_method
             correction_threshold = int(debt_settings.correction_threshold)
+        creditor_exempt = True
+        creditor_free_coffees = 0
+        if debt_settings:
+            # Access fields directly from DebtSettings (provides defaults)
+            creditor_exempt = bool(debt_settings.creditor_exempt_from_correction)
+            creditor_free_coffees = int(debt_settings.creditor_free_coffees or 0)
+
         corrections_by_user = self._calculate_missing_coffee_corrections(
             card=card,
             correction_method=correction_method,
             correction_threshold=correction_threshold,
+            creditor_stable_id=creditor_stable_id,
+            creditor_exempt_from_correction=creditor_exempt,
+            creditor_free_coffees=creditor_free_coffees,
         )
 
         # Create or update debts for each consumer (except purchaser)

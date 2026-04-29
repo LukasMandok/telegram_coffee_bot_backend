@@ -364,25 +364,61 @@ class SettingsManager:
         ]
 
     def get_debts_submenu_text(self, debt_settings) -> str:
-        """Generate the debts settings submenu text."""
-        threshold = debt_settings.correction_threshold
-        method = debt_settings.correction_method
-        method_label = "Absolute" if method == "absolute" else "Proportional"
+        """Generate the debts settings submenu text (short overview)."""
         return (
             "💳 **Debt Settings (App-Wide)**\n\n"
-            "These settings control how debts are calculated when a coffee card is completed.\n\n"
-            f"**Missing-coffee correction method:** {method_label}\n"
-            f"**Missing-coffee correction threshold:** {threshold}\n\n"
-            "If a card is completed with remaining coffees, the missing cost is distributed\n"
-            "among users who consumed at least this many coffees on that card.\n\n"
-            "Select a setting to adjust:"
+            "• **Debt Correction:** distributes the cost of remaining coffees among qualifying consumers (method & threshold).\n"
+            "• **Creditor Royalty:** optionally exclude the purchaser from corrections and/or grant them free coffees that others cover.\n\n"
+            "Select an option below to edit these settings:"
         )
 
     def get_debts_submenu_keyboard(self) -> InlineKeyboard:
         """Generate the debts settings submenu keyboard."""
         return [
+            [ButtonCallback("🧾 Debt Correction", "debt_correction")],
+            [ButtonCallback("👑 Creditor Royalty", "creditor_royalty")],
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
+        ]
+
+    def get_debt_correction_submenu_text(self, debt_settings) -> str:
+        """Generate debt correction submenu text (method + threshold)."""
+        threshold = debt_settings.correction_threshold
+        method = debt_settings.correction_method
+        method_label = "Absolute" if method == "absolute" else "Proportional"
+        return (
+            "🧾 **Debt Correction Settings**\n\n"
+            "These settings control how the cost of remaining coffees is distributed.\n\n"
+            f"**Method:** {method_label}\n"
+            f"**Threshold:** {threshold}\n\n"
+            "Select a correction setting to adjust:"
+        )
+
+    def get_debt_correction_submenu_keyboard(self) -> InlineKeyboard:
+        return [
             [ButtonCallback("🧮 Correction Method", "debt_method")],
             [ButtonCallback("🔢 Correction Threshold", "debt_threshold")],
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
+        ]
+
+    def get_creditor_royalty_submenu_text(self, debt_settings) -> str:
+        """Generate the creditor royalty submenu text showing current values."""
+        exempt = "✅ Excluded" if debt_settings.creditor_exempt_from_correction else "❌ Included"
+        free = int(getattr(debt_settings, "creditor_free_coffees", 0) or 0)
+        return (
+            "👑 **Creditor Royalty**\n\n"
+            "Configure how the creditor (card purchaser) is treated for corrections and\n"
+            "optional free coffees the creditor may consume (their cost is borne by others).\n\n"
+            f"**Creditor excluded from correction:** {exempt}\n"
+            f"**Creditor free coffees:** {free}\n\n"
+            "Select an option to change:"
+        )
+
+    def get_creditor_royalty_submenu_keyboard(self, debt_settings=None) -> InlineKeyboard:
+        exempt = True if debt_settings is None else bool(getattr(debt_settings, "creditor_exempt_from_correction", True))
+        tb = toggle_button(exempt, "Exclude creditor from correction", "toggle_creditor_exempt")
+        return [
+            [ButtonCallback(tb.text, tb.callback_data)],
+            [ButtonCallback("🔢 Set free coffees for creditor", "creditor_free_set")],
             [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
         ]
 
