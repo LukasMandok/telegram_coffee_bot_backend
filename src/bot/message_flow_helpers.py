@@ -818,7 +818,7 @@ class ExitStateBuilder:
     @staticmethod
     def create_cancelled(
         state_id: str = CommonStateIds.EXIT_CANCELLED,
-        message: str = "❌ **Cancelled**\n\nNo changes were made.",
+        message: str = "❌ **Cancelled**",
         timeout: int = 1,
         delete_after: int = 0,
     ):

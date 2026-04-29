@@ -120,22 +120,13 @@ def create_registration_flow() -> MessageFlow:
         except DuplicateKeyError as e:
             return await _handle_duplicate_key_error(str(e), api, user_id)
         except DisplayNameConflictError as e:
-            # Existing user has identical first+last name; ask the registrant to choose a display name
-            await api.message_manager.send_text(
-                user_id,
-                (
-                    f"❌ A user with the same name already exists with the display name '{e.existing_display_name}'.\n\n"
-                    "Please choose your own display name (you cannot use the existing one)."
-                ),
-                True,
-                True,
-            )
-            # Store existing conflicting display name for reference
+            # Store existing conflicting display name for reference and
+            # transition to the display-name input state. Do not send a
+            # separate message here — the state text_builder will present
+            # a single combined message.
             flow_state.set("existing_conflict_display_name", e.existing_display_name)
-            # We are asking the registrant for a custom display name because
-            # automatic generation failed for an exact-name collision. Ensure
-            # we won't accidentally convert the passive user by clearing it
-            # and marking that the registrant opted out of takeover.
+            # Ensure we won't accidentally convert the passive user by
+            # clearing it and marking that the registrant opted out of takeover.
             flow_state.set("existing_passive_user", None)
             flow_state.set("skip_passive_takeover", True)
             return STATE_ASK_DISPLAY
@@ -342,12 +333,15 @@ def create_registration_flow() -> MessageFlow:
 
 
     # Build flow states
-    # Confirmation
-    flow.add_confirmation(
-        STATE_CONFIRM,
-        "Do you want to register?",
-        on_confirm_state=STATE_PASSWORD,
-        on_cancel_state=CommonStateIds.EXIT_CANCELLED,
+    # Confirmation (use a simple Yes/No single-row keyboard)
+    flow.add_state(
+        make_state(
+            STATE_CONFIRM,
+            text="You are not yet registered!\nDo you want to sign up?",
+            buttons=[[ButtonCallback("Yes", CommonCallbacks.CONFIRM), ButtonCallback("No", CommonCallbacks.BACK)]],
+            timeout=60,
+            next_state_map={CommonCallbacks.CONFIRM: STATE_PASSWORD, CommonCallbacks.BACK: CommonStateIds.EXIT_CANCELLED},
+        )
     )
 
     # Password input
@@ -433,11 +427,30 @@ def create_registration_flow() -> MessageFlow:
             await api.message_manager.send_text(user_id, "❌ Registration failed. Please try again later.", True, True)
             return CommonStateIds.EXIT_CANCELLED
 
+    async def handle_display_name_button(data: str, flow_state, api: Any, user_id: int) -> Optional[str]:
+        if data == CommonCallbacks.CANCEL:
+            # Cancel display-name entry -> abort registration
+            return CommonStateIds.EXIT_CANCELLED
+        return None
+
+    async def build_display_text(flow_state, api: Any, user_id: int) -> str:
+        existing = flow_state.get("existing_conflict_display_name")
+        if existing:
+            return (
+                "❌ A user with the same name already exists.\n"
+                f"Existing display name: {existing}\n\n"
+                "Please choose your own unique display name:"
+            )
+        return "Please choose your own unique display name:"
+
     flow.add_state(
         make_state(
             STATE_ASK_DISPLAY,
-            text="The display name we tried is already taken. Please choose your display name:",
+            text_builder=build_display_text,
             on_input_received=handle_display_name_input,
+            on_button_press=handle_display_name_button,
+            buttons=[[ButtonCallback("Cancel", CommonCallbacks.CANCEL)]],
+            exit_buttons=[],
             input_prompt=None,
             timeout=120,
         )
