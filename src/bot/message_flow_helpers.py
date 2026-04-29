@@ -930,6 +930,7 @@ def make_state(
     next_state_map: Optional[Dict[str, str]] = None,
     exit_buttons: Optional[List[str]] = None,
     back_button: Optional[str] = None,
+    parent_state: Optional[str] = None,
     route_callback_to_state_id: bool = False,
     route_callback_allowlist: Optional[List[str]] = None,
     # Text input options
@@ -995,6 +996,7 @@ def make_state(
         next_state_map=use_next_map,
         exit_buttons=use_exit,
         back_button=back_button,
+        parent_state=parent_state,
         route_callback_to_state_id=route_callback_to_state_id,
         route_callback_allowlist=route_callback_allowlist,
         input_prompt=input_prompt,

@@ -153,6 +153,14 @@ class PaginationConfig:
     next_button_text: str = "Next ▶️"
     close_button_text: str = "❌ Close"
     page_info_format: str = "Page {current}/{total}"  # Format string for page info
+    # Position of extras returned by `pagination_extra_buttons_builder`.
+    # Allowed: "above" (default) or "below" — controls whether extras
+    # are placed above or below the paginated rows.
+    extras_position: str = "above"
+    # Whether to include the automatic close/back button row at the end
+    # of the pagination keyboard. Some paginated views prefer to render
+    # their own footer (e.g. Apply + Back) via `pagination_extra_buttons_builder`.
+    show_close_button: bool = True
 
 
 T = TypeVar("T")
@@ -415,6 +423,10 @@ class MessageDefinition(BaseModel):
     back_button: Optional[str] = Field(
         default=None,
         description="callback_data for back button (goes to previous state)"
+    )
+    parent_state: Optional[str] = Field(
+        default=None,
+        description="Parent state id for hierarchical back navigation (preferred over history-based back)",
     )
     
     # Notifications
@@ -912,8 +924,11 @@ class MessageFlow:
         if nav_row:
             buttons.append(nav_row)
         
-        # Add close/back button
-        buttons.append([ButtonCallback(config.close_button_text, CommonCallbacks.CLOSE)])
+        # Add close/back button — use the common BACK callback so paginated "Back"
+        # buttons behave consistently with other menus (callback 'back'). Only add
+        # this automatic row when configured to do so.
+        if getattr(config, "show_close_button", True):
+            buttons.append([ButtonCallback(config.close_button_text, CommonCallbacks.BACK)])
         
         # Build text with items
         text_parts = []
@@ -934,7 +949,11 @@ class MessageFlow:
         user_id: int,
         base_buttons: List[List[ButtonCallback]],
     ) -> List[List[ButtonCallback]]:
-        """Prepend optional per-state extras above pagination rows."""
+        """Place optional per-state extras above or below pagination rows.
+
+        The placement is controlled by `PaginationConfig.extras_position` which
+        accepts "above" (default) or "below".
+        """
         extras: List[List[ButtonCallback]] = []
 
         if current_def.pagination_extra_buttons_builder:
@@ -945,7 +964,14 @@ class MessageFlow:
         if current_def.buttons:
             extras.extend(list(current_def.buttons))
 
-        return extras + list(base_buttons) if extras else base_buttons
+        if not extras:
+            return base_buttons
+
+        config = current_def.pagination_config
+        pos = getattr(config, "extras_position", "above") if config is not None else "above"
+        if pos == "below":
+            return list(base_buttons) + extras
+        return extras + list(base_buttons)
     
     async def _handle_pagination_button(
         self,
@@ -1125,12 +1151,13 @@ class MessageFlow:
                                     exit_callback_data=button_data,
                                 )
                             
-                            # Check if it's the back button
+                            # Check if it's the back button and route hierarchically to parent_state
                             if button_data == current_def.back_button:
-                                if flow_state.previous_state_id:
-                                    return flow_state.previous_state_id
+                                parent = current_def.parent_state
+                                if parent:
+                                    return parent
 
-                                # No previous state: treat as exit (clean up UI in caller).
+                                # No parent defined: treat as exit (clean up UI in caller).
                                 raise _FlowExit(
                                     completed=True,
                                     rendered_text=full_text,
@@ -1189,10 +1216,11 @@ class MessageFlow:
                 # Delete the user's input message after 2 seconds (clean up conversation)
                 asyncio.create_task(self._delete_message_after_delay(message_event.message, 2))
                 
-                # Check for cancel keywords
+                # Check for cancel keywords and route to parent_state if defined
                 if input_text.lower() in [kw.lower() for kw in current_def.input_cancel_keywords]:
-                    if flow_state.previous_state_id:
-                        return flow_state.previous_state_id
+                    parent = current_def.parent_state
+                    if parent:
+                        return parent
                     raise _FlowExit(
                         completed=True,
                         rendered_text=full_text,
@@ -1562,12 +1590,11 @@ class MessageFlow:
 
                 return True
 
-            # Check for back button
+            # Check for back button and route hierarchically to parent_state
             if current_def.back_button and data == current_def.back_button:
-                if flow_state.previous_state_id:
-                    next_state_id = flow_state.previous_state_id
-                    if flow_state.state_history:
-                        flow_state.state_history.pop()
+                parent = current_def.parent_state
+                if parent:
+                    next_state_id = parent
                 else:
                     return True
             else:

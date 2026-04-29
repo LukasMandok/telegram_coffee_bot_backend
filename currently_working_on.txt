@@ -34,10 +34,6 @@ General:
 
 
 Settings:
-- Settings for vanishing messages are currently not consistent between bot restarts. It looks like they are not correctly saved in the database or are overwritten by another place
-- make each toggle button the same, so that an activated option has a green dot and an deactivated an red dot on the toggle button (instead of showing how the stat would change if you press the button), this should also include all of the checkmark/cross icons in toggle buttons used somewhere else. This should be completely consistent in the whole message flow.
-- make sure that all submenues are correctly implemented as message flow. Currently most of this is still manually in the conversation manager
-
 - allow users changing their own Display Name in the settings
 - allow the admin to modify the admin password in the settings
 
@@ -54,18 +50,6 @@ not working:
 - add a reply keyboard and close if pressed and reopen if the coversation finishes.
 
 
-
-## Settings
-
-The Settings Menu is the last remaining big construction site.
-Currently the submenus of settings are implemented as separate conversations in @conversations.py. However, like all other conversations, they should be implemented as message flow in the settings_flow.py
-
-can you please do the refacting to convert all submenus to message flow.
-
-while we are at it, we can improve certain aspects of the settings manager as well:
-
-- make each toggle button the same, so that an activated option has a green dot and an deactivated an red dot on the toggle button (instead of showing how the stat would change if you press the button), this should also include all of the checkmark/cross icons in toggle buttons used somewhere else. This should be completely consistent in the whole message flow.
-maybe it makes sense to implement an own toggle button in message flow (message_flow_helpers.py)
 
 
 ## additional settings stuff

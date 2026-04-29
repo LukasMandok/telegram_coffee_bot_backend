@@ -9,8 +9,7 @@ This module provides a centralized way to:
 import asyncio
 import logging
 from typing import Optional, Tuple, Any, Dict, List
-from telethon import Button, events
-from telethon.tl.custom import Conversation
+from .message_flow import ButtonCallback
 from ..dependencies.dependencies import get_repo
 from ..common.log import log_settings
 from ..common.log import LOG_STATE_ICON, format_log_state
@@ -19,7 +18,7 @@ from .message_flow_helpers import toggle_button
 logger = logging.getLogger(__name__)
 
 
-InlineKeyboard = List[List[Any]]
+InlineKeyboard = List[List[ButtonCallback]]
 
 
 class SettingsManager:
@@ -88,15 +87,15 @@ class SettingsManager:
     def get_main_menu_keyboard(self, *, include_admin: bool = True) -> InlineKeyboard:
         """Generate the main settings menu keyboard."""
         keyboard: InlineKeyboard = [
-            [Button.inline("📋 Ordering Settings", b"ordering")],
-            [Button.inline("💬 Vanishing Messages", b"vanishing")],
-            [Button.inline("🔔 Notifications", b"user_notifications")],
+            [ButtonCallback("📋 Ordering Settings", "ordering")],
+            [ButtonCallback("💬 Vanishing Messages", "vanishing")],
+            [ButtonCallback("🔔 Notifications", "user_notifications")],
         ]
 
         if include_admin:
-            keyboard.append([Button.inline("🔧 Administration", b"admin")])
+            keyboard.append([ButtonCallback("🔧 Administration", "admin")])
 
-        keyboard.append([Button.inline("✅ Done", b"done")])
+        keyboard.append([ButtonCallback("✅ Done", "done")])
         return keyboard
     
     def get_ordering_submenu_text(self, settings) -> str:
@@ -119,9 +118,9 @@ class SettingsManager:
     def get_ordering_submenu_keyboard(self) -> InlineKeyboard:
         """Generate the ordering settings submenu keyboard."""
         return [
-            [Button.inline("📄 Group Page Size", b"page_size")],
-            [Button.inline("🔤 Group Sorting", b"sorting")],
-            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+            [ButtonCallback("📄 Group Page Size", "page_size")],
+            [ButtonCallback("🔤 Group Sorting", "sorting")],
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
         ]
     
     def get_vanishing_submenu_text(self, settings) -> str:
@@ -152,9 +151,9 @@ class SettingsManager:
         enabled = bool(getattr(settings, "vanishing_enabled", False)) if settings is not None else False
         tb = toggle_button(enabled, "Vanishing Messages", "toggle")
         return [
-            [Button.inline(tb.text, tb.callback_data)],
-            [Button.inline("🔢 Vanish Threshold", b"threshold")],
-            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+            [ButtonCallback(tb.text, tb.callback_data)],
+            [ButtonCallback("🔢 Vanish Threshold", "threshold")],
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
         ]
     
     def get_user_notifications_submenu_text(self, user_settings, notification_settings: Dict) -> str:
@@ -224,15 +223,15 @@ class SettingsManager:
 
         # If global notifications are disabled, indicate Silent is N/A; otherwise render toggle
         if not app_enabled:
-            silent_row = [Button.inline("⏸ Silent: N/A", b"toggle_user_silent")]
+            silent_row = [ButtonCallback("⏸ Silent: N/A", "toggle_user_silent")]
         else:
             silent_btn = toggle_button(user_silent, "Silent", "toggle_user_silent")
-            silent_row = [Button.inline(silent_btn.text, silent_btn.callback_data)]
+            silent_row = [ButtonCallback(silent_btn.text, silent_btn.callback_data)]
 
         return [
-            [Button.inline(notif_btn.text, notif_btn.callback_data)],
+            [ButtonCallback(notif_btn.text, notif_btn.callback_data)],
             silent_row,
-            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
         ]
     
     def get_sorting_options_text(self, settings) -> str:
@@ -258,15 +257,15 @@ class SettingsManager:
     def get_sorting_options_keyboard(self) -> InlineKeyboard:
         """Generate the sorting options keyboard."""
         return [
-            [Button.inline("🔤 Alphabetical", b"alphabetical")],
-            [Button.inline("☕ Coffee Count", b"coffee_count")],
-            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+            [ButtonCallback("🔤 Alphabetical", "alphabetical")],
+            [ButtonCallback("☕ Coffee Count", "coffee_count")],
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
         ]
     
     def get_cancel_keyboard(self) -> InlineKeyboard:
         """Generate a simple back button keyboard."""
         return [
-            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
         ]
     
     def get_admin_submenu_text(self) -> str:
@@ -284,12 +283,12 @@ class SettingsManager:
     def get_admin_submenu_keyboard(self) -> InlineKeyboard:
         """Generate the admin settings submenu keyboard."""
         return [
-            [Button.inline("📊 Logging", b"logging")],
-            [Button.inline("🔔 Notifications", b"notifications")],
-            [Button.inline("💳 Debts", b"debts")],
-            [Button.inline("📄 Google Sheets", b"gsheet")],
-            [Button.inline("📸 Snapshots", b"snapshots")],
-            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+            [ButtonCallback("📊 Logging", "logging")],
+            [ButtonCallback("🔔 Notifications", "notifications")],
+            [ButtonCallback("💳 Debts", "debts")],
+            [ButtonCallback("📄 Google Sheets", "gsheet")],
+            [ButtonCallback("📸 Snapshots", "snapshots")],
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
         ]
 
     def get_snapshots_submenu_text(self, snapshot_settings) -> str:
@@ -311,9 +310,9 @@ class SettingsManager:
 
     def get_snapshots_submenu_keyboard(self, snapshot_settings) -> InlineKeyboard:
         return [
-            [Button.inline("🔢 Set Keep Last", b"set_keep_last")],
-            [Button.inline("⚙ Snapshot Creation Points", b"creation_points")],
-            [Button.inline(f"{self.ICON_BACK} Back", b"back")],
+            [ButtonCallback("🔢 Set Keep Last", "set_keep_last")],
+            [ButtonCallback("⚙ Snapshot Creation Points", "creation_points")],
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")],
         ]
 
     def get_snapshots_creation_points_submenu_text(self, snapshot_settings) -> str:
@@ -335,16 +334,15 @@ class SettingsManager:
         session_completed = bool(getattr(snapshot_settings, "session_completed", True))
         quick_order = bool(getattr(snapshot_settings, "quick_order", False))
         card_created = bool(getattr(snapshot_settings, "card_created", True))
-
         b1 = toggle_button(card_closed, "Card Closed", "toggle_card_closed")
         b2 = toggle_button(session_completed, "Session Completed", "toggle_session_completed")
         b3 = toggle_button(quick_order, "Quick Order", "toggle_quick_order")
         b4 = toggle_button(card_created, "Card Created", "toggle_card_created")
 
         return [
-            [Button.inline(b1.text, b1.callback_data), Button.inline(b2.text, b2.callback_data)],
-            [Button.inline(b3.text, b3.callback_data), Button.inline(b4.text, b4.callback_data)],
-            [Button.inline(f"{self.ICON_BACK} Back", b"back")],
+            [ButtonCallback(b1.text, b1.callback_data), ButtonCallback(b2.text, b2.callback_data)],
+            [ButtonCallback(b3.text, b3.callback_data), ButtonCallback(b4.text, b4.callback_data)],
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")],
         ]
 
     def get_debts_submenu_text(self, debt_settings) -> str:
@@ -365,9 +363,9 @@ class SettingsManager:
     def get_debts_submenu_keyboard(self) -> InlineKeyboard:
         """Generate the debts settings submenu keyboard."""
         return [
-            [Button.inline("🧮 Correction Method", b"debt_method")],
-            [Button.inline("🔢 Correction Threshold", b"debt_threshold")],
-            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+            [ButtonCallback("🧮 Correction Method", "debt_method")],
+            [ButtonCallback("🔢 Correction Threshold", "debt_threshold")],
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
         ]
 
     def get_gsheet_submenu_text(self, gsheet_settings) -> str:
@@ -395,11 +393,11 @@ class SettingsManager:
         b_after = toggle_button(after_actions_enabled, "Sync After Actions", "toggle_after_actions")
 
         return [
-            [Button.inline(b_periodic.text, b_periodic.callback_data)],
-            [Button.inline("⏱ Set Sync Period (min)", b"set_period")],
-            [Button.inline(b_two_way.text, b_two_way.callback_data)],
-            [Button.inline(b_after.text, b_after.callback_data)],
-            [Button.inline(f"{self.ICON_BACK} Back", b"back")],
+            [ButtonCallback(b_periodic.text, b_periodic.callback_data)],
+            [ButtonCallback("⏱ Set Sync Period (min)", "set_period")],
+            [ButtonCallback(b_two_way.text, b_two_way.callback_data)],
+            [ButtonCallback(b_after.text, b_after.callback_data)],
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")],
         ]
     
     def get_logging_submenu_text(self, log_settings: Dict) -> str:
@@ -444,10 +442,10 @@ class SettingsManager:
     def get_logging_submenu_keyboard(self) -> InlineKeyboard:
         """Generate the logging settings submenu keyboard."""
         return [
-            [Button.inline("📊 Logging Level", b"log_level")],
-            [Button.inline("🎨 Logging Format", b"log_format")],
-            [Button.inline("🧩 Module Logging", b"log_modules")],
-            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+            [ButtonCallback("📊 Logging Level", "log_level")],
+            [ButtonCallback("🎨 Logging Format", "log_format")],
+            [ButtonCallback("🧩 Module Logging", "log_modules")],
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
         ]
     
     def get_notifications_submenu_text(self, notification_settings: Dict, user_settings=None) -> str:
@@ -499,14 +497,14 @@ class SettingsManager:
         # Show silent toggle only when notifications are enabled; otherwise indicate N/A
         if app_enabled:
             silent_btn = toggle_button(app_silent, "Silent", "toggle_silent")
-            silent_row = [Button.inline(silent_btn.text, silent_btn.callback_data)]
+            silent_row = [ButtonCallback(silent_btn.text, silent_btn.callback_data)]
         else:
-            silent_row = [Button.inline("⏸ Silent: N/A", b"toggle_silent")]
+            silent_row = [ButtonCallback("⏸ Silent: N/A", "toggle_silent")]
 
         return [
-            [Button.inline(notif_btn.text, notif_btn.callback_data)],
+            [ButtonCallback(notif_btn.text, notif_btn.callback_data)],
             silent_row,
-            [Button.inline(f"{self.ICON_BACK} Back", b"back")],
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")],
         ]
     
     def get_logging_format_text(self, log_settings: Dict) -> str:
@@ -562,8 +560,8 @@ class SettingsManager:
         bj = toggle_button(class_enabled, "Class", "toggle_class")
 
         return [
-            [Button.inline(bt.text, bt.callback_data), Button.inline(bc.text, bc.callback_data), Button.inline(bj.text, bj.callback_data)],
-            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+            [ButtonCallback(bt.text, bt.callback_data), ButtonCallback(bc.text, bc.callback_data), ButtonCallback(bj.text, bj.callback_data)],
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
         ]
     
     def get_log_level_options_text(self, current_level: str) -> str:
@@ -596,157 +594,15 @@ class SettingsManager:
     def get_log_level_options_keyboard(self) -> InlineKeyboard:
         """Generate the log level options keyboard."""
         return [
-            [Button.inline(format_log_state("TRACE"), b"TRACE"), Button.inline(format_log_state("DEBUG"), b"DEBUG")],
-            [Button.inline(format_log_state("INFO"), b"INFO"), Button.inline(format_log_state("WARNING"), b"WARNING")],
-            [Button.inline(format_log_state("ERROR"), b"ERROR"), Button.inline(format_log_state("CRITICAL"), b"CRITICAL")],
-            [Button.inline(f"{self.ICON_BACK} Back", b"back")]
+            [ButtonCallback(format_log_state("TRACE"), "TRACE"), ButtonCallback(format_log_state("DEBUG"), "DEBUG")],
+            [ButtonCallback(format_log_state("INFO"), "INFO"), ButtonCallback(format_log_state("WARNING"), "WARNING")],
+            [ButtonCallback(format_log_state("ERROR"), "ERROR"), ButtonCallback(format_log_state("CRITICAL"), "CRITICAL")],
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
         ]
 
     
-    # === Input Handlers ===
-    
-    async def get_number_input(
-        self,
-        conv: Conversation,
-        user_id: int,
-        message_to_edit: Any,
-        setting_name: str,
-        description: str,
-        current_value: int,
-        min_value: int,
-        max_value: int,
-        max_attempts: int = 3
-    ) -> Optional[int]:
-        """
-        Generic handler for getting number input from user with validation.
-        
-        This handles the common pattern of:
-        1. Showing description and current value
-        2. Waiting for number input or cancel
-        3. Validating input range
-        4. Retrying on invalid input
-        
-        Args:
-            conv: Active conversation
-            user_id: User ID
-            message_to_edit: Message to edit with prompt
-            setting_name: Display name of the setting (e.g., "Group Page Size")
-            description: Description of what the setting does
-            current_value: Current value of the setting
-            min_value: Minimum allowed value (inclusive)
-            max_value: Maximum allowed value (inclusive)
-            max_attempts: Maximum number of retry attempts
-            
-        Returns:
-            The validated number if successful, None if cancelled or failed
-        """
-        # Show description and prompt
-        prompt_text = (
-            f"🔢 **{setting_name}**\n\n"
-            f"{description}\n\n"
-            f"**Current value:** {current_value}\n"
-            f"**Allowed range:** {min_value}-{max_value}"
-        )
-        
-        await self.api.message_manager.edit_message(
-            message_to_edit,
-            prompt_text,
-            buttons=self.get_cancel_keyboard()
-        )
-        
-        attempts = 0
-        
-        while attempts < max_attempts:
-            try:
-                # Wait for either text or button
-                done, pending = await asyncio.wait(
-                    [
-                        asyncio.create_task(conv.wait_event(
-                            events.NewMessage(incoming=True, from_users=user_id), 
-                            timeout=60
-                        )),
-                        asyncio.create_task(conv.wait_event(
-                            self.api.keyboard_callback(user_id), 
-                            timeout=60
-                        ))
-                    ],
-                    return_when=asyncio.FIRST_COMPLETED
-                )
-                
-                # Cancel pending tasks
-                for task in pending:
-                    task.cancel()
-                
-                result = done.pop().result()
-                
-                # Check if it's a button press (back)
-                if hasattr(result, 'data'):
-                    button_data = result.data.decode('utf-8')
-                    if button_data == "back":
-                        await result.answer()
-                        return None
-                else:
-                    # It's a text message
-                    user_input = result.message.message.strip()
-                    user_message = result.message
-                    
-                    try:
-                        value = int(user_input)
-                        
-                        if value < min_value or value > max_value:
-                            raise ValueError("Value out of range")
-                        
-                        # Success! Delete the user's input message to keep chat clean
-                        try:
-                            await user_message.delete()
-                        except Exception:
-                            pass  # Ignore if we can't delete
-                        
-                        # Short success notification suppressed (buttons convey state now)
-                        # await self.api.message_manager.send_text(
-                        #     user_id,
-                        #     f"✅ **{setting_name} updated to {value}!**",
-                        #     vanish=False,  # Don't add to vanish queue - it auto-deletes
-                        #     conv=False,    # Not part of conversation group
-                        #     delete_after=2
-                        # )
-                        
-                        return value
-                        
-                    except ValueError:
-                        attempts += 1
-                        remaining = max_attempts - attempts
-                        
-                        # Delete invalid input message
-                        try:
-                            await user_message.delete()
-                        except Exception:
-                            pass
-                        
-                        if remaining > 0:
-                            await self.api.message_manager.send_text(
-                                user_id,
-                                f"❌ Invalid input. Please enter a number between {min_value} and {max_value}.\n"
-                                f"Attempts remaining: {remaining}",
-                                True, True
-                            )
-                        else:
-                            await self.api.message_manager.send_text(
-                                user_id,
-                                "❌ Too many invalid attempts. Settings unchanged.",
-                                True, True
-                            )
-                            return None
-                            
-            except asyncio.TimeoutError:
-                await self.api.message_manager.send_text(
-                    user_id,
-                    "⏱️ Response timeout. Settings unchanged.",
-                    True, True
-                )
-                return None
-        
-        return None
+    # No conversation-specific input handlers remain; numeric/text input
+    # is handled via MessageFlow states in `settings_flow.py`.
     
     async def show_brief_confirmation(self, message: Any, text: str, duration: float = 1.0):
         """
