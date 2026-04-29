@@ -78,6 +78,11 @@ class BaseRepository(ABC):
     @abstractmethod
     async def get_password(self) -> Optional[Any]:
         pass
+
+    @abstractmethod
+    async def update_password(self, new_password: str) -> bool:
+        """Update the registration password document."""
+        pass
     
     @abstractmethod
     async def get_admins(self) -> Optional[List[int]]:

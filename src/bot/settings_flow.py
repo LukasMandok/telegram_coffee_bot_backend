@@ -61,6 +61,9 @@ STATE_SNAPSHOTS = "snapshots"
 STATE_SNAPSHOT_SET_KEEP_LAST = "snapshots_set_keep_last"
 STATE_SNAPSHOT_CREATION_POINTS = "snapshots_creation_points"
 STATE_SAVE_RESULT = "settings_saved"
+STATE_REGISTRATION_PASSWORD = "registration_password"
+STATE_REGISTRATION_PASSWORD_VERIFY = "registration_password_verify"
+STATE_REGISTRATION_PASSWORD_NEW = "registration_password_new"
 
 
 def create_settings_flow() -> MessageFlow:
@@ -345,6 +348,8 @@ def create_settings_flow() -> MessageFlow:
             return STATE_DEBTS
         if data == "gsheet":
             return STATE_GSHEET
+        if data == "registration_password":
+            return STATE_REGISTRATION_PASSWORD
         if data == "snapshots":
             return STATE_SNAPSHOTS
         return None
@@ -358,6 +363,98 @@ def create_settings_flow() -> MessageFlow:
         on_button_press=handle_admin_button,
         back_button=CommonCallbacks.BACK,
         parent_state=STATE_MAIN,
+    ))
+
+    # ------------------ Admin: Registration Password ------------------
+    async def build_registration_password_text(flow_state, api, user_id) -> str:
+        sm = SettingsManager(api)
+        return sm.get_registration_password_submenu_text()
+
+    async def build_registration_password_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
+        sm = SettingsManager(api)
+        return sm.get_registration_password_submenu_keyboard()
+
+    async def handle_registration_password_button(data: str, flow_state, api, user_id) -> Optional[str]:
+        if data == "change_password":
+            # reset tries counter
+            flow_state.set("reg_change_pw_tries", 0)
+            return STATE_REGISTRATION_PASSWORD_VERIFY
+        return None
+
+    flow.add_state(make_state(
+        STATE_REGISTRATION_PASSWORD,
+        text_builder=build_registration_password_text,
+        keyboard_builder=build_registration_password_keyboard,
+        action=MessageAction.EDIT,
+        timeout=120,
+        on_button_press=handle_registration_password_button,
+        back_button=CommonCallbacks.BACK,
+        parent_state=STATE_ADMIN,
+    ))
+
+    async def build_registration_password_verify_text(flow_state, api, user_id) -> str:
+        return (
+            "🔐 **Change Registration Password**\n\n"
+            "Enter the current registration password:"
+        )
+
+    async def handle_registration_password_verify_input(input_text: str, flow_state, api, user_id) -> Optional[str]:
+        repo = api.conversation_manager.repo
+        pw_doc = await repo.get_password()
+        if pw_doc is None:
+            await api.message_manager.send_text(user_id, "❌ Registration password not configured.", vanish=True, conv=False, delete_after=3)
+            return STATE_ADMIN
+
+        if not pw_doc.verify_password((input_text or "").strip()):
+            tries = int(flow_state.get("reg_change_pw_tries", 0)) + 1
+            flow_state.set("reg_change_pw_tries", tries)
+            if tries < 3:
+                await api.message_manager.send_text(user_id, f"❌ Password incorrect. Please try again. ({tries}/3 attempts used)", vanish=True, conv=True, delete_after=4)
+                return STATE_REGISTRATION_PASSWORD_VERIFY
+            await api.message_manager.send_text(user_id, "❌ Too many incorrect attempts. Aborting.", True, True)
+            return STATE_ADMIN
+
+        # Verified — proceed to ask for new password
+        flow_state.clear("reg_change_pw_tries")
+        return STATE_REGISTRATION_PASSWORD_NEW
+
+    flow.add_state(MessageDefinition(
+        state_id=STATE_REGISTRATION_PASSWORD_VERIFY,
+        state_type=StateType.TEXT_INPUT,
+        text_builder=build_registration_password_verify_text,
+        input_storage_key=STATE_REGISTRATION_PASSWORD_VERIFY,
+        on_input_received=handle_registration_password_verify_input,
+        action=MessageAction.EDIT,
+        back_button=CommonCallbacks.BACK,
+        parent_state=STATE_REGISTRATION_PASSWORD,
+    ))
+
+    async def build_registration_password_new_text(flow_state, api, user_id) -> str:
+        return (
+            "🔑 **Set New Registration Password**\n\n"
+            "Enter the new registration password (min 4 characters):"
+        )
+
+    async def handle_registration_password_new_input(input_text: str, flow_state, api, user_id) -> Optional[str]:
+        new_pw = (input_text or "").strip()
+        if not new_pw or len(new_pw) < 4:
+            await api.message_manager.send_text(user_id, "❌ Password too short. Enter at least 4 characters.", vanish=True, conv=True, delete_after=3)
+            return STATE_REGISTRATION_PASSWORD_NEW
+        ok = await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_password(new_pw))
+        if not ok:
+            return STATE_REGISTRATION_PASSWORD_NEW
+        await api.message_manager.send_text(user_id, "✅ Registration password updated.", True, True, delete_after=5)
+        return STATE_ADMIN
+
+    flow.add_state(MessageDefinition(
+        state_id=STATE_REGISTRATION_PASSWORD_NEW,
+        state_type=StateType.TEXT_INPUT,
+        text_builder=build_registration_password_new_text,
+        input_storage_key=STATE_REGISTRATION_PASSWORD_NEW,
+        on_input_received=handle_registration_password_new_input,
+        action=MessageAction.EDIT,
+        back_button=CommonCallbacks.BACK,
+        parent_state=STATE_REGISTRATION_PASSWORD,
     ))
 
     # ------------------ Logging submenu ------------------

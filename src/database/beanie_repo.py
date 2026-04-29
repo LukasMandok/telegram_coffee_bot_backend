@@ -546,6 +546,40 @@ class BeanieRepository(BaseRepository):
             self.logger.warning("No config found when fetching password")
             return None
 
+    async def update_password(self, new_password: str) -> bool:
+        """Update or create the registration Password document and link it to Config.
+
+        Creates a new Password document with the provided value (the model's
+        validator will hash it) and updates the Config link. Removes the old
+        password document if present.
+        """
+        try:
+            # Create new password document (validator hashes plain strings)
+            new_pw = models.Password(hash_value=new_password)
+            await new_pw.insert()
+
+            # Attach to config
+            config = await models.Config.find_one()
+            if config:
+                # Link new password and save
+                config.password = new_pw
+                await config.save()
+
+            # Remove old password documents except the newly created one
+            try:
+                old = await models.Password.find_one({'_id': {'$ne': new_pw.id}})
+                if old:
+                    await old.delete()
+            except Exception:
+                # Non-fatal: keep the new password even if cleanup fails
+                pass
+
+            self.logger.info("Updated registration password", extra_tag="AUTH")
+            return True
+        except Exception as e:
+            self.logger.error(f"update_password failed: {e}", extra_tag="DB", exc=e)
+            return False
+
     async def get_admins(self):
         """Get the list of admin user IDs from config."""
         try:

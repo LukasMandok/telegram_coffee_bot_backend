@@ -64,6 +64,16 @@ async def remove_admin(repo: "BaseRepository", user_id: int):
     """Remove a user from the admin list."""
     return await repo.remove_admin(user_id)
 
+
+@repo
+async def set_password(repo: "BaseRepository", new_password: str) -> bool:
+    """Set or update the registration password in the repository."""
+    try:
+        return await repo.update_password(new_password)
+    except Exception as e:
+        logger.error(f"set_password failed: {e}", extra_tag="AUTH", exc=e)
+        return False
+
 @repo
 async def register_user(repo: "BaseRepository", user_id: int, username: str, first_name: str, last_name: Optional[str] = None, phone: Optional[str] = None, photo_id: Optional[int] = None, lang_code: str = "en", paypal_link: Optional[str] = None, display_name: Optional[str] = None):
     """Register a new TelegramUser in the database with smart display name generation.

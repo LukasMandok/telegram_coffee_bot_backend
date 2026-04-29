@@ -287,8 +287,26 @@ class SettingsManager:
             [ButtonCallback("🔔 Notifications", "notifications")],
             [ButtonCallback("💳 Debts", "debts")],
             [ButtonCallback("📄 Google Sheets", "gsheet")],
+            [ButtonCallback("🔐 Password", "registration_password")],
             [ButtonCallback("📸 Snapshots", "snapshots")],
             [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
+        ]
+
+    def get_registration_password_submenu_text(self) -> str:
+        """
+        Generate the registration password admin submenu text.
+        """
+        return (
+            "🔐 **Registration Password**\n\n"
+            "The registration password controls who can register new users.\n\n"
+            "Use the button below to change the current registration password."
+        )
+
+    def get_registration_password_submenu_keyboard(self) -> InlineKeyboard:
+        """Generate the registration password submenu keyboard."""
+        return [
+            [ButtonCallback("🔑 Change Registration Password", "change_password")],
+            [ButtonCallback(f"{self.ICON_BACK} Back", "back")],
         ]
 
     def get_snapshots_submenu_text(self, snapshot_settings) -> str:
