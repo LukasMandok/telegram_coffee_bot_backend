@@ -11,7 +11,7 @@ content and keyboard generation remain in `SettingsManager`.
 
 from typing import Any, Callable, Dict, List, Optional
 
-from ..common.log import get_known_loggers, LOG_STATE_ICON, LOG_STATE_SEQUENCE, format_log_state
+from ..common.log import get_known_loggers, LOG_STATE_ICON, LOG_STATE_SEQUENCE, format_log_state, Logger
 from .message_flow import (
     MessageFlow,
     MessageDefinition,
@@ -27,11 +27,12 @@ from .message_flow_helpers import (
     ExitStateBuilder,
     StagingManager,
     IntegerParser,
-        apply_update_or_notify,
+    apply_update_or_notify,
     CommonCallbacks,
     CommonStateIds,
 )
 from .settings_manager import SettingsManager
+from .settings_generator import register_schema_states, build_admin_submenu_keyboard
 
 
 # State IDs
@@ -74,15 +75,19 @@ def create_settings_flow() -> MessageFlow:
     flow = MessageFlow()
 
     # Small helpers to reduce repetition when updating settings
+    logger = Logger("SettingsFlow", logger_name=__name__)
+
     async def _user_update(flow_state, api, user_id: int, **kwargs) -> bool:
         repo = api.conversation_manager.repo
-        return await apply_update_or_notify(
+        before = await repo.get_user_settings(user_id)
+        ok = await apply_update_or_notify(
             flow_state,
             api,
             user_id,
             repo.update_user_settings(user_id, **kwargs),
             clear_keys=["user_settings"],
         )
+        return ok
 
     async def _global_update(flow_state, api, user_id: int, coro) -> bool:
         # `coro` is a coroutine returned by a repo.update_* call
@@ -92,6 +97,17 @@ def create_settings_flow() -> MessageFlow:
         us = await api.conversation_manager.repo.get_user_settings(user_id)
         new_val = not bool(getattr(us, attr, False))
         return await _user_update(flow_state, api, user_id, **{field or attr: new_val})
+
+
+    # Register schema-driven states (generic handlers for standard settings)
+    # Provide parent mapping so category states use the correct back parent.
+    register_schema_states(
+        flow,
+        _user_update,
+        _global_update,
+        parent_main=STATE_MAIN,
+        parent_admin=STATE_ADMIN,
+    )
 
 
     # ------------------ Main menu ------------------
@@ -107,11 +123,11 @@ def create_settings_flow() -> MessageFlow:
 
     async def handle_main_button(data: str, flow_state, api, user_id) -> Optional[str]:
         if data == "ordering":
-            return STATE_ORDERING
+            return "sd:cat:main:ordering"
         if data == "vanishing":
-            return STATE_VANISHING
+            return "sd:cat:main:vanishing"
         if data == "user_notifications":
-            return STATE_USER_NOTIFICATIONS
+            return "sd:cat:main:notifications"
         if data == "done":
             return STATE_SAVE_RESULT
         if data == "admin":
@@ -339,10 +355,14 @@ def create_settings_flow() -> MessageFlow:
         return sm.get_admin_submenu_text()
 
     async def build_admin_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        sm = SettingsManager(api)
-        return sm.get_admin_submenu_keyboard()
+        # Use schema-driven admin submenu where possible
+        return build_admin_submenu_keyboard(flow_state, api, user_id)
 
     async def handle_admin_button(data: str, flow_state, api, user_id) -> Optional[str]:
+        # Support schema-driven category callbacks (sd:cat:<name>)
+        if data and data.startswith("sd:cat:"):
+            return data
+
         if data == "logging":
             return STATE_LOGGING
         if data == "notifications":

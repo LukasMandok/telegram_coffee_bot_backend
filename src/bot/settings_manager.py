@@ -14,6 +14,7 @@ from ..dependencies.dependencies import get_repo
 from ..common.log import log_settings
 from ..common.log import LOG_STATE_ICON, format_log_state
 from .message_flow_helpers import toggle_button
+from .settings_schema import CATEGORIES, SettingType
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,31 @@ class SettingsManager:
     # === Button Icons ===
     ICON_BACK = "◁"
     ICON_CANCEL = " ✖"
+    ICON_MAP: Dict[str, str] = {
+        "group_page_size": "📄",
+        "group_sort_by": "🔤",
+        "vanishing_enabled": "💬",
+        "vanishing_threshold": "🔢",
+        "notifications_enabled": "🔔",
+        "notifications_silent": "🔕",
+        "log_level": "📊",
+        "log_show_time": "⏱",
+        "log_show_caller": "👤",
+        "log_show_class": "🏷",
+        "periodic_sync_enabled": "⏱",
+        "sync_period_minutes": "⏱",
+        "two_way_sync_enabled": "🔁",
+        "sync_after_actions_enabled": "🔄",
+        "keep_last": "🧾",
+        "card_closed": "📌",
+        "session_completed": "✅",
+        "quick_order": "⚡",
+        "card_created": "➕",
+        "correction_method": "🧮",
+        "correction_threshold": "🔢",
+        "creditor_exempt_from_correction": "👑",
+        "creditor_free_coffees": "☕",
+    }
     
     # === Menu Generators ===
     
@@ -108,20 +134,11 @@ class SettingsManager:
         Returns:
             Formatted text for the ordering submenu
         """
-        return (
-            "📋 **Ordering Settings**\n\n"
-            f"**Group Page Size:** {settings.group_page_size} users per page\n"
-            f"**Group Sorting:** {settings.group_sort_by.title()}\n\n"
-            "Select a setting to adjust:"
-        )
+        return self.get_schema_category_text("ordering", user_settings=settings, targets=("user",))
     
     def get_ordering_submenu_keyboard(self) -> InlineKeyboard:
         """Generate the ordering settings submenu keyboard."""
-        return [
-            [ButtonCallback("📄 Group Page Size", "page_size")],
-            [ButtonCallback("🔤 Group Sorting", "sorting")],
-            [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
-        ]
+        return self.get_schema_category_keyboard("ordering", targets=("user",))
     
     def get_vanishing_submenu_text(self, settings) -> str:
         """
@@ -133,28 +150,14 @@ class SettingsManager:
         Returns:
             Formatted text for the vanishing submenu
         """
-        vanish_status = "✅ On" if settings.vanishing_enabled else "❌ Off"
-        
-        return (
-            "💬 **Vanishing Messages**\n\n"
-            f"**Status:** {vanish_status}\n"
-            f"**Vanish After:** {settings.vanishing_threshold} messages/conversations\n\n"
-            "Vanishing messages automatically clean up old messages to keep your chat tidy.\n\n"
-            "Select a setting to adjust:"
-        )
+        return self.get_schema_category_text("vanishing", user_settings=settings, targets=("user",))
     
     def get_vanishing_submenu_keyboard(self, settings=None) -> InlineKeyboard:
         """Generate the vanishing messages submenu keyboard.
 
         `settings` is optional; when provided the button reflects the current state.
         """
-        enabled = bool(getattr(settings, "vanishing_enabled", False)) if settings is not None else False
-        tb = toggle_button(enabled, "Vanishing Messages", "toggle")
-        return [
-            [ButtonCallback(tb.text, tb.callback_data)],
-            [ButtonCallback("🔢 Vanish Threshold", "threshold")],
-            [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
-        ]
+        return self.get_schema_category_keyboard("vanishing", user_settings=settings, targets=("user",))
     
     def get_user_notifications_submenu_text(self, user_settings, notification_settings: Dict) -> str:
         """
@@ -167,72 +170,45 @@ class SettingsManager:
         Returns:
             Formatted text for the user notifications submenu
         """
-        app_enabled = bool(notification_settings.get("notifications_enabled", True))
-        app_silent = bool(notification_settings.get("notifications_silent", False))
+        # Custom formatted notifications overview: show app-wide and per-user sections
+        app_enabled = bool(notification_settings.get("notifications_enabled", True)) if notification_settings else True
+        app_silent = bool(notification_settings.get("notifications_silent", False)) if notification_settings else False
+        your_enabled = bool(getattr(user_settings, "notifications_enabled", True)) if user_settings is not None else True
+        your_silent = bool(getattr(user_settings, "notifications_silent", False)) if user_settings is not None else False
 
-        user_enabled = bool(user_settings.notifications_enabled)
-        user_silent = bool(user_settings.notifications_silent)
+        def _yesno(v: bool) -> str:
+            return "✅ On" if v else "❌ Off"
 
-        def _status(on: bool) -> str:
-            return "✅ On" if on else "❌ Off"
-
-        effective_enabled = app_enabled and user_enabled
-        effective_silent = app_silent or user_silent
-
-        silent_effective_label = _status(effective_silent) if effective_enabled else "⏸ N/A"
-
-        # Keep this menu compact: show current state + only the relevant override hint.
-        lines = [
-            "🔔 **Notifications**",
-            "",
-            "**Global (admin):**",
-            f"• **Enabled:** {_status(app_enabled)}",
-            f"• **Silent:** {_status(app_silent)}",
-            "",
-            "**You:**",
-            f"• **Enabled:** {_status(user_enabled)}",
-            f"• **Silent:** {_status(user_silent)}",
-            "",
-            "**Effective for you:**",
-            f"• **Enabled:** {_status(effective_enabled)}",
-            f"• **Silent:** {silent_effective_label}",
-            "",
-        ]
-
-        if not app_enabled:
-            lines.append("⚠️ Global notifications are OFF → your **Enabled** toggle has no effect.")
-        elif not user_enabled:
-            lines.append("ℹ️ Notifications are OFF for you → silent mode doesn’t matter.")
-        elif app_silent:
-            lines.append("ℹ️ Global silent is ON → your **Silent** toggle has no effect.")
-
-        lines.append("\nToggle below:")
-        return "\n".join(lines)
+        parts = ["🔔 **Notifications**", "", "**App (Global)**"]
+        parts.append(f"• Global Enabled: {_yesno(app_enabled)}")
+        parts.append(f"   Global notifications enabled")
+        parts.append(f"• Global Silent: {_yesno(app_silent)}")
+        parts.append(f"   Send notifications silently by default")
+        parts.append("")
+        parts.append("**You (Your preferences)**")
+        parts.append(f"• Your Enabled: {_yesno(your_enabled)}")
+        parts.append(f"   Receive notifications")
+        parts.append(f"• Your Silent: {_yesno(your_silent)}")
+        parts.append(f"   Receive notifications silently")
+        parts.append("")
+        parts.append("Select a setting to adjust:")
+        return "\n".join(parts)
     
     def get_user_notifications_submenu_keyboard(self, user_settings=None, notification_settings=None) -> InlineKeyboard:
         """Generate the user notification preference submenu keyboard.
 
-        Optional `user_settings` may be provided so the buttons reflect current values.
+        This view shows only per-user toggle buttons (global app toggles are admin-only).
         """
-        user_enabled = bool(getattr(user_settings, "notifications_enabled", True)) if user_settings is not None else True
-        user_silent = bool(getattr(user_settings, "notifications_silent", False)) if user_settings is not None else False
-        app_enabled = bool(notification_settings.get("notifications_enabled", True)) if notification_settings is not None else True
+        keyboard: InlineKeyboard = []
+        your_enabled = bool(getattr(user_settings, "notifications_enabled", True)) if user_settings is not None else True
+        your_silent = bool(getattr(user_settings, "notifications_silent", False)) if user_settings is not None else False
 
-        # Use callback IDs expected by the conversation handlers (user-specific)
-        notif_btn = toggle_button(user_enabled, "Notifications", "toggle_user_notifications")
-
-        # If global notifications are disabled, indicate Silent is N/A; otherwise render toggle
-        if not app_enabled:
-            silent_row = [ButtonCallback("⏸ Silent: N/A", "toggle_user_silent")]
-        else:
-            silent_btn = toggle_button(user_silent, "Silent", "toggle_user_silent")
-            silent_row = [ButtonCallback(silent_btn.text, silent_btn.callback_data)]
-
-        return [
-            [ButtonCallback(notif_btn.text, notif_btn.callback_data)],
-            silent_row,
-            [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
-        ]
+        b1 = toggle_button(your_enabled, "Your Notifications", "toggle_user_notifications")
+        b2 = toggle_button(your_silent, "Your Notifications Silent", "toggle_user_silent")
+        keyboard.append([ButtonCallback(b1.text, b1.callback_data)])
+        keyboard.append([ButtonCallback(b2.text, b2.callback_data)])
+        keyboard.append([ButtonCallback(f"{self.ICON_BACK} Back", "back")])
+        return keyboard
     
     def get_sorting_options_text(self, settings) -> str:
         """
@@ -267,6 +243,67 @@ class SettingsManager:
         return [
             [ButtonCallback(f"{self.ICON_BACK} Back", "back")]
         ]
+
+    # === Schema-driven helpers ===
+    def _get_setting_value(self, s, user_settings=None, app_settings=None):
+        try:
+            if s.target == "user":
+                if user_settings is None:
+                    return s.default
+                return getattr(user_settings, s.key, s.default)
+            else:
+                if app_settings is None:
+                    return s.default
+                if isinstance(app_settings, dict):
+                    return app_settings.get(s.key, s.default)
+                return getattr(app_settings, s.key, s.default)
+        except Exception:
+            return s.default
+
+    def get_schema_category_text(self, category_key: str, user_settings=None, app_settings=None, targets=("user", "app")) -> str:
+        meta = CATEGORIES.get(category_key)
+        if not meta:
+            return "**Missing Settings**\n\nNo settings configured."
+        parts = [f"**{meta.get('label')}**", ""]
+        for s in meta.get('settings', []):
+            if s.target not in targets:
+                continue
+            cur = self._get_setting_value(s, user_settings, app_settings)
+            icon = self.ICON_MAP.get(s.key, "")
+            label = f"{icon} {s.label}" if icon else s.label
+            parts.append(f"• {label}: {cur}")
+            if getattr(s, "description", None):
+                parts.append(f"   _{s.description}_")
+        parts.append("")
+        parts.append("Select a setting to adjust:")
+        return "\n".join(parts)
+
+    def get_schema_category_keyboard(self, category_key: str, user_settings=None, app_settings=None, targets=("user", "app")) -> InlineKeyboard:
+        meta = CATEGORIES.get(category_key)
+        buttons: InlineKeyboard = []
+        if not meta:
+            buttons.append([ButtonCallback(f"{self.ICON_BACK} Back", "back")])
+            return buttons
+
+        for s in meta.get('settings', []):
+            if s.target not in targets:
+                continue
+            cur = self._get_setting_value(s, user_settings, app_settings)
+            icon = self.ICON_MAP.get(s.key, "")
+            label_base = f"{icon} {s.label}" if icon else s.label
+            if s.type == SettingType.TOGGLE:
+                callback_data = f"sd:toggle:{category_key}:{s.key}"
+                tb = toggle_button(bool(cur), label_base, callback_data)
+                buttons.append([ButtonCallback(tb.text, tb.callback_data)])
+            elif s.type == SettingType.ENUM:
+                callback_data = f"sd:enum:{category_key}:{s.key}"
+                buttons.append([ButtonCallback(f"{label_base}: {cur}", callback_data)])
+            elif s.type == SettingType.NUMBER:
+                callback_data = f"sd:number_edit:{category_key}:{s.key}"
+                buttons.append([ButtonCallback(f"{label_base}: {cur}", callback_data)])
+
+        buttons.append([ButtonCallback(f"{self.ICON_BACK} Back", "back")])
+        return buttons
     
     def get_admin_submenu_text(self) -> str:
         """
@@ -451,6 +488,7 @@ class SettingsManager:
             [ButtonCallback("⏱ Set Sync Period (min)", "set_period")],
             [ButtonCallback(b_two_way.text, b_two_way.callback_data)],
             [ButtonCallback(b_after.text, b_after.callback_data)],
+            [ButtonCallback("📸 Snapshot Reasons", "snapshots")],
             [ButtonCallback(f"{self.ICON_BACK} Back", "back")],
         ]
     
@@ -513,53 +551,11 @@ class SettingsManager:
         Returns:
             Formatted text for the notifications submenu
         """
-        app_enabled = bool(notification_settings.get("notifications_enabled", True))
-        app_silent = bool(notification_settings.get("notifications_silent", False))
-
-        def _status(on: bool) -> str:
-            return "✅ On" if on else "❌ Off"
-
-        silent_label = _status(app_silent) if app_enabled else "⏸ N/A"
-
-        lines = [
-            "🔔 **Notifications (Global)**",
-            "",
-            "**Admin:**",
-            f"• **Enabled:** {_status(app_enabled)}",
-            f"• **Silent:** {silent_label}",
-            "",
-        ]
-
-        if not app_enabled:
-            lines.append("⚠️ Global notifications are OFF → nobody receives notifications.")
-            lines.append("ℹ️ Silent mode is irrelevant while notifications are OFF.")
-        elif app_silent:
-            lines.append("ℹ️ Global silent is ON → all notifications are silent (overrides user silent).")
-        else:
-            lines.append("ℹ️ Users can choose silent mode for themselves.")
-
-        lines.append("ℹ️ Users can still disable notifications for themselves.")
-        lines.append("\nToggle below:")
-        return "\n".join(lines)
+        return self.get_schema_category_text("notifications", app_settings=notification_settings, targets=("app",))
     
     def get_notifications_submenu_keyboard(self, notification_settings: Dict) -> InlineKeyboard:
         """Generate the notifications settings submenu keyboard."""
-        app_enabled = bool(notification_settings.get("notifications_enabled", True))
-        app_silent = bool(notification_settings.get("notifications_silent", False))
-
-        notif_btn = toggle_button(app_enabled, "Notifications", "toggle_notifications")
-        # Show silent toggle only when notifications are enabled; otherwise indicate N/A
-        if app_enabled:
-            silent_btn = toggle_button(app_silent, "Silent", "toggle_silent")
-            silent_row = [ButtonCallback(silent_btn.text, silent_btn.callback_data)]
-        else:
-            silent_row = [ButtonCallback("⏸ Silent: N/A", "toggle_silent")]
-
-        return [
-            [ButtonCallback(notif_btn.text, notif_btn.callback_data)],
-            silent_row,
-            [ButtonCallback(f"{self.ICON_BACK} Back", "back")],
-        ]
+        return self.get_schema_category_keyboard("notifications", app_settings=notification_settings, targets=("app",))
     
     def get_logging_format_text(self, log_settings: Dict) -> str:
         """
