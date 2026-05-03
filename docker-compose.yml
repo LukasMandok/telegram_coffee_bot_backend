@@ -1,17 +1,4 @@
 services:
-  # mongodb:
-  #   image: mongo:latest
-  #   ports:
-  #     - "27017:27017"
-  #   environment:
-  #     - MONGO_INITDB_ROOT_USERNAME=admin
-  #     - MONGO_INITDB_ROOT_PASSWORD=password123
-  #     - MONGO_INITDB_DATABASE=fastapi
-  #   volumes:
-  #     - mongodb_data:/data/db
-  #   networks:
-  #     - coffee-network
-
   coffee-bot:
     build: 
       context: .
@@ -29,6 +16,15 @@ services:
       - MONGO_INITDB_DATABASE=${MONGO_INITDB_DATABASE}
       - MONGO_HOST=host.docker.internal
       - MONGO_PORT=${MONGO_PORT:-27017}
+      - DEFAULT_PASSWORD=${DEFAULT_PASSWORD}
+      - USERS=${USERS}
+      - DEFAULT_ADMIN=${DEFAULT_ADMIN}
+      - GSHEET_SSID=${GSHEET_SSID}
+      - SERVICE_ACCOUNT_EMAIL=${SERVICE_ACCOUNT_EMAIL}
+      - SERVICE_ACCOUNT_PRIVATE_KEY=${SERVICE_ACCOUNT_PRIVATE_KEY}
+      - PROJECT_ID=${PROJECT_ID}
+      - DEBUG_MODE=${DEBUG_MODE}
+      - LOG_LEVEL=${LOG_LEVEL}
     volumes:
       - ./src:/app/src
     develop:
@@ -43,13 +39,7 @@ services:
           path: src/requirements.txt
     networks:
       - coffee-network
-    # depends_on:
-    #   - mongodb
 
 networks:
   coffee-network:
     driver: bridge
-
-# volumes:
-#   mongodb_data:
-#     driver: local

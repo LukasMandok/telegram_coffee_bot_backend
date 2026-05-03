@@ -1,18 +1,3 @@
-working on:
-- restructure all conversations using the message flow
-done:
-- credit (payment)
-- debt (payment)
-- paypal
-- settings (main menu)
-- card
-- session
-- settings submenu inntegration
-- signup
-- passive user
-remaining:
-
-Coffee Cards:
 
 Snapshots:
 (- an option to make specific snapshots as permanent, so they are not part of the fixed number of snapshots that are deleted, when more are created.)
