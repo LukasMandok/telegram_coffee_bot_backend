@@ -15,6 +15,32 @@ General:
 - unify certain repeating code snippets as functions
 - add an option to message flows, which allow actions on initiation, submit and cancel -> so I can so gsheet synchronizations on sumbit and start backups on initiation save them on submit and delete them on cancel
 
+Profile:
+- give the user an option to modify their own profile
+- Display Name, activity / inactivity status, and get some total stats (like total coffees drank)
+
+Statistics:
+- add a /stats command to get some overall stats about the database.
+- a ranking of the best 5 people ordering coffees
+- a ranking of the 5 people drinking the most coffees
+- a ranking of the 5 people with the most outstanding debts
+- can you use matplotlib to create some nice graphics for coffee consumption over time and send that to the user
+
+Users:
+- filter users for passive and telegram users (just a toggle button in the Manage users submenu, which includes [all, passive, telegram] as options that you cycle through by pressing the button)
+
+Settings:
+- clean up settings menu, so it is actually is dynamicalyl generated from all the definitions (structure of menus, descriptions, some button type (toggling, selection, input))
+
+- notify a user, if he is promoted to admin or if his admin rights are revoked
+
+Snapshots:
+- create an undo command (/undo), which allows to user, which just mad a change to undo that change by loading the latest snapshot even without admin rights.
+- this change should be possible within the next 30mins
+
+Versioning:
+- create a changelog file in the code and add a version number to the database. Whenever there is a newer version number in the changelog, than in the code, that one gets updated and the users are notified with the new changes.
+
 
 maybe:
 - emulate other users
