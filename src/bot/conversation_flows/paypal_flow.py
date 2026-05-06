@@ -6,19 +6,23 @@ changing, validating and removing a user's PayPal.me link.
 
 from typing import Optional, List
 
-from ..common.log import Logger
-from .message_flow import (
-    MessageFlow, MessageDefinition, ButtonCallback,
-    MessageAction, StateType, TextLengthValidator
+from ...common.log import Logger
+from ..message_flow import (
+    ButtonCallback,
+    MessageAction,
+    MessageDefinition,
+    MessageFlow,
+    StateType,
+    TextLengthValidator,
 )
-from .message_flow_helpers import (
+from ..message_flow_helpers import (
     CommonCallbacks,
     CommonStateIds,
     ExitStateBuilder,
     NavigationButtons,
     make_state,
 )
-from ..handlers.paypal import create_paypal_link, validate_paypal_link
+from ...handlers.paypal import create_paypal_link, validate_paypal_link
 
 
 STATE_MAIN = "main"

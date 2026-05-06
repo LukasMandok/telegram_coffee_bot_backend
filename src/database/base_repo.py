@@ -25,6 +25,11 @@ class BaseRepository(ABC):
     async def close(self) -> None:
         pass
     
+    @abstractmethod
+    def get_collection(self, collection_name: str) -> Any:
+        """Get a MongoDB collection by name."""
+        pass
+    
     ### Users
     
     @abstractmethod

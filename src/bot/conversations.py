@@ -19,8 +19,7 @@ from pymongo.errors import DuplicateKeyError
 from ..handlers import users
 from ..handlers.paypal import create_paypal_link, validate_paypal_link
 from ..dependencies.dependencies import get_repo
-from .settings_manager import SettingsManager
-from .credit_flow import run_credit_flow
+from .conversation_flows.credit_flow import run_credit_flow
 from .conversation_flows.debt_flow import run_debt_flow
 from .conversation_flows.card_flow import create_card_menu_flow, create_close_card_flow, create_new_card_flow
 from .conversation_flows.quick_order_flow import create_quick_order_flow, format_not_enough_coffees_text
@@ -206,8 +205,6 @@ class ConversationManager:
         self.api = api
         # Manage active conversations within the conversation manager
         self.active_conversations: Dict[int, ConversationState] = {}
-        # Initialize settings manager for handling settings UI
-        self.settings_manager = SettingsManager(api)
         # Initialize logger with class name
         self.logger = Logger("ConversationManager")
         # Cache repository instance for consistent access
@@ -1080,7 +1077,7 @@ class ConversationManager:
         Returns:
             bool: True if conversation completed successfully, False otherwise
         """
-        from .paypal_flow import create_paypal_flow
+        from .conversation_flows.paypal_flow import create_paypal_flow
         
         flow = create_paypal_flow()
         return await flow.run(conv, user_id, self.api, start_state="main")
@@ -1137,7 +1134,7 @@ class ConversationManager:
 
     @managed_conversation("settings", 180)
     async def settings_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
-        """Delegate to the MessageFlow-based settings implementation in src/bot/settings_flow.py."""
-        from .settings_flow import create_settings_flow
+        """Delegate to the MessageFlow-based settings implementation in src/bot/conversation_flows/settings_flow.py."""
+        from .conversation_flows.settings_flow import create_settings_flow
         flow = create_settings_flow()
         return await flow.run(conv, user_id, self.api, start_state="main")

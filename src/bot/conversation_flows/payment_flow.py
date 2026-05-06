@@ -1,4 +1,8 @@
-"""Shared staged payment flow utilities used by debt and credit overviews."""
+"""Shared staged payment flow utilities used by debt and credit overviews.
+
+This module was moved under `conversation_flows` so it groups with other
+conversation-related helpers.
+"""
 
 from __future__ import annotations
 
@@ -6,9 +10,9 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from telethon import events
 
-from ..models.beanie_models import PassiveUser, TelegramUser
-from .message_flow import ButtonCallback
-from .message_flow_helpers import (
+from ...models.beanie_models import PassiveUser, TelegramUser
+from ..message_flow import ButtonCallback
+from ..message_flow_helpers import (
     CommonCallbacks,
     GridLayout,
     InputDistributor,
@@ -17,7 +21,7 @@ from .message_flow_helpers import (
     StagingManager,
     format_money,
 )
-from .message_flow_ids import DebtQuickConfirmCallbacks
+from ..message_flow_ids import DebtQuickConfirmCallbacks
 
 
 MONEY_PARSER = MoneyParser()
@@ -217,11 +221,7 @@ async def handle_staged_payments_input(
     return current_state
 
 
-# ==========================================================================
 # QUICK CONFIRM CALLBACK (PAYMENT REMINDERS)
-# ==========================================================================
-
-
 async def _notify_creditor_debt_quick_confirm(
     api,
     *,

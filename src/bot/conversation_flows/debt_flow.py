@@ -15,7 +15,7 @@ from ..message_flow_helpers import (
     format_money,
     make_state,
 )
-from ..payment_flow import (
+from .payment_flow import (
     build_staged_payments_keyboard,
     get_total_owed,
     get_total_staged,

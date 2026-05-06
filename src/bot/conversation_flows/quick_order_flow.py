@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from ..message_flow import ButtonCallback, MessageAction, MessageDefinition, MessageFlow
-from ..message_flow_helpers import CommonCallbacks, make_state
+from ..message_flow import ButtonCallback, MessageAction, MessageFlow
+from ..message_flow_helpers import CommonCallbacks, ExitStateBuilder, make_state
 from ...common.log import Logger
 from ...exceptions.coffee_exceptions import InsufficientCoffeeError
 from ...models.coffee_models import CoffeeCard
@@ -208,46 +208,30 @@ def create_quick_order_flow() -> MessageFlow:
         return format_not_enough_coffees_text(quantity, available)
 
     flow.add_state(
-        MessageDefinition(
+        ExitStateBuilder.create(
             state_id=STATE_EXIT_NOT_ENOUGH,
             text_builder=_build_not_enough_text,
-            buttons=None,
-            action=MessageAction.EDIT,
-            timeout=1,
-            remove_buttons_on_exit=True,
         )
     )
 
     flow.add_state(
-        MessageDefinition(
+        ExitStateBuilder.create(
             state_id=STATE_EXIT_CANCELLED,
             text="❌ Order cancelled.",
-            buttons=None,
-            action=MessageAction.EDIT,
-            timeout=1,
-            remove_buttons_on_exit=True,
         )
     )
 
     flow.add_state(
-        MessageDefinition(
+        ExitStateBuilder.create(
             state_id=STATE_EXIT_FAILED,
             text="❌ Quick order failed due to an unexpected error.",
-            buttons=None,
-            action=MessageAction.EDIT,
-            timeout=1,
-            remove_buttons_on_exit=True,
         )
     )
 
     flow.add_state(
-        MessageDefinition(
+        ExitStateBuilder.create(
             state_id=STATE_EXIT_SUCCESS,
             text="",
-            buttons=None,
-            action=MessageAction.EDIT,
-            timeout=1,
-            remove_buttons_on_exit=True,
         )
     )
 

@@ -6,33 +6,33 @@ implementation. Each submenu is implemented as a MessageDefinition state with
 handlers that read/update repository settings via `api.conversation_manager.repo`.
 
 This file intentionally contains only conversation/UI behaviour; textual
-content and keyboard generation remain in `SettingsManager`.
+content and keyboard generation remain in `SettingsUi`.
 """
 
 from typing import Any, Callable, Dict, List, Optional
 
-from ..common.log import get_known_loggers, LOG_STATE_ICON, LOG_STATE_SEQUENCE, format_log_state, Logger
-from .message_flow import (
-    MessageFlow,
-    MessageDefinition,
+from ...common.log import Logger, LOG_STATE_ICON, LOG_STATE_SEQUENCE, format_log_state, get_known_loggers
+from ..message_flow import (
     ButtonCallback,
     MessageAction,
-    StateType,
+    MessageDefinition,
+    MessageFlow,
     PaginationConfig,
+    StateType,
 )
-from .message_flow_helpers import (
-    make_state,
-    NavigationButtons,
-    toggle_button,
-    ExitStateBuilder,
-    StagingManager,
-    IntegerParser,
-    apply_update_or_notify,
+from ..message_flow_helpers import (
     CommonCallbacks,
     CommonStateIds,
+    ExitStateBuilder,
+    IntegerParser,
+    NavigationButtons,
+    StagingManager,
+    apply_update_or_notify,
+    make_state,
+    toggle_button,
 )
-from .settings_manager import SettingsManager
-from .settings_generator import register_schema_states, build_admin_submenu_keyboard
+from ..settings_generator import build_admin_submenu_keyboard, register_schema_states
+from ..settings_ui import SettingsUi
 
 
 # State IDs
@@ -112,13 +112,13 @@ def create_settings_flow() -> MessageFlow:
 
     # ------------------ Main menu ------------------
     async def build_main_text(flow_state, api, user_id) -> str:
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_main_menu_text()
 
     async def build_main_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
         repo = api.conversation_manager.repo
         is_admin = await repo.is_user_admin(user_id)
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_main_menu_keyboard(include_admin=is_admin)
 
     async def handle_main_button(data: str, flow_state, api, user_id) -> Optional[str]:
@@ -159,11 +159,11 @@ def create_settings_flow() -> MessageFlow:
         user_settings = await flow_state.get_or_fetch(
             "user_settings", lambda: api.conversation_manager.repo.get_user_settings(user_id)
         )
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_ordering_submenu_text(user_settings)
 
     async def build_ordering_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_ordering_submenu_keyboard()
 
     async def handle_ordering_button(data: str, flow_state, api, user_id) -> Optional[str]:
@@ -227,11 +227,11 @@ def create_settings_flow() -> MessageFlow:
     # Sorting options
     async def build_sorting_text(flow_state, api, user_id) -> str:
         settings = await flow_state.get_or_fetch("user_settings", lambda: api.conversation_manager.repo.get_user_settings(user_id))
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_sorting_options_text(settings)
 
     async def build_sorting_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_sorting_options_keyboard()
 
     async def handle_sorting_button(data: str, flow_state, api, user_id) -> Optional[str]:
@@ -256,12 +256,12 @@ def create_settings_flow() -> MessageFlow:
     # ------------------ Vanishing ------------------
     async def build_vanishing_text(flow_state, api, user_id) -> str:
         settings = await flow_state.get_or_fetch("user_settings", lambda: api.conversation_manager.repo.get_user_settings(user_id))
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_vanishing_submenu_text(settings)
 
     async def build_vanishing_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
         settings = await flow_state.get_or_fetch("user_settings", lambda: api.conversation_manager.repo.get_user_settings(user_id))
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_vanishing_submenu_keyboard(settings)
 
     async def handle_vanishing_button(data: str, flow_state, api, user_id) -> Optional[str]:
@@ -318,13 +318,13 @@ def create_settings_flow() -> MessageFlow:
     async def build_user_notifications_text(flow_state, api, user_id) -> str:
         user_settings = await flow_state.get_or_fetch("user_settings", lambda: api.conversation_manager.repo.get_user_settings(user_id))
         notification_settings = await api.conversation_manager.repo.get_notification_settings() or {"notifications_enabled": True, "notifications_silent": False}
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_user_notifications_submenu_text(user_settings, notification_settings)
 
     async def build_user_notifications_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
         user_settings = await flow_state.get_or_fetch("user_settings", lambda: api.conversation_manager.repo.get_user_settings(user_id))
         notification_settings = await api.conversation_manager.repo.get_notification_settings() or {"notifications_enabled": True, "notifications_silent": False}
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_user_notifications_submenu_keyboard(user_settings, notification_settings)
 
     async def handle_user_notifications_button(data: str, flow_state, api, user_id) -> Optional[str]:
@@ -351,7 +351,7 @@ def create_settings_flow() -> MessageFlow:
 
     # ------------------ Admin root ------------------
     async def build_admin_text(flow_state, api, user_id) -> str:
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_admin_submenu_text()
 
     async def build_admin_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
@@ -390,11 +390,11 @@ def create_settings_flow() -> MessageFlow:
 
     # ------------------ Admin: Registration Password ------------------
     async def build_registration_password_text(flow_state, api, user_id) -> str:
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_registration_password_submenu_text()
 
     async def build_registration_password_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_registration_password_submenu_keyboard()
 
     async def handle_registration_password_button(data: str, flow_state, api, user_id) -> Optional[str]:
@@ -449,6 +449,8 @@ def create_settings_flow() -> MessageFlow:
         on_input_received=handle_registration_password_verify_input,
         action=MessageAction.EDIT,
         back_button=CommonCallbacks.BACK,
+        # Provide explicit buttons so users can cancel via keyboard while typing
+        buttons=[NavigationButtons.back(), NavigationButtons.cancel()],
         parent_state=STATE_REGISTRATION_PASSWORD,
     ))
 
@@ -477,6 +479,8 @@ def create_settings_flow() -> MessageFlow:
         on_input_received=handle_registration_password_new_input,
         action=MessageAction.EDIT,
         back_button=CommonCallbacks.BACK,
+        # Allow cancelling the input with an explicit Cancel button
+        buttons=[NavigationButtons.back(), NavigationButtons.cancel()],
         parent_state=STATE_REGISTRATION_PASSWORD,
     ))
 
@@ -484,11 +488,11 @@ def create_settings_flow() -> MessageFlow:
     async def build_logging_text(flow_state, api, user_id) -> str:
         repo = api.conversation_manager.repo
         log_settings = await repo.get_log_settings() or {}
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_logging_submenu_text(log_settings)
 
     async def build_logging_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_logging_submenu_keyboard()
 
     async def handle_logging_button(data: str, flow_state, api, user_id) -> Optional[str]:
@@ -515,13 +519,13 @@ def create_settings_flow() -> MessageFlow:
     async def build_logging_format_text(flow_state, api, user_id) -> str:
         repo = api.conversation_manager.repo
         log_settings = await repo.get_log_settings() or {}
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_logging_format_text(log_settings)
 
     async def build_logging_format_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
         repo = api.conversation_manager.repo
         log_settings = await repo.get_log_settings() or {}
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_logging_format_keyboard(log_settings)
 
     async def handle_logging_format_button(data: str, flow_state, api, user_id) -> Optional[str]:
@@ -556,11 +560,11 @@ def create_settings_flow() -> MessageFlow:
     async def build_log_level_text(flow_state, api, user_id) -> str:
         repo = api.conversation_manager.repo
         log_settings = await repo.get_log_settings() or {}
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_log_level_options_text(log_settings.get("log_level", "INFO"))
 
     async def build_log_level_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_log_level_options_keyboard()
 
     async def handle_log_level_button(data: str, flow_state, api, user_id) -> Optional[str]:
@@ -670,7 +674,7 @@ def create_settings_flow() -> MessageFlow:
 
         footer = [
             ButtonCallback("✅ Apply", "apply"),
-            ButtonCallback(f"{SettingsManager.ICON_BACK} Back", CommonCallbacks.BACK),
+            ButtonCallback(f"{SettingsUi.ICON_BACK} Back", CommonCallbacks.BACK),
         ]
 
         return [header, footer]
@@ -751,12 +755,12 @@ def create_settings_flow() -> MessageFlow:
 
     # ------------------ Admin: Notifications ------------------
     async def build_notifications_text(flow_state, api, user_id) -> str:
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         notification_settings = await api.conversation_manager.repo.get_notification_settings() or {"notifications_enabled": True, "notifications_silent": False}
         return sm.get_notifications_submenu_text(notification_settings)
 
     async def build_notifications_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         notification_settings = await api.conversation_manager.repo.get_notification_settings() or {"notifications_enabled": True, "notifications_silent": False}
         return sm.get_notifications_submenu_keyboard(notification_settings)
 
@@ -792,11 +796,11 @@ def create_settings_flow() -> MessageFlow:
     # ------------------ Debts ------------------
     async def build_debts_text(flow_state, api, user_id) -> str:
         ds = await api.conversation_manager.repo.get_debt_settings()
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_debts_submenu_text(ds)
 
     async def build_debts_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_debts_submenu_keyboard()
 
     async def handle_debts_button(data: str, flow_state, api, user_id) -> Optional[str]:
@@ -820,11 +824,11 @@ def create_settings_flow() -> MessageFlow:
     # Debt Correction submenu (parent of method/threshold)
     async def build_debt_correction_text(flow_state, api, user_id) -> str:
         ds = await api.conversation_manager.repo.get_debt_settings()
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_debt_correction_submenu_text(ds)
 
     async def build_debt_correction_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_debt_correction_submenu_keyboard()
 
     async def handle_debt_correction_button(data: str, flow_state, api, user_id) -> Optional[str]:
@@ -911,12 +915,12 @@ def create_settings_flow() -> MessageFlow:
     # ------------------ Creditor Royalty submenu ------------------
     async def build_creditor_royalty_text(flow_state, api, user_id) -> str:
         ds = await api.conversation_manager.repo.get_debt_settings()
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_creditor_royalty_submenu_text(ds)
 
     async def build_creditor_royalty_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
         ds = await api.conversation_manager.repo.get_debt_settings()
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_creditor_royalty_submenu_keyboard(ds)
 
     async def handle_creditor_royalty_button(data: str, flow_state, api, user_id) -> Optional[str]:
@@ -977,12 +981,12 @@ def create_settings_flow() -> MessageFlow:
     # ------------------ Google Sheets ------------------
     async def build_gsheet_text(flow_state, api, user_id) -> str:
         g = await api.conversation_manager.repo.get_gsheet_settings()
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_gsheet_submenu_text(g)
 
     async def build_gsheet_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
         g = await api.conversation_manager.repo.get_gsheet_settings()
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_gsheet_submenu_keyboard(g)
 
     async def handle_gsheet_button(data: str, flow_state, api, user_id) -> Optional[str]:
@@ -1048,12 +1052,12 @@ def create_settings_flow() -> MessageFlow:
     # ------------------ Snapshots ------------------
     async def build_snapshots_text(flow_state, api, user_id) -> str:
         s = await api.conversation_manager.repo.get_snapshot_settings()
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_snapshots_submenu_text(s)
 
     async def build_snapshots_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
         s = await api.conversation_manager.repo.get_snapshot_settings()
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_snapshots_submenu_keyboard(s)
 
     async def handle_snapshots_button(data: str, flow_state, api, user_id) -> Optional[str]:
@@ -1108,12 +1112,12 @@ def create_settings_flow() -> MessageFlow:
     # Snapshot creation points toggles
     async def build_snapshot_creation_text(flow_state, api, user_id) -> str:
         s = await api.conversation_manager.repo.get_snapshot_settings()
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_snapshots_creation_points_submenu_text(s)
 
     async def build_snapshot_creation_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
         s = await api.conversation_manager.repo.get_snapshot_settings()
-        sm = SettingsManager(api)
+        sm = SettingsUi(api)
         return sm.get_snapshots_creation_points_submenu_keyboard(s)
 
     async def handle_snapshot_creation_button(data: str, flow_state, api, user_id) -> Optional[str]:
@@ -1151,3 +1155,4 @@ def create_settings_flow() -> MessageFlow:
     flow.add_state(ExitStateBuilder.create(state_id=STATE_SAVE_RESULT, text="✅ Settings saved!", timeout=1, delete_after=0))
 
     return flow
+

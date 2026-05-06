@@ -14,7 +14,7 @@ from ..common.log import Logger
 
 from ..services.gsheet_sync import sync_all_cards_once
 
-from .payment_flow import handle_debt_quick_confirm_callback as handle_debt_quick_confirm_callback_flow
+from .conversation_flows.payment_flow import handle_debt_quick_confirm_callback as handle_debt_quick_confirm_callback_flow
 
 if TYPE_CHECKING:
     from ..api.telethon_api import TelethonAPI

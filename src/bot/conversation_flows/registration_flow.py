@@ -115,7 +115,7 @@ def create_registration_flow() -> MessageFlow:
             )
 
             await _send_registration_success(api, user_id, new_user=new_user)
-            return "__exit__"
+            return CommonStateIds.EXIT_SUCCESS
 
         except DuplicateKeyError as e:
             return await _handle_duplicate_key_error(str(e), api, user_id)
@@ -300,7 +300,7 @@ def create_registration_flow() -> MessageFlow:
             )
 
             await _send_registration_success(api, user_id, new_user=new_user)
-            return "__exit__"
+            return CommonStateIds.EXIT_SUCCESS
 
         except DuplicateKeyError as e:
             return await _handle_duplicate_key_error(str(e), api, user_id)
@@ -418,7 +418,7 @@ def create_registration_flow() -> MessageFlow:
                 )
 
             await _send_registration_success(api, user_id, new_user=new_user)
-            return "__exit__"
+            return CommonStateIds.EXIT_SUCCESS
 
         except DuplicateKeyError as e:
             return await _handle_duplicate_key_error(str(e), api, user_id)
@@ -478,8 +478,17 @@ def create_registration_flow() -> MessageFlow:
         )
     )
 
+    async def _build_exit_success_text(flow_state, api: Any, user_id: int) -> str:
+        message = flow_state.current_message.text if flow_state.current_message is not None else ""
+        return message or ""
+
     # Cancellation / success states (use exit builders)
     flow.add_state(ExitStateBuilder.create_cancelled())
-    flow.add_state(ExitStateBuilder.create_success())
+    flow.add_state(
+        ExitStateBuilder.create(
+            state_id=CommonStateIds.EXIT_SUCCESS,
+            text_builder=_build_exit_success_text,
+        )
+    )
 
     return flow

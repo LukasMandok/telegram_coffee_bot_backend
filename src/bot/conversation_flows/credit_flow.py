@@ -5,30 +5,28 @@ This demonstrates how the helpers reduce boilerplate significantly.
 Compare this to credit_flow_example.py - much shorter and clearer!
 """
 
-# NOTE: what is pervious_on_save? and shouldnt this be just the default behaviour. I dont really understand, where something else would be needed.
 
 from typing import Optional, List
 
-from ..models.beanie_models import TelegramUser
-from .message_flow import (
-    MessageFlow, ButtonCallback,
-    MessageAction,
-)
-from .message_flow_helpers import (
-    GridLayout, ListBuilder, make_state,
+from ...models.beanie_models import TelegramUser
+from ..message_flow import ButtonCallback, MessageAction, MessageFlow
+from ..message_flow_helpers import (
     CommonCallbacks,
+    GridLayout,
+    ListBuilder,
     NavigationButtons,
-    format_money,
     apply_update_or_notify,
+    format_money,
+    make_state,
 )
-from .conversation_flows.payment_flow import (
+from ..message_flow_ids import DebtQuickConfirmCallbacks
+from .payment_flow import (
     build_staged_payments_keyboard,
     get_total_staged,
     handle_staged_payments_button,
     handle_staged_payments_input,
 )
-from ..models.coffee_models import PaymentReason
-from .message_flow_ids import DebtQuickConfirmCallbacks
+from ...models.coffee_models import PaymentReason
 
 
 EPS = 1e-9
@@ -75,8 +73,6 @@ def _get_view_mode(flow_state) -> str:
     return mode
 
 
-# NOTE: it seams like the staging manager is created quite often. is this really necessary?
-# shouldnt this be put directly into the create flow function with a dedicated message flow functionallity, which creates you the staging manager
 
 # ============================================================================
 # MAIN OVERVIEW
@@ -659,7 +655,6 @@ def create_credit_flow() -> MessageFlow:
     
     return flow
 
-# NOTE: maybe it is actually better to keep this in the conversation manager, because this is not actually message flow, but regular messages
 
 async def run_credit_flow(conv, user_id: int, api) -> bool:
     user = await api.conversation_manager.repo.find_user_by_id(user_id)

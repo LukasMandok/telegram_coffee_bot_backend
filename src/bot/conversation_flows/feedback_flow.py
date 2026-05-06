@@ -1544,7 +1544,8 @@ def create_feedback_flow() -> MessageFlow:
                 show_type_icon=True,
             ),
             pagination_extra_buttons_builder=_make_filters_builder(state_id=STATE_LIST_MY),
-            next_state_map={CommonCallbacks.CLOSE: STATE_MAIN},
+            back_button=CommonCallbacks.BACK,
+            parent_state=STATE_MAIN,
             defaults={
                 KEY_FILTER_OPEN: False,
                 KEY_FILTER_IN_PROGRESS: False,
@@ -1569,7 +1570,8 @@ def create_feedback_flow() -> MessageFlow:
                 show_type_icon=False,
             ),
             pagination_extra_buttons_builder=_make_filters_builder(state_id=STATE_LIST_ADMIN_BUGS),
-            next_state_map={CommonCallbacks.CLOSE: STATE_MAIN},
+            back_button=CommonCallbacks.BACK,
+            parent_state=STATE_MAIN,
             defaults={
                 KEY_FILTER_OPEN: False,
                 KEY_FILTER_IN_PROGRESS: False,
@@ -1594,7 +1596,8 @@ def create_feedback_flow() -> MessageFlow:
                 show_type_icon=False,
             ),
             pagination_extra_buttons_builder=_make_filters_builder(state_id=STATE_LIST_ADMIN_FEATURES),
-            next_state_map={CommonCallbacks.CLOSE: STATE_MAIN},
+            back_button=CommonCallbacks.BACK,
+            parent_state=STATE_MAIN,
             defaults={
                 KEY_FILTER_OPEN: False,
                 KEY_FILTER_IN_PROGRESS: False,
@@ -1619,7 +1622,8 @@ def create_feedback_flow() -> MessageFlow:
                 show_type_icon=False,
             ),
             pagination_extra_buttons_builder=_make_filters_builder(state_id=STATE_LIST_ADMIN_GENERAL),
-            next_state_map={CommonCallbacks.CLOSE: STATE_MAIN},
+            back_button=CommonCallbacks.BACK,
+            parent_state=STATE_MAIN,
             defaults={
                 KEY_FILTER_OPEN: False,
                 KEY_FILTER_IN_PROGRESS: False,

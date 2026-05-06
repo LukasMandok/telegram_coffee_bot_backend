@@ -1,10 +1,13 @@
 # from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo import AsyncMongoClient
+from pymongo import AsyncMongoClient, ReturnDocument
 import logging
 from beanie import init_beanie
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Sequence, Mapping
 from datetime import datetime
 import traceback
+
+from bson import ObjectId
+from beanie.odm.enums import SortDirection
 
 from .base_repo import BaseRepository, EffectiveNotificationPolicy
 from ..models import beanie_models as models
@@ -84,7 +87,7 @@ class BeanieRepository(BaseRepository):
 
             await self.ping()
 
-            self.snapshot_manager = SnapshotManager(self.db)
+            self.snapshot_manager = SnapshotManager(repo=self)
             
         except Exception as e:
             self.logger.error("MongoDB connection failed", extra_tag="DB", exc=e)
@@ -97,6 +100,12 @@ class BeanieRepository(BaseRepository):
             self.logger.info("Disconnected from MongoDB", extra_tag="DB")
         except Exception as e:
             self.logger.error("close_connection failed", extra_tag="DB", exc=e)
+
+    def get_collection(self, collection_name: str) -> Any:
+        """Get a MongoDB collection by name."""
+        if self.db is None:
+            raise RuntimeError("Database not connected")
+        return self.db.get_collection(collection_name)
 
     async def setup_defaults(self):
         # Clear existing data to start fresh (temporary fix for development)
@@ -141,11 +150,6 @@ class BeanieRepository(BaseRepository):
         except Exception as e:
             self.logger.error("ping failed", extra_tag="DB", exc=e)
 
-
-    async def get_collection(self, collection_name):
-        if self.db is None:
-            raise RuntimeError("Database not connected; call connect() first")
-        return self.db.get_collection(collection_name)
 
     # ---------------------------
     #     Access Database
@@ -954,6 +958,262 @@ class BeanieRepository(BaseRepository):
         except Exception as e:
             self.logger.error(f"update_snapshot_settings failed (settings={kwargs})", extra_tag="DB", exc=e)
             return False
+
+    # ---------------------------
+    #   Snapshot Meta + History
+    # ---------------------------
+
+    @staticmethod
+    def _snapshot_history_collection():
+        return models.SnapshotHistory.get_pymongo_collection()
+
+    async def get_snapshot_history(self) -> models.SnapshotHistory | None:
+        return await models.SnapshotHistory.find_one(models.SnapshotHistory.key == "default")
+
+    async def get_snapshot_history_numbers(self) -> List[int]:
+        doc = await self.get_snapshot_history()
+        return list(doc.snapshot_numbers or []) if doc is not None else []
+
+    async def append_snapshot_history_numbers(self, snapshot_numbers: Sequence[int]) -> None:
+        if not snapshot_numbers:
+            return
+
+        update: Dict[str, Any] = {
+            "$setOnInsert": {"key": "default"},
+            "$push": {"snapshot_numbers": {"$each": list(snapshot_numbers)}},
+            "$set": {"updated_at": datetime.now()},
+        }
+
+        await self._snapshot_history_collection().find_one_and_update(
+            {"key": "default"},
+            update,
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+
+    async def remove_snapshot_numbers_from_history(self, snapshot_numbers: Sequence[int]) -> None:
+        if not snapshot_numbers:
+            return
+
+        await self._snapshot_history_collection().update_one(
+            {"key": "default"},
+            {
+                "$setOnInsert": {"key": "default"},
+                "$pull": {"snapshot_numbers": {"$in": list(snapshot_numbers)}},
+                "$set": {"updated_at": datetime.now()},
+            },
+            upsert=True,
+        )
+
+    async def allocate_snapshot_number(self) -> int:
+        now = datetime.now()
+        doc = await self._snapshot_history_collection().find_one_and_update(
+            {"key": "default"},
+            {
+                "$setOnInsert": {"key": "default", "snapshot_numbers": []},
+                "$inc": {"last_snapshot_number": 1},
+                "$set": {"updated_at": now},
+            },
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        if doc is None:
+            raise RuntimeError("Failed to allocate snapshot number")
+        return int(doc["last_snapshot_number"])
+
+    async def list_snapshots(
+        self,
+        *,
+        include_pending: bool = False,
+        limit: int = 50,
+    ) -> List[models.SnapshotMeta]:
+        find_query: Dict[str, Any] = {}
+        if not include_pending:
+            find_query["status"] = "committed"
+
+        docs = (
+            await models.SnapshotMeta.find(find_query)
+            .sort(
+                [
+                    ("snapshot_number", SortDirection.DESCENDING),
+                    ("created_at", SortDirection.DESCENDING),
+                ]
+            )
+            .limit(limit)
+            .to_list()
+        )
+        return docs
+
+    async def get_last_loaded_snapshot_meta(self) -> models.SnapshotMeta | None:
+        docs = (
+            await models.SnapshotMeta.find({"loaded_at": {"$ne": None}})
+            .sort(("loaded_at", SortDirection.DESCENDING))
+            .limit(1)
+            .to_list()
+        )
+        return docs[0] if docs else None
+
+    async def get_snapshot_meta_by_number(self, snapshot_number: int) -> models.SnapshotMeta | None:
+        return await models.SnapshotMeta.find_one(models.SnapshotMeta.snapshot_number == snapshot_number)
+
+    async def get_snapshot_meta(self, snapshot_id: str) -> models.SnapshotMeta | None:
+        return await models.SnapshotMeta.find_one(models.SnapshotMeta.snapshot_id == str(snapshot_id))
+
+    async def get_snapshots_by_number(self, snapshot_numbers: Sequence[int]) -> Dict[int, models.SnapshotMeta]:
+        unique = sorted(set(snapshot_numbers))
+        if not unique:
+            return {}
+
+        docs = await models.SnapshotMeta.find({"snapshot_number": {"$in": unique}}).to_list()
+        return {doc.snapshot_number: doc for doc in docs}
+
+    async def insert_snapshot_meta(self, meta_doc: models.SnapshotMeta) -> None:
+        await meta_doc.insert()
+
+    async def save_snapshot_meta(self, meta_doc: models.SnapshotMeta) -> None:
+        await meta_doc.save()
+
+    async def mark_snapshot_as_loaded(
+        self,
+        snapshot_number: int,
+        *,
+        loaded_by_user_id: int | None = None,
+    ) -> None:
+        now = datetime.now()
+        doc = await models.SnapshotMeta.find_one(models.SnapshotMeta.snapshot_number == snapshot_number)
+        if doc is None:
+            return
+
+        doc.loaded_at = now
+        doc.loaded_by_user_id = loaded_by_user_id
+        doc.obsolete = False
+        doc.obsoleted_at = None
+        doc.obsoleted_by_snapshot_number = None
+        await doc.save()
+
+    async def mark_snapshot_as_not_obsolete(self, snapshot_number: int) -> None:
+        doc = await models.SnapshotMeta.find_one(
+            models.SnapshotMeta.snapshot_number == snapshot_number,
+            models.SnapshotMeta.obsolete == True,
+        )
+        if doc is None:
+            return
+
+        doc.obsolete = False
+        doc.obsoleted_at = None
+        doc.obsoleted_by_snapshot_number = None
+        await doc.save()
+
+    async def mark_snapshot_as_obsolete(
+        self,
+        snapshot_number: int,
+        *,
+        obsoleted_by_snapshot_number: int,
+    ) -> None:
+        now = datetime.now()
+        doc = await models.SnapshotMeta.find_one(
+            models.SnapshotMeta.snapshot_number == snapshot_number,
+            models.SnapshotMeta.obsolete == False,
+        )
+        if doc is None:
+            return
+
+        doc.obsolete = True
+        doc.obsoleted_at = now
+        doc.obsoleted_by_snapshot_number = obsoleted_by_snapshot_number
+        await doc.save()
+
+    async def insert_snapshot_data_chunk(self, payload: Dict[str, Any]) -> ObjectId:
+        chunk = models.SnapshotDataChunk(**payload)
+        await chunk.insert()
+        if chunk.id is None:
+            raise RuntimeError("SnapshotDataChunk insert did not return an _id")
+        return ObjectId(str(chunk.id))
+
+    async def load_snapshot_documents(
+        self,
+        snapshot_id: str,
+        source_collection: str,
+        chunk_ids: Sequence[ObjectId],
+    ) -> List[Mapping[str, Any]]:
+        if not chunk_ids:
+            return []
+
+        chunks = (
+            await models.SnapshotDataChunk.find(
+                {
+                    "snapshot_id": snapshot_id,
+                    "source_collection": source_collection,
+                    "_id": {"$in": list(chunk_ids)},
+                }
+            )
+            .sort(("chunk_index", SortDirection.ASCENDING))
+            .to_list()
+        )
+
+        docs: List[Mapping[str, Any]] = []
+        for chunk in chunks:
+            docs.extend(list(chunk.documents or []))
+        return docs
+
+    async def delete_snapshot_data_chunks(self, chunk_ids: Sequence[ObjectId]) -> None:
+        if not chunk_ids:
+            return
+        await models.SnapshotDataChunk.find({"_id": {"$in": list(chunk_ids)}}).delete()
+
+    async def delete_snapshot_meta_and_data(self, meta: models.SnapshotMeta) -> None:
+        ids: List[ObjectId] = []
+        collections = meta.collections or {}
+        for info in collections.values():
+            ids.extend(list(info.chunk_ids or []))
+
+        if ids:
+            await self.delete_snapshot_data_chunks(ids)
+        await meta.delete()
+
+    async def list_obsolete_snapshots(self) -> List[models.SnapshotMeta]:
+        return (
+            await models.SnapshotMeta.find(
+                {
+                    "status": "committed",
+                    "obsolete": True,
+                    "permanent": False,
+                }
+            )
+            .sort(("snapshot_number", SortDirection.ASCENDING))
+            .to_list()
+        )
+
+    async def list_prunable_snapshots(self, *, keep_last: int) -> List[models.SnapshotMeta]:
+        if keep_last <= 0:
+            return []
+
+        return (
+            await models.SnapshotMeta.find(
+                {
+                    "status": "committed",
+                    "permanent": False,
+                }
+            )
+            .sort(("snapshot_number", SortDirection.DESCENDING))
+            .skip(keep_last)
+            .to_list()
+        )
+
+    async def count_snapshot_meta(self) -> int:
+        return await models.SnapshotMeta.count()
+
+    async def count_snapshot_data(self) -> int:
+        return await models.SnapshotDataChunk.count()
+
+    async def delete_all_snapshot_meta(self) -> None:
+        await models.SnapshotMeta.delete_all()
+
+    async def delete_all_snapshot_data(self) -> None:
+        await models.SnapshotDataChunk.delete_all()
+
+    async def delete_snapshot_history(self) -> None:
+        await models.SnapshotHistory.delete_all()
 
     ### User Settings ###
 

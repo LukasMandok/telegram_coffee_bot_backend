@@ -6,17 +6,17 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from functools import wraps
-from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, ParamSpec, Sequence, TypeVar
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, ParamSpec, Sequence, TypeVar, TYPE_CHECKING
 from uuid import uuid4
 
 from bson import BSON, ObjectId
-from pymongo import ReturnDocument
 from pymongo.errors import DocumentTooLarge
-
-from beanie.odm.enums import SortDirection
 
 from ..common.log import Logger
 from ..models import beanie_models as models
+
+if TYPE_CHECKING:
+    from .base_repo import BaseRepository
 
 
 log = Logger("SnapshotManager")
@@ -101,12 +101,12 @@ class SnapshotManager:
 
     def __init__(
         self,
-        db: Any,
         *,
+        repo: "BaseRepository",
         max_bson_bytes: int = DEFAULT_MAX_BSON_BYTES,
         logger: Logger | None = None,
     ) -> None:
-        self.db = db
+        self.repo = repo
         self.max_bson_bytes = int(max_bson_bytes)
         self.logger = logger or log
         self.api: Any | None = None
@@ -120,21 +120,15 @@ class SnapshotManager:
     def _display_reason(meta: models.SnapshotMeta) -> str:
         return ", ".join(meta.reasons).strip()
 
-    @staticmethod
-    def _snapshot_history_collection():
-        return models.SnapshotHistory.get_pymongo_collection()
-
     async def _get_snapshot_history(self) -> List[int]:
-        doc = await models.SnapshotHistory.find_one(models.SnapshotHistory.key == "default")
-        return list(doc.snapshot_numbers or []) if doc is not None else []
+        repo = self.repo
+        return await repo.get_snapshot_history_numbers()
 
     async def _get_snapshot_settings(self) -> models.SnapshotSettings:
         """Return snapshot settings (with model defaults if AppSettings is missing)."""
-        try:
-            settings_doc = await models.AppSettings.find_one()
-            return settings_doc.snapshots if settings_doc is not None else models.AppSettings().snapshots
-        except Exception:
-            return models.AppSettings().snapshots
+        repo = self.repo
+        settings = await repo.get_snapshot_settings()
+        return settings if settings is not None else models.AppSettings().snapshots
 
     @staticmethod
     def _compute_modified_snapshots(
@@ -173,18 +167,12 @@ class SnapshotManager:
         if target not in history_numbers:
             raise ValueError(f"Target snapshot number {target} not present in snapshot history")
 
-        # Full snapshots are encoded as consecutive duplicates in the history:
-        full_snapshot_set: set[int] = set()
-        
         # jump_points[current] -> list of snapshot numbers you may jump to from `current`
         jump_points: Dict[int, List[int]] = {}
         
         for prev, nxt in zip(history, history[1:]):
-            # Full snapshots are encoded as the same number twice
-            if prev == nxt:
-                full_snapshot_set.add(int(prev))
             # Restore points append [restore_point, target] => prev > nxt.
-            elif nxt < prev:
+            if nxt < prev:
                 jump_points.setdefault(nxt, []).append(prev)
             # New snapshots created after a restore can create a big step => nxt > prev + 1.
             elif nxt > prev + 1:
@@ -203,11 +191,6 @@ class SnapshotManager:
             for jump in jump_points.get(current_number, []):
                 if jump >= target and jump in history_numbers:
                     options.append(jump)
-
-            # Full snapshots are explicit navigation anchors: if the target is a full snapshot,
-            # allow jumping to it from any current snapshot.
-            if target in full_snapshot_set:
-                options.append(target)
 
             options = sorted(set(options))
             if not options:
@@ -236,30 +219,14 @@ class SnapshotManager:
         self,
         snapshot_numbers: Sequence[int],
     ) -> None:
-        if not snapshot_numbers:
-            return
-
-        update: Dict[str, Any] = {
-            "$setOnInsert": {"key": "default"},
-            "$push": {"snapshot_numbers": {"$each": list(snapshot_numbers)}},
-            "$set": {"updated_at": datetime.now()},
-        }
-
-        await self._snapshot_history_collection().find_one_and_update(
-            {"key": "default"},
-            update,
-            upsert=True,
-            return_document=ReturnDocument.AFTER,
-        )
+        repo = self.repo
+        await repo.append_snapshot_history_numbers(snapshot_numbers)
 
     async def _mark_snapshots_obsolete(self, *, snapshot_number: int, history: Sequence[int]) -> List[int]:
         marked: List[int] = []
         for snap in history:
             if snap > snapshot_number and snap not in marked:
-                await self.mark_snapshot_as_obsolete(
-                    snap,
-                    obsoleted_by_snapshot_number=snapshot_number,
-                )
+                await self.mark_snapshot_as_obsolete(snap, obsoleted_by_snapshot_number=snapshot_number)
                 marked.append(snap)
                 
         if marked:
@@ -302,38 +269,12 @@ class SnapshotManager:
         return sorted(set(marked))
 
     async def _remove_snapshot_numbers_from_history(self, snapshot_numbers: Sequence[int]) -> None:
-        if not snapshot_numbers:
-            return
-
-        await self._snapshot_history_collection().update_one(
-            {"key": "default"},
-            {
-                "$setOnInsert": {"key": "default"},
-                "$pull": {
-                    "snapshot_numbers": {"$in": list(snapshot_numbers)},
-                },
-                "$set": {"updated_at": datetime.now()},
-            },
-            upsert=True,
-        )
+        repo = self.repo
+        await repo.remove_snapshot_numbers_from_history(snapshot_numbers)
         
     async def _next_snapshot_number(self) -> int:
-        now = datetime.now()
-        # Simple approach: snapshot_history owns the counter.
-        # If the history doc doesn't exist yet, $inc will create the field.
-        doc = await self._snapshot_history_collection().find_one_and_update(
-            {"key": "default"},
-            {
-                "$setOnInsert": {"key": "default", "snapshot_numbers": []},
-                "$inc": {"last_snapshot_number": 1},
-                "$set": {"updated_at": now},
-            },
-            upsert=True,
-            return_document=ReturnDocument.AFTER,
-        )
-        if doc is None:
-            raise RuntimeError("Failed to allocate snapshot number")
-        return int(doc["last_snapshot_number"])
+        repo = self.repo
+        return await repo.allocate_snapshot_number()
 
     async def _is_context_snapshot_active(self, context: str | None) -> bool:
         """Return True if a snapshot should be created for this context.
@@ -354,48 +295,21 @@ class SnapshotManager:
         return bool(dump[key])
 
     async def list_snapshots(self, *, include_pending: bool = False, limit: int = 50) -> List[models.SnapshotMeta]:
-        find_query: Dict[str, Any] = {}
-        if not include_pending:
-            find_query["status"] = "committed"
-
-        docs = (
-            await models.SnapshotMeta.find(find_query)
-            .sort(
-                [
-                    ("snapshot_number", SortDirection.DESCENDING),
-                    ("created_at", SortDirection.DESCENDING),
-                ]
-            )
-            .limit(limit)
-            .to_list()
-        )
-        return docs
+        repo = self.repo
+        return await repo.list_snapshots(include_pending=include_pending, limit=limit)
 
     async def get_last_loaded_snapshot_meta(self) -> models.SnapshotMeta | None:
-        """Return the most recently loaded (restored) snapshot meta, if any.
-
-        We track loads by writing `loaded_at` (and optional `loaded_by_user_id`) onto
-        the snapshot's meta document.
-        """
-        # `loaded_at` is stored as `null` for new snapshots; `$exists` would match those.
-        docs = (
-            await models.SnapshotMeta.find({"loaded_at": {"$ne": None}})
-            .sort(("loaded_at", SortDirection.DESCENDING))
-            .limit(1)
-            .to_list()
-        )
-        return docs[0] if docs else None
+        """Return the most recently loaded (restored) snapshot meta, if any."""
+        repo = self.repo
+        return await repo.get_last_loaded_snapshot_meta()
 
     async def get_snapshot_meta_by_number(self, snapshot_number: int) -> models.SnapshotMeta | None:
-        return await models.SnapshotMeta.find_one(models.SnapshotMeta.snapshot_number == snapshot_number)
+        repo = self.repo
+        return await repo.get_snapshot_meta_by_number(snapshot_number)
 
     async def get_snapshots_by_number(self, snapshot_numbers: Sequence[int]) -> Dict[int, models.SnapshotMeta]:
-        unique = sorted(set(snapshot_numbers))
-        if not unique:
-            return {}
-
-        docs = await models.SnapshotMeta.find({"snapshot_number": {"$in": unique}}).to_list()
-        return {doc.snapshot_number: doc for doc in docs}
+        repo = self.repo
+        return await repo.get_snapshots_by_number(snapshot_numbers)
 
     async def mark_snapshot_as_loaded(
         self,
@@ -403,28 +317,12 @@ class SnapshotManager:
         *,
         loaded_by_user_id: int | None = None,
     ) -> None:
-        now = datetime.now()
-        doc = await models.SnapshotMeta.find_one(models.SnapshotMeta.snapshot_number == snapshot_number)
-        if doc is None:
-            return
-
-        doc.loaded_at = now
-        doc.loaded_by_user_id = loaded_by_user_id
-        doc.obsolete = False
-        doc.obsoleted_at = None
-        doc.obsoleted_by_snapshot_number = None
-        await doc.save()
+        repo = self.repo
+        await repo.mark_snapshot_as_loaded(snapshot_number, loaded_by_user_id=loaded_by_user_id)
 
     async def mark_snapshot_as_not_obsolete(self, snapshot_number: int) -> None:
-        doc = await models.SnapshotMeta.find_one(models.SnapshotMeta.snapshot_number == snapshot_number,
-                                                 models.SnapshotMeta.obsolete == True)
-        if doc is None:
-            return
-
-        doc.obsolete = False
-        doc.obsoleted_at = None
-        doc.obsoleted_by_snapshot_number = None
-        await doc.save()
+        repo = self.repo
+        await repo.mark_snapshot_as_not_obsolete(snapshot_number)
 
     async def mark_snapshot_as_obsolete(
         self,
@@ -432,16 +330,11 @@ class SnapshotManager:
         *,
         obsoleted_by_snapshot_number: int,
     ) -> None:
-        now = datetime.now()
-        doc = await models.SnapshotMeta.find_one(models.SnapshotMeta.snapshot_number == snapshot_number,
-                                                 models.SnapshotMeta.obsolete == False)
-        if doc is None:
-            return
-
-        doc.obsolete = True
-        doc.obsoleted_at = now
-        doc.obsoleted_by_snapshot_number = obsoleted_by_snapshot_number
-        await doc.save()
+        repo = self.repo
+        await repo.mark_snapshot_as_obsolete(
+            snapshot_number,
+            obsoleted_by_snapshot_number=obsoleted_by_snapshot_number,
+        )
 
     async def _notify_admins_snapshot_loaded(
         self,
@@ -488,7 +381,8 @@ class SnapshotManager:
                 )
 
     async def get_snapshot_meta(self, snapshot_id: str) -> models.SnapshotMeta | None:
-        return await models.SnapshotMeta.find_one(models.SnapshotMeta.snapshot_id == str(snapshot_id))
+        repo = self.repo
+        return await repo.get_snapshot_meta(snapshot_id)
 
     async def capture_snapshot(
         self,
@@ -502,7 +396,7 @@ class SnapshotManager:
         docs_by_collection: Dict[str, List[Mapping[str, Any]]] = {}
 
         for collection_name in collections:
-            source = self.db.get_collection(collection_name)
+            source = self.repo.get_collection(collection_name)
             docs: List[Mapping[str, Any]] = []
             async for doc in source.find({}):
                 docs.append(doc)
@@ -606,7 +500,8 @@ class SnapshotManager:
                     collections={},
                     total_documents=0,
                 )
-                await meta_doc.insert()
+                repo = self.repo
+                await repo.insert_snapshot_meta(meta_doc)
 
                 total_docs = 0
                 collections_info: Dict[str, models.SnapshotCollectionChunkInfo] = {}
@@ -629,11 +524,10 @@ class SnapshotManager:
                 meta_doc.committed_at = datetime.now()
                 meta_doc.collections = collections_info
                 meta_doc.total_documents = total_docs
-                await meta_doc.save()
+                await repo.save_snapshot_meta(meta_doc)
 
                 if add_to_history:
-                    history_append = [snapshot_number, snapshot_number] if full_snapshot else [snapshot_number]
-                    await self._append_snapshot_history_numbers(history_append)
+                    await self._append_snapshot_history_numbers([snapshot_number])
 
                 reason_text = ", ".join(snapshot.reasons).strip() or "(no reason)"
                 self.logger.info(
@@ -656,7 +550,8 @@ class SnapshotManager:
                 )
                 try:
                     if inserted_chunk_ids:
-                        await models.SnapshotDataChunk.find({"_id": {"$in": inserted_chunk_ids}}).delete()
+                        repo = self.repo
+                        await repo.delete_snapshot_data_chunks(inserted_chunk_ids)
                     if meta_doc is not None:
                         await meta_doc.delete()
                 except Exception:
@@ -679,7 +574,7 @@ class SnapshotManager:
             list(collection_info.chunk_ids),
         )
 
-        target_collection = self.db.get_collection(collection_name)
+        target_collection = self.repo.get_collection(collection_name)
         await target_collection.delete_many({})
         if docs:
             await target_collection.insert_many(docs, ordered=False)
@@ -968,25 +863,15 @@ class SnapshotManager:
             return False
 
         await self._remove_snapshot_numbers_from_history([doc.snapshot_number])
-
-        await self._delete_snapshot_doc(doc)
+        repo = self.repo
+        await repo.delete_snapshot_meta_and_data(doc)
         return True
 
     async def clear_obsolete_snapshots(self) -> Dict[str, int]:
         """Delete obsolete (non-permanent) snapshots and remove them from history."""
         self.logger.warning("Clearing obsolete snapshots (meta + data)", extra_tag="SNAPSHOT")
-
-        to_delete = (
-            await models.SnapshotMeta.find(
-                {
-                    "status": "committed",
-                    "obsolete": True,
-                    "permanent": False,
-                }
-            )
-            .sort(("snapshot_number", SortDirection.ASCENDING))
-            .to_list()
-        )
+        repo = self.repo
+        to_delete = await repo.list_obsolete_snapshots()
 
         deleted_meta = 0
         deleted_data = 0
@@ -999,7 +884,7 @@ class SnapshotManager:
             for info in collections.values():
                 deleted_data += len(info.chunk_ids or [])
 
-            await self._delete_snapshot_doc(meta)
+            await repo.delete_snapshot_meta_and_data(meta)
             deleted_meta += 1
 
         if numbers_to_remove:
@@ -1020,14 +905,13 @@ class SnapshotManager:
         """
         self.logger.warning("Clearing ALL snapshots (meta + data)", extra_tag="SNAPSHOT")
 
-        meta_count = await models.SnapshotMeta.count()
-        data_count = await models.SnapshotDataChunk.count()
+        repo = self.repo
+        meta_count = await repo.count_snapshot_meta()
+        data_count = await repo.count_snapshot_data()
 
-        await models.SnapshotDataChunk.delete_all()
-        await models.SnapshotMeta.delete_all()
-
-        # Clear snapshot history (includes the snapshot counter).
-        await models.SnapshotHistory.delete_all()
+        await repo.delete_all_snapshot_data()
+        await repo.delete_all_snapshot_meta()
+        await repo.delete_snapshot_history()
 
         result = {
             "deleted_meta": meta_count,
@@ -1117,11 +1001,8 @@ class SnapshotManager:
         if len(BSON.encode(payload)) > self.max_bson_bytes:
             raise DocumentTooLarge("Snapshot chunk exceeds BSON size limit")
 
-        chunk = models.SnapshotDataChunk(**payload)
-        await chunk.insert()
-        if chunk.id is None:
-            raise RuntimeError("SnapshotDataChunk insert did not return an _id")
-        return ObjectId(str(chunk.id))
+        repo = self.repo
+        return await repo.insert_snapshot_data_chunk(payload)
 
     async def _insert_data_chunk_with_split(
         self,
@@ -1169,56 +1050,19 @@ class SnapshotManager:
         source_collection: str,
         chunk_ids: Sequence[ObjectId],
     ) -> List[Mapping[str, Any]]:
-        if not chunk_ids:
-            return []
-
-        chunks = (
-            await models.SnapshotDataChunk.find(
-                {
-                    "snapshot_id": snapshot_id,
-                    "source_collection": source_collection,
-                    "_id": {"$in": list(chunk_ids)},
-                }
-            )
-            .sort(("chunk_index", SortDirection.ASCENDING))
-            .to_list()
-        )
-
-        docs: List[Mapping[str, Any]] = []
-        for chunk in chunks:
-            docs.extend(list(chunk.documents or []))
-        return docs
-
-    async def _delete_snapshot_doc(self, meta: models.SnapshotMeta) -> None:
-        ids: List[ObjectId] = []
-        collections = meta.collections or {}
-        for info in collections.values():
-            ids.extend(list(info.chunk_ids or []))
-
-        if ids:
-            await models.SnapshotDataChunk.find({"_id": {"$in": ids}}).delete()
-        await meta.delete()
+        repo = self.repo
+        return await repo.load_snapshot_documents(snapshot_id, source_collection, chunk_ids)
 
     async def _prune_old_snapshots(self, *, keep_last: int) -> None:
         if keep_last <= 0:
             return
-
-        to_delete = (
-            await models.SnapshotMeta.find(
-                {
-                    "status": "committed",
-                    "permanent": False,
-                }
-            )
-            .sort(("snapshot_number", SortDirection.DESCENDING))
-            .skip(keep_last)
-            .to_list()
-        )
+        repo = self.repo
+        to_delete = await repo.list_prunable_snapshots(keep_last=keep_last)
 
         numbers_to_remove: List[int] = []
         for meta in to_delete:
             numbers_to_remove.append(meta.snapshot_number)
-            await self._delete_snapshot_doc(meta)
+            await repo.delete_snapshot_meta_and_data(meta)
 
         if numbers_to_remove:
             await self._remove_snapshot_numbers_from_history(numbers_to_remove)

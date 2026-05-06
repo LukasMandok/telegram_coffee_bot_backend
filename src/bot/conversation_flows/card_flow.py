@@ -8,7 +8,7 @@ Implements three entry points:
 Design goals:
 - Minimal state machine, message edits instead of new messages
 - Numeric inputs parsed via IntegerParser/MoneyParser
-- Validation feedback shown inline (like settings_flow enter_link state)
+    - Validation feedback shown inline (like paypal_flow enter_link state)
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ from ...common.log import Logger
 from ...config import app_config
 from ...models.beanie_models import PassiveUser, TelegramUser
 from ...models.coffee_models import CoffeeCard, CoffeeOrder, CoffeeSession
-from ..paypal_flow import create_paypal_flow
+from .paypal_flow import create_paypal_flow
 
 
 _logger = Logger("CardFlow")
@@ -494,7 +494,8 @@ def format_history_item(item: CardHistoryItem, index: int) -> str:
 
 
 async def handle_card_details_button(data: str, flow_state, api, user_id: int) -> Optional[str]:
-    if data != CommonCallbacks.CLOSE:
+    # Only handle explicit Back callback here — Close should use flow exit semantics.
+    if data != CommonCallbacks.BACK:
         return None
 
     back_state = flow_state.get(KEY_DETAILS_BACK_STATE, STATE_MENU)
@@ -1187,7 +1188,8 @@ def create_card_menu_flow() -> MessageFlow:
             on_button_press=handle_cards_list_button,
             input_validator=RegexValidator(r"^\s*\d+\s*$", error_message="❌ Please type a card number (e.g. `17`)."),
             on_input_received=handle_cards_list_input,
-            next_state_map={CommonCallbacks.CLOSE: STATE_MENU},
+            back_button=CommonCallbacks.BACK,
+            parent_state=STATE_MENU,
         )
     )
 
@@ -1219,7 +1221,8 @@ def create_card_menu_flow() -> MessageFlow:
             pagination_item_formatter=format_card_debt_item,
             pagination_reset_on_enter=False,
             exit_buttons=[],
-            on_button_press=handle_card_details_button,
+            back_button=CommonCallbacks.BACK,
+            parent_state=STATE_CARD_DETAILS,
             route_callback_to_state_id=True,
             route_callback_allowlist=[STATE_CARD_DETAILS],
         )

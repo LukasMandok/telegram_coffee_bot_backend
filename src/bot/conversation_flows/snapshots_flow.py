@@ -561,7 +561,8 @@ def create_snapshots_flow() -> MessageFlow:
             exit_buttons=[],
             input_validator=RegexValidator(r"^\s*\d+\s*$", error_message="❌ Please type a snapshot number (e.g. `12`)."),
             on_input_received=handle_restore_list_input,
-            next_state_map={CommonCallbacks.CLOSE: STATE_MAIN},
+            back_button=CommonCallbacks.BACK,
+            parent_state=STATE_MAIN,
         )
     )
 
