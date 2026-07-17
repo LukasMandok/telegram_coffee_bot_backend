@@ -29,6 +29,7 @@ from .dependencies.dependencies import get_repo
 from .common.log import Logger, log_settings
 from .config import app_config
 from .models import beanie_models as models
+from .models import settings_models as settings_models
 
 logger = Logger("DebugSetup")
 
@@ -117,7 +118,7 @@ async def run_debug_setup_if_enabled() -> None:
 
         have_config = await models.Config.find_one() is not None
         have_password = await models.Password.find_one() is not None
-        have_app_settings = await models.AppSettings.find_one() is not None
+        have_app_settings = await settings_models.AppSettings.find_one() is not None
 
         if not (have_config and have_password and have_app_settings):
             await repo.setup_defaults()  # type: ignore - repo is BeanieRepository at runtime

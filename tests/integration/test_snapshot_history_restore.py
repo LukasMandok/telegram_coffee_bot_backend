@@ -2,6 +2,20 @@ import os
 import hashlib
 
 import pytest
+from beanie import init_beanie
+from pymongo import AsyncMongoClient
+
+from src.database.beanie_repo import BeanieRepository
+from src.database.snapshot_manager import SnapshotManager
+from src.models import beanie_models as models
+from src.models import settings_models as settings_models
+
+
+@pytest.fixture
+async def mongo_db():
+    test_db_name = "pytest_mongo_test"
+    client = AsyncMongoClient(os.environ.get("MONGO_CONNECTION", "mongodb://mongodb:27017"))
+    try:
         await client.admin.command("ping")
     except Exception as exc:
         await client.close()
@@ -11,7 +25,7 @@ import pytest
     await init_beanie(
         db,
         document_models=[
-            models.AppSettings,
+            settings_models.AppSettings,
             models.SnapshotMeta,
             models.SnapshotHistory,
             models.SnapshotDataChunk,
@@ -32,9 +46,15 @@ async def _fetch_all_sorted_by_id(collection) -> list[dict]:
     return [doc async for doc in cursor]
 
 
+def _build_snapshot_manager(db):
+    repo = BeanieRepository()
+    repo.db = db
+    return SnapshotManager(repo=repo)
+
+
 @pytest.mark.asyncio
 async def test_snapshot_history_and_restore_roundtrip(mongo_db):
-    manager = SnapshotManager(mongo_db)
+    manager = _build_snapshot_manager(mongo_db)
 
     # Ensure a clean slate.
     await manager.clear_all_snapshots()
@@ -123,7 +143,7 @@ async def test_snapshot_history_and_restore_roundtrip(mongo_db):
 
 @pytest.mark.asyncio
 async def test_restore_obsolete_snapshot_updates_history_and_flags(mongo_db):
-    manager = SnapshotManager(mongo_db)
+    manager = _build_snapshot_manager(mongo_db)
 
     await manager.clear_all_snapshots()
 
@@ -209,7 +229,7 @@ async def test_restore_obsolete_snapshot_updates_history_and_flags(mongo_db):
 
 @pytest.mark.asyncio
 async def test_restore_higher_snapshot_after_restoring_lower_uses_restoration_point(mongo_db):
-    manager = SnapshotManager(mongo_db)
+    manager = _build_snapshot_manager(mongo_db)
 
     await manager.clear_all_snapshots()
 
@@ -299,7 +319,7 @@ async def test_restore_higher_snapshot_after_restoring_lower_uses_restoration_po
 
 @pytest.mark.asyncio
 async def test_restore_restoration_point_unobsoletes_base_snapshot(mongo_db):
-    manager = SnapshotManager(mongo_db)
+    manager = _build_snapshot_manager(mongo_db)
 
     await manager.clear_all_snapshots()
 
@@ -392,11 +412,13 @@ async def test_restore_restoration_point_unobsoletes_base_snapshot(mongo_db):
 
 @pytest.mark.asyncio
 async def test_permanent_snapshots_are_excluded_from_retention_pruning(mongo_db):
-    manager = SnapshotManager(mongo_db)
+    manager = _build_snapshot_manager(mongo_db)
     await manager.clear_all_snapshots()
 
     # Keep only 1 non-permanent snapshot, but permanent snapshots should remain indefinitely.
-    settings = models.AppSettings(snapshots=models.SnapshotSettings(keep_last=1))
+    settings = settings_models.AppSettings(
+        snapshots=settings_models.SnapshotSettings(keep_last=1)
+    )
     await settings.insert()
 
     collection_name = "pytest_snapshot_items_permanent"
@@ -462,7 +484,7 @@ async def test_permanent_snapshots_are_excluded_from_retention_pruning(mongo_db)
 
 @pytest.mark.asyncio
 async def test_clear_obsolete_snapshots_deletes_and_removes_from_history(mongo_db):
-    manager = SnapshotManager(mongo_db)
+    manager = _build_snapshot_manager(mongo_db)
     await manager.clear_all_snapshots()
 
     collection_name = "pytest_snapshot_items_cleanup"
@@ -514,7 +536,7 @@ async def test_clear_obsolete_snapshots_deletes_and_removes_from_history(mongo_d
 
 @pytest.mark.asyncio
 async def test_collections_are_collected_across_snapshots(mongo_db):
-    manager = SnapshotManager(mongo_db)
+    manager = _build_snapshot_manager(mongo_db)
     await manager.clear_all_snapshots()
 
     collection_a = mongo_db.get_collection("pytest_snapshot_collected_a")
@@ -583,7 +605,7 @@ async def test_collections_are_collected_across_snapshots(mongo_db):
 
 @pytest.mark.asyncio
 async def test_clear_all_snapshots_deletes_permanent_and_resets_counter(mongo_db):
-    manager = SnapshotManager(mongo_db)
+    manager = _build_snapshot_manager(mongo_db)
     await manager.clear_all_snapshots()
 
     collection_name = "pytest_snapshot_items_clear_all"
@@ -634,7 +656,7 @@ async def test_clear_all_snapshots_deletes_permanent_and_resets_counter(mongo_db
 
 @pytest.mark.asyncio
 async def test_get_undo_last_snapshot_numbers_skips_full_snapshot_duplicates(mongo_db):
-    manager = SnapshotManager(mongo_db)
+    manager = _build_snapshot_manager(mongo_db)
     await manager.clear_all_snapshots()
 
     collection_name = "pytest_snapshot_items_undo"
@@ -666,3 +688,4 @@ async def test_get_undo_last_snapshot_numbers_skips_full_snapshot_duplicates(mon
     current, previous = await manager.get_undo_last_snapshot_numbers()
     assert current == 2
     assert previous == 1
+

@@ -44,7 +44,7 @@ from ..exceptions.coffee_exceptions import CoffeeSessionError, NoActiveCoffeeCar
 
 from ..common.log import (
     Logger,
-    get_known_loggers, LOG_STATE_SEQUENCE, LOG_STATE_ICON, format_log_state,
+    get_known_loggers, LOG_STATE_SEQUENCE, LOG_LEVEL_STATE_ICON, format_log_state,
 )
 
 if TYPE_CHECKING:

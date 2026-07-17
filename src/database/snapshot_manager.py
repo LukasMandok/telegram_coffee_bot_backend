@@ -14,6 +14,7 @@ from pymongo.errors import DocumentTooLarge
 
 from ..common.log import Logger
 from ..models import beanie_models as models
+from ..models import settings_models as settings_models
 
 if TYPE_CHECKING:
     from .base_repo import BaseRepository
@@ -124,11 +125,11 @@ class SnapshotManager:
         repo = self.repo
         return await repo.get_snapshot_history_numbers()
 
-    async def _get_snapshot_settings(self) -> models.SnapshotSettings:
+    async def _get_snapshot_settings(self) -> settings_models.SnapshotSettings:
         """Return snapshot settings (with model defaults if AppSettings is missing)."""
         repo = self.repo
         settings = await repo.get_snapshot_settings()
-        return settings if settings is not None else models.AppSettings().snapshots
+        return settings if settings is not None else settings_models.AppSettings().snapshots
 
     @staticmethod
     def _compute_modified_snapshots(

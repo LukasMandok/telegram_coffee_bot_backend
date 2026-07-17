@@ -59,22 +59,18 @@ def test_compute_modified_snapshots_restore_higher_after_lower() -> None:
     assert path == [3, 6, 5, 4]
 
 
-def test_compute_modified_snapshots_handles_sparse_history_when_numbers_removed() -> None:
+def test_compute_modified_snapshots_handles_sparse_history_with_jump_point() -> None:
     # Sparse histories can happen after cleanup/pruning.
-    # We do NOT implicitly "skip" numbers; instead we rely on explicit full-snapshot anchors.
-    #
-    # Example shape: weekly/manual full snapshot #9 exists, later we restored to #2, then created #13.
-    # Restoring to the full snapshot should always be reachable via the full-snapshot jump.
-    # Full snapshot #9 is encoded by a consecutive duplicate in the history.
-    history = [9, 9, 2, 13]
+    # Restores append [restore_point, target], creating a jump point to reach targets.
+    history = [9, 2, 13, 14, 9]
 
     path = SnapshotManager._compute_modified_snapshots(
         history,
-        current_snapshot_number=13,
-        target_snapshot_number=9,
+        current_snapshot_number=9,
+        target_snapshot_number=13,
     )
 
-    assert path == [13, 9]
+    assert path == [9, 14, 13]
 
 
 def test_compute_modified_snapshots_raises_when_target_missing_from_history() -> None:

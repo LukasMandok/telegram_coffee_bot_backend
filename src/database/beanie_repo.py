@@ -11,6 +11,7 @@ from beanie.odm.enums import SortDirection
 
 from .base_repo import BaseRepository, EffectiveNotificationPolicy
 from ..models import beanie_models as models
+from ..models import settings_models as settings_models
 from ..models.coffee_models import CoffeeCard, CoffeeOrder, Payment, UserDebt, CoffeeSession
 from ..models.feedback_models import Feedback
 from ..common.log import (
@@ -70,8 +71,8 @@ class BeanieRepository(BaseRepository):
                 models.PassiveUser,
                 models.Password,
                 models.Config,
-                models.AppSettings,
-                models.UserSettings,
+                settings_models.AppSettings,
+                settings_models.UserSettings,
                 models.SnapshotMeta,
                 models.SnapshotHistory,
                 models.SnapshotDataChunk,
@@ -112,7 +113,7 @@ class BeanieRepository(BaseRepository):
         self.logger.info("Setting up default configuration...")
         await models.Config.delete_all()
         await models.Password.delete_all()
-        await models.AppSettings.delete_all()
+        await settings_models.AppSettings.delete_all()
         
         password_doc = models.Password(
             hash_value = app_config.DEFAULT_PASSWORD
@@ -126,7 +127,7 @@ class BeanieRepository(BaseRepository):
         )
         
         # Create default Settings
-        app_settings = models.AppSettings()
+        app_settings = settings_models.AppSettings()
         
         await password_doc.insert()
         await new_config.insert()
@@ -682,7 +683,7 @@ class BeanieRepository(BaseRepository):
     async def get_log_settings(self) -> Optional[Dict[str, Any]]:
         """Get logging settings from AppSettings."""
         try:
-            app_settings = await models.AppSettings.find_one()
+            app_settings = await settings_models.AppSettings.find_one()
             if app_settings:
                 return {
                     "log_level": app_settings.logging.level,
@@ -710,10 +711,10 @@ class BeanieRepository(BaseRepository):
             True if successful, False otherwise
         """
         try:
-            settings = await models.AppSettings.find_one()
+            settings = await settings_models.AppSettings.find_one()
             if not settings:
                 # Create default settings if they don't exist
-                settings = models.AppSettings()
+                settings = settings_models.AppSettings()
                 await settings.insert()
             
             # Update only provided fields
@@ -749,7 +750,7 @@ class BeanieRepository(BaseRepository):
     async def get_notification_settings(self) -> Optional[Dict[str, Any]]:
         """Get notification settings from AppSettings."""
         try:
-            app_settings = await models.AppSettings.find_one()
+            app_settings = await settings_models.AppSettings.find_one()
             if app_settings:
                 return {
                     "notifications_enabled": app_settings.notifications.enabled,
@@ -818,10 +819,10 @@ class BeanieRepository(BaseRepository):
             True if successful, False otherwise
         """
         try:
-            settings = await models.AppSettings.find_one()
+            settings = await settings_models.AppSettings.find_one()
             if not settings:
                 # Create default settings if they don't exist
-                settings = models.AppSettings()
+                settings = settings_models.AppSettings()
                 await settings.insert()
             
             # Update only provided fields
@@ -838,12 +839,12 @@ class BeanieRepository(BaseRepository):
             self.logger.error(f"update_notification_settings failed (settings={kwargs})", extra_tag="DB", exc=e)
             return False
 
-    async def get_debt_settings(self) -> Optional[models.DebtSettings]:
+    async def get_debt_settings(self) -> Optional[settings_models.DebtSettings]:
         """Get debt calculation settings from AppSettings."""
         try:
-            app_settings = await models.AppSettings.find_one()
+            app_settings = await settings_models.AppSettings.find_one()
             if not app_settings:
-                app_settings = models.AppSettings()
+                app_settings = settings_models.AppSettings()
                 await app_settings.insert()
 
             return app_settings.debt
@@ -854,9 +855,9 @@ class BeanieRepository(BaseRepository):
     async def update_debt_settings(self, **kwargs) -> bool:
         """Update debt calculation settings in AppSettings."""
         try:
-            settings = await models.AppSettings.find_one()
+            settings = await settings_models.AppSettings.find_one()
             if not settings:
-                settings = models.AppSettings()
+                settings = settings_models.AppSettings()
                 await settings.insert()
 
             if "correction_method" in kwargs and kwargs["correction_method"] is not None:
@@ -878,12 +879,12 @@ class BeanieRepository(BaseRepository):
             self.logger.error(f"update_debt_settings failed (settings={kwargs})", extra_tag="DB", exc=e)
             return False
 
-    async def get_gsheet_settings(self) -> Optional[models.GsheetSettings]:
+    async def get_gsheet_settings(self) -> Optional[settings_models.GsheetSettings]:
         """Get Google Sheets synchronization settings from AppSettings."""
         try:
-            app_settings = await models.AppSettings.find_one()
+            app_settings = await settings_models.AppSettings.find_one()
             if not app_settings:
-                app_settings = models.AppSettings()
+                app_settings = settings_models.AppSettings()
                 await app_settings.insert()
             return app_settings.gsheet
         except Exception as e:
@@ -893,9 +894,9 @@ class BeanieRepository(BaseRepository):
     async def update_gsheet_settings(self, **kwargs) -> bool:
         """Update Google Sheets synchronization settings in AppSettings."""
         try:
-            settings = await models.AppSettings.find_one()
+            settings = await settings_models.AppSettings.find_one()
             if not settings:
-                settings = models.AppSettings()
+                settings = settings_models.AppSettings()
                 await settings.insert()
 
             if "periodic_sync_enabled" in kwargs and kwargs["periodic_sync_enabled"] is not None:
@@ -917,12 +918,12 @@ class BeanieRepository(BaseRepository):
             self.logger.error(f"update_gsheet_settings failed (settings={kwargs})", extra_tag="DB", exc=e)
             return False
 
-    async def get_snapshot_settings(self) -> Optional[models.SnapshotSettings]:
+    async def get_snapshot_settings(self) -> Optional[settings_models.SnapshotSettings]:
         """Get snapshot settings from AppSettings."""
         try:
-            app_settings = await models.AppSettings.find_one()
+            app_settings = await settings_models.AppSettings.find_one()
             if not app_settings:
-                app_settings = models.AppSettings()
+                app_settings = settings_models.AppSettings()
                 await app_settings.insert()
             return app_settings.snapshots
         except Exception as e:
@@ -932,13 +933,16 @@ class BeanieRepository(BaseRepository):
     async def update_snapshot_settings(self, **kwargs) -> bool:
         """Update snapshot settings in AppSettings."""
         try:
-            settings = await models.AppSettings.find_one()
+            settings = await settings_models.AppSettings.find_one()
             if not settings:
-                settings = models.AppSettings()
+                settings = settings_models.AppSettings()
                 await settings.insert()
 
             if "keep_last" in kwargs and kwargs["keep_last"] is not None:
                 settings.snapshots.keep_last = int(kwargs["keep_last"])
+
+            if "weekly_full_snapshot" in kwargs and kwargs["weekly_full_snapshot"] is not None:
+                settings.snapshots.weekly_full_snapshot = bool(kwargs["weekly_full_snapshot"])
 
             if "card_closed" in kwargs and kwargs["card_closed"] is not None:
                 settings.snapshots.card_closed = bool(kwargs["card_closed"])
@@ -1217,14 +1221,14 @@ class BeanieRepository(BaseRepository):
 
     ### User Settings ###
 
-    async def get_user_settings(self, user_id: int) -> Optional[models.UserSettings]:
+    async def get_user_settings(self, user_id: int) -> Optional[settings_models.UserSettings]:
         """Get user settings by user_id, creating default settings if not found."""
         try:
-            settings = await models.UserSettings.find_one(models.UserSettings.user_id == user_id)
+            settings = await settings_models.UserSettings.find_one(settings_models.UserSettings.user_id == user_id)
             if not settings:
                 # Create default settings for this user
                 try:
-                    settings = models.UserSettings(user_id=user_id)
+                    settings = settings_models.UserSettings(user_id=user_id)
                     await settings.insert()
                     self.logger.info(f"Created default settings for user {user_id}", extra_tag="SETTINGS")
                 except Exception as create_error:
@@ -1234,7 +1238,7 @@ class BeanieRepository(BaseRepository):
                         exc=create_error,
                     )
                     # If creation failed, try to find it again (might have been created by another request)
-                    settings = await models.UserSettings.find_one(models.UserSettings.user_id == user_id)
+                    settings = await settings_models.UserSettings.find_one(settings_models.UserSettings.user_id == user_id)
                     if not settings:
                         raise create_error
             return settings
@@ -1248,7 +1252,7 @@ class BeanieRepository(BaseRepository):
             self.logger.error(f"get_user_settings failed (user_id={user_id})", extra_tag="DB", exc=e)
             return None
 
-    async def update_user_settings(self, user_id: int, **kwargs) -> Optional[models.UserSettings]:
+    async def update_user_settings(self, user_id: int, **kwargs) -> Optional[settings_models.UserSettings]:
         """Update user settings by user_id."""
         try:
             settings = await self.get_user_settings(user_id)

@@ -8,9 +8,9 @@ class AppConfig(BaseSettings):
     
     This contains static configuration from .env file (API keys, database URLs, etc.)
     NOT to be confused with:
-    - Config (beanie model): Security configuration in database (password, admins)
-    - AppSettings (beanie model): Application settings in database (logging, etc.)
-    - UserSettings (beanie model): Per-user settings in database
+    - Config (beanie document): Security configuration in database (password, admins)
+    - AppSettings (settings document): Application settings in database (logging, etc.)
+    - UserSettings (settings document): Per-user settings in database
     """
     API_ID: str
     API_HASH: str

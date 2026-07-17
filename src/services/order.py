@@ -90,9 +90,6 @@ async def place_order(
             continue
 
         for order in card_orders:
-            if order not in card.orders:
-                card.orders.append(order)  # type: ignore[attr-defined]
-
             coffees_from_this_card = int(order.quantity)
             if coffees_from_this_card > 0:
                 if consumer_key not in card.consumer_stats:
@@ -115,12 +112,6 @@ async def place_order(
         for order in created_orders:
             if order not in session.orders:
                 session.orders.append(order)  # type: ignore[attr-defined]
-
-        # Add session to cards (only once per card per session)
-        for card in cards:
-            if session not in card.sessions:
-                card.sessions.append(session)  # type: ignore[attr-defined]
-                await card.save()
 
         await session.save()
     

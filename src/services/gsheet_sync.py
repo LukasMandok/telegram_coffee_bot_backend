@@ -20,7 +20,7 @@ from src.common.log import Logger
 from src.config import app_config
 from src.models.coffee_models import CoffeeCard, Payment, PaymentReason, UserDebt
 from src.models.beanie_models import PassiveUser, TelegramUser
-from src.models.beanie_models import AppSettings
+from src.models.settings_models import AppSettings
 
 
 logger = Logger("GsheetSync")

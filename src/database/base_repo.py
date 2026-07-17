@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import List, Optional, Any, Dict, TYPE_CHECKING
 
-from ..models.beanie_models import DebtSettings, GsheetSettings, SnapshotSettings
+from ..models.settings_models import DebtSettings, GsheetSettings, SnapshotSettings
 
 if TYPE_CHECKING:
     from .snapshot_manager import SnapshotManager

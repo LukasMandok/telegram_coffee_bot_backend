@@ -15,6 +15,7 @@ from .common.log import Logger
 from .dependencies.dependencies import get_repo
 from .handlers import users as handlers
 from .models import beanie_models as models
+from .models import settings_models as settings_models
 from .config import app_config
 
 logger = Logger("InitialSetup")
@@ -81,7 +82,7 @@ async def run_initial_setup() -> None:
     # Create defaults only on fresh DB
     have_config = await models.Config.find_one() is not None
     have_password = await models.Password.find_one() is not None
-    have_app_settings = await models.AppSettings.find_one() is not None
+    have_app_settings = await settings_models.AppSettings.find_one() is not None
 
     if not (have_config and have_password and have_app_settings):
         logger.info("Defaults missing, running setup_defaults()")

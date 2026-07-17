@@ -9,9 +9,10 @@ This file intentionally contains only conversation/UI behaviour; textual
 content and keyboard generation remain in `SettingsUi`.
 """
 
-from typing import Any, Callable, Dict, List, Optional
+from typing import List, Optional
 
-from ...common.log import Logger, LOG_STATE_ICON, LOG_STATE_SEQUENCE, format_log_state, get_known_loggers
+from .custom_route_contracts import register_inline_custom_route, validate_schema_routes_registered
+from .logging_modules_helpers import build_logging_modules_state_helpers
 from ..message_flow import (
     ButtonCallback,
     MessageAction,
@@ -22,60 +23,62 @@ from ..message_flow import (
 )
 from ..message_flow_helpers import (
     CommonCallbacks,
-    CommonStateIds,
     ExitStateBuilder,
-    IntegerParser,
     NavigationButtons,
-    StagingManager,
     apply_update_or_notify,
     make_state,
-    toggle_button,
 )
-from ..settings_generator import build_admin_submenu_keyboard, register_schema_states
+from ..settings_flow_generator import SettingsFlowGenerator
+from ..settings_schema import ADMIN_MENU, CATEGORIES, MAIN_MENU
 from ..settings_ui import SettingsUi
 
 
 # State IDs
 STATE_MAIN = "main"
-STATE_ORDERING = "ordering"
-STATE_PAGE_SIZE = "page_size"
-STATE_SORTING = "sorting"
-STATE_VANISHING = "vanishing"
-STATE_VANISHING_THRESHOLD = "vanishing_threshold"
-STATE_USER_NOTIFICATIONS = "user_notifications"
 
 STATE_ADMIN = "admin"
-STATE_LOGGING = "logging"
 STATE_LOGGING_FORMAT = "logging_format"
 STATE_LOGGING_MODULES = "logging_modules"
-STATE_LOG_LEVEL = "log_level"
+STATE_ADMIN_LOGGING_CATEGORY = "sd:cat:admin:logging"
 
-STATE_NOTIFICATIONS = "notifications"
-STATE_DEBTS = "debts"
-STATE_DEBT_METHOD = "debt_method"
-STATE_DEBT_THRESHOLD = "debt_threshold"
-STATE_DEBT_CORRECTION = "debt_correction"
-STATE_CREDITOR_ROYALTY = "creditor_royalty"
-STATE_CREDITOR_FREE_SET = "creditor_free_set"
-
-STATE_GSHEET = "gsheet"
-STATE_GSHEET_SET_PERIOD = "gsheet_set_period"
-
-STATE_SNAPSHOTS = "snapshots"
-STATE_SNAPSHOT_SET_KEEP_LAST = "snapshots_set_keep_last"
-STATE_SNAPSHOT_CREATION_POINTS = "snapshots_creation_points"
 STATE_SAVE_RESULT = "settings_saved"
 STATE_REGISTRATION_PASSWORD = "registration_password"
 STATE_REGISTRATION_PASSWORD_VERIFY = "registration_password_verify"
 STATE_REGISTRATION_PASSWORD_NEW = "registration_password_new"
 
 
+register_inline_custom_route(
+    STATE_LOGGING_FORMAT,
+    owner=__name__,
+    summary="Inline logging format editor handled directly in settings_flow.py",
+)
+register_inline_custom_route(
+    STATE_REGISTRATION_PASSWORD,
+    owner=__name__,
+    summary="Inline registration password submenu handled directly in settings_flow.py",
+)
+
+
+def _get_schema_custom_route_ids() -> list[str]:
+    """Collect all custom_route_id values from the schema."""
+    route_ids: list[str] = []
+    for category in CATEGORIES.values():
+        for setting in category.settings:
+            if setting.custom_route_id:
+                route_ids.append(setting.custom_route_id)
+        for subcategory in getattr(category, "subcategories", []) or []:
+            if subcategory.custom_route_id:
+                route_ids.append(subcategory.custom_route_id)
+    return route_ids
+
+
+_SCHEMA_CUSTOM_ROUTES = _get_schema_custom_route_ids()
+validate_schema_routes_registered(_SCHEMA_CUSTOM_ROUTES)
+
+
 def create_settings_flow() -> MessageFlow:
     """Create the MessageFlow that implements the settings UI."""
     flow = MessageFlow()
-
-    # Small helpers to reduce repetition when updating settings
-    logger = Logger("SettingsFlow", logger_name=__name__)
 
     async def _user_update(flow_state, api, user_id: int, **kwargs) -> bool:
         repo = api.conversation_manager.repo
@@ -93,18 +96,13 @@ def create_settings_flow() -> MessageFlow:
         # `coro` is a coroutine returned by a repo.update_* call
         return await apply_update_or_notify(flow_state, api, user_id, coro)
 
-    async def _toggle_user(flow_state, api, user_id: int, attr: str, field: Optional[str] = None) -> bool:
-        us = await api.conversation_manager.repo.get_user_settings(user_id)
-        new_val = not bool(getattr(us, attr, False))
-        return await _user_update(flow_state, api, user_id, **{field or attr: new_val})
-
-
     # Register schema-driven states (generic handlers for standard settings)
     # Provide parent mapping so category states use the correct back parent.
-    register_schema_states(
+    SettingsFlowGenerator(
+        user_update_handler=_user_update,
+        global_update_handler=_global_update,
+    ).register_schema_states(
         flow,
-        _user_update,
-        _global_update,
         parent_main=STATE_MAIN,
         parent_admin=STATE_ADMIN,
     )
@@ -122,12 +120,8 @@ def create_settings_flow() -> MessageFlow:
         return sm.get_main_menu_keyboard(include_admin=is_admin)
 
     async def handle_main_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        if data == "ordering":
-            return "sd:cat:main:ordering"
-        if data == "vanishing":
-            return "sd:cat:main:vanishing"
-        if data == "user_notifications":
-            return "sd:cat:main:notifications"
+        if data in MAIN_MENU.categories:
+            return f"sd:cat:main:{data}"
         if data == "done":
             return STATE_SAVE_RESULT
         if data == "admin":
@@ -154,227 +148,25 @@ def create_settings_flow() -> MessageFlow:
         exit_buttons=[CommonCallbacks.CLOSE, CommonCallbacks.CANCEL],
     ))
 
-    # ------------------ Ordering ------------------
-    async def build_ordering_text(flow_state, api, user_id) -> str:
-        user_settings = await flow_state.get_or_fetch(
-            "user_settings", lambda: api.conversation_manager.repo.get_user_settings(user_id)
-        )
-        sm = SettingsUi(api)
-        return sm.get_ordering_submenu_text(user_settings)
-
-    async def build_ordering_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        sm = SettingsUi(api)
-        return sm.get_ordering_submenu_keyboard()
-
-    async def handle_ordering_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        if data == "page_size":
-            return STATE_PAGE_SIZE
-        if data == "sorting":
-            return STATE_SORTING
-        return None
-
-    flow.add_state(make_state(
-        STATE_ORDERING,
-        text_builder=build_ordering_text,
-        keyboard_builder=build_ordering_keyboard,
-        action=MessageAction.EDIT,
-        timeout=120,
-        on_button_press=handle_ordering_button,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_MAIN,
-    ))
-
-    # Page size (text input)
-    async def build_page_size_text(flow_state, api, user_id) -> str:
-        settings = await flow_state.get_or_fetch("user_settings", lambda: api.conversation_manager.repo.get_user_settings(user_id))
-        return (
-            "🔢 **Group Page Size**\n\n"
-            f"Current value: {settings.group_page_size}\n\n"
-            "Enter a new page size (5-20):"
-        )
-
-    async def handle_page_size_input(input_text: str, flow_state, api, user_id) -> Optional[str]:
-        parser = IntegerParser()
-        val = parser.parse(input_text)
-        if val is None or val < 5 or val > 20:
-            await api.message_manager.send_text(
-                user_id,
-                "❌ Invalid input. Please enter a number between 5 and 20.",
-                vanish=True,
-                conv=True,
-                delete_after=3,
-            )
-            return STATE_PAGE_SIZE
-
-        ok = await _user_update(flow_state, api, user_id, group_page_size=val)
-        if not ok:
-            return STATE_PAGE_SIZE
-        return STATE_ORDERING
-
-    flow.add_state(MessageDefinition(
-        state_id=STATE_PAGE_SIZE,
-        state_type=StateType.TEXT_INPUT,
-        text_builder=build_page_size_text,
-        input_prompt=None,
-        input_storage_key=STATE_PAGE_SIZE,
-        input_timeout=120,
-        on_input_received=handle_page_size_input,
-        action=MessageAction.EDIT,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_ORDERING,
-    ))
-
-    # Sorting options
-    async def build_sorting_text(flow_state, api, user_id) -> str:
-        settings = await flow_state.get_or_fetch("user_settings", lambda: api.conversation_manager.repo.get_user_settings(user_id))
-        sm = SettingsUi(api)
-        return sm.get_sorting_options_text(settings)
-
-    async def build_sorting_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        sm = SettingsUi(api)
-        return sm.get_sorting_options_keyboard()
-
-    async def handle_sorting_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        if data not in ("alphabetical", "coffee_count"):
-            return None
-        ok = await _user_update(flow_state, api, user_id, group_sort_by=data)
-        if not ok:
-            return STATE_SORTING
-        return STATE_ORDERING
-
-    flow.add_state(make_state(
-        STATE_SORTING,
-        text_builder=build_sorting_text,
-        keyboard_builder=build_sorting_keyboard,
-        action=MessageAction.EDIT,
-        timeout=60,
-        on_button_press=handle_sorting_button,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_ORDERING,
-    ))
-
-    # ------------------ Vanishing ------------------
-    async def build_vanishing_text(flow_state, api, user_id) -> str:
-        settings = await flow_state.get_or_fetch("user_settings", lambda: api.conversation_manager.repo.get_user_settings(user_id))
-        sm = SettingsUi(api)
-        return sm.get_vanishing_submenu_text(settings)
-
-    async def build_vanishing_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        settings = await flow_state.get_or_fetch("user_settings", lambda: api.conversation_manager.repo.get_user_settings(user_id))
-        sm = SettingsUi(api)
-        return sm.get_vanishing_submenu_keyboard(settings)
-
-    async def handle_vanishing_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        if data == "toggle":
-            await _toggle_user(flow_state, api, user_id, "vanishing_enabled")
-            return STATE_VANISHING
-        if data == "threshold":
-            return STATE_VANISHING_THRESHOLD
-        return None
-
-    flow.add_state(make_state(
-        STATE_VANISHING,
-        text_builder=build_vanishing_text,
-        keyboard_builder=build_vanishing_keyboard,
-        action=MessageAction.EDIT,
-        timeout=120,
-        on_button_press=handle_vanishing_button,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_MAIN,
-    ))
-
-    # Vanishing threshold input
-    async def build_vanish_threshold_text(flow_state, api, user_id) -> str:
-        settings = await flow_state.get_or_fetch("user_settings", lambda: api.conversation_manager.repo.get_user_settings(user_id))
-        return (
-            "🔢 **Vanishing Threshold**\n\n"
-            f"Current value: {settings.vanishing_threshold}\n\n"
-            "Enter a new threshold (1-10):"
-        )
-
-    async def handle_vanish_threshold_input(input_text: str, flow_state, api, user_id) -> Optional[str]:
-        parser = IntegerParser()
-        val = parser.parse(input_text)
-        if val is None or val < 1 or val > 10:
-            await api.message_manager.send_text(user_id, "❌ Invalid input. Please enter a number between 1 and 10.", vanish=True, conv=True, delete_after=3)
-            return STATE_VANISHING_THRESHOLD
-        ok = await _user_update(flow_state, api, user_id, vanishing_threshold=val)
-        if not ok:
-            return STATE_VANISHING_THRESHOLD
-        return STATE_VANISHING
-
-    flow.add_state(MessageDefinition(
-        state_id=STATE_VANISHING_THRESHOLD,
-        state_type=StateType.TEXT_INPUT,
-        text_builder=build_vanish_threshold_text,
-        input_storage_key=STATE_VANISHING_THRESHOLD,
-        on_input_received=handle_vanish_threshold_input,
-        action=MessageAction.EDIT,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_VANISHING,
-    ))
-
-    # ------------------ User notifications ------------------
-    async def build_user_notifications_text(flow_state, api, user_id) -> str:
-        user_settings = await flow_state.get_or_fetch("user_settings", lambda: api.conversation_manager.repo.get_user_settings(user_id))
-        notification_settings = await api.conversation_manager.repo.get_notification_settings() or {"notifications_enabled": True, "notifications_silent": False}
-        sm = SettingsUi(api)
-        return sm.get_user_notifications_submenu_text(user_settings, notification_settings)
-
-    async def build_user_notifications_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        user_settings = await flow_state.get_or_fetch("user_settings", lambda: api.conversation_manager.repo.get_user_settings(user_id))
-        notification_settings = await api.conversation_manager.repo.get_notification_settings() or {"notifications_enabled": True, "notifications_silent": False}
-        sm = SettingsUi(api)
-        return sm.get_user_notifications_submenu_keyboard(user_settings, notification_settings)
-
-    async def handle_user_notifications_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        if data == "toggle_user_notifications":
-            await _toggle_user(flow_state, api, user_id, "notifications_enabled")
-            return STATE_USER_NOTIFICATIONS
-
-        if data == "toggle_user_silent":
-            await _toggle_user(flow_state, api, user_id, "notifications_silent")
-            return STATE_USER_NOTIFICATIONS
-
-        return None
-
-    flow.add_state(make_state(
-        STATE_USER_NOTIFICATIONS,
-        text_builder=build_user_notifications_text,
-        keyboard_builder=build_user_notifications_keyboard,
-        action=MessageAction.EDIT,
-        timeout=120,
-        on_button_press=handle_user_notifications_button,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_MAIN,
-    ))
-
     # ------------------ Admin root ------------------
     async def build_admin_text(flow_state, api, user_id) -> str:
         sm = SettingsUi(api)
         return sm.get_admin_submenu_text()
 
     async def build_admin_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        # Use schema-driven admin submenu where possible
-        return build_admin_submenu_keyboard(flow_state, api, user_id)
+        sm = SettingsUi(api)
+        return sm.get_admin_submenu_keyboard()
 
     async def handle_admin_button(data: str, flow_state, api, user_id) -> Optional[str]:
         # Support schema-driven category callbacks (sd:cat:<name>)
         if data and data.startswith("sd:cat:"):
             return data
 
-        if data == "logging":
-            return STATE_LOGGING
-        if data == "notifications":
-            return STATE_NOTIFICATIONS
-        if data == "debts":
-            return STATE_DEBTS
-        if data == "gsheet":
-            return STATE_GSHEET
+        # Category callbacks from schema-defined admin menu.
+        if data in ADMIN_MENU.categories:
+            return f"sd:cat:admin:{data}"
         if data == "registration_password":
             return STATE_REGISTRATION_PASSWORD
-        if data == "snapshots":
-            return STATE_SNAPSHOTS
         return None
 
     flow.add_state(make_state(
@@ -418,6 +210,7 @@ def create_settings_flow() -> MessageFlow:
     async def build_registration_password_verify_text(flow_state, api, user_id) -> str:
         return (
             "🔐 **Change Registration Password**\n\n"
+            "The registration password is needed to register as a new user.\n\n"
             "Enter the current registration password:"
         )
 
@@ -484,37 +277,6 @@ def create_settings_flow() -> MessageFlow:
         parent_state=STATE_REGISTRATION_PASSWORD,
     ))
 
-    # ------------------ Logging submenu ------------------
-    async def build_logging_text(flow_state, api, user_id) -> str:
-        repo = api.conversation_manager.repo
-        log_settings = await repo.get_log_settings() or {}
-        sm = SettingsUi(api)
-        return sm.get_logging_submenu_text(log_settings)
-
-    async def build_logging_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        sm = SettingsUi(api)
-        return sm.get_logging_submenu_keyboard()
-
-    async def handle_logging_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        if data == "log_level":
-            return STATE_LOG_LEVEL
-        if data == "log_format":
-            return STATE_LOGGING_FORMAT
-        if data == "log_modules":
-            return STATE_LOGGING_MODULES
-        return None
-
-    flow.add_state(make_state(
-        STATE_LOGGING,
-        text_builder=build_logging_text,
-        keyboard_builder=build_logging_keyboard,
-        action=MessageAction.EDIT,
-        timeout=120,
-        on_button_press=handle_logging_button,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_ADMIN,
-    ))
-
     # Logging format toggles
     async def build_logging_format_text(flow_state, api, user_id) -> str:
         repo = api.conversation_manager.repo
@@ -553,191 +315,20 @@ def create_settings_flow() -> MessageFlow:
         timeout=120,
         on_button_press=handle_logging_format_button,
         back_button=CommonCallbacks.BACK,
-        parent_state=STATE_LOGGING,
+        parent_state=STATE_ADMIN_LOGGING_CATEGORY,
     ))
 
-    # Log level selection
-    async def build_log_level_text(flow_state, api, user_id) -> str:
-        repo = api.conversation_manager.repo
-        log_settings = await repo.get_log_settings() or {}
-        sm = SettingsUi(api)
-        return sm.get_log_level_options_text(log_settings.get("log_level", "INFO"))
-
-    async def build_log_level_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        sm = SettingsUi(api)
-        return sm.get_log_level_options_keyboard()
-
-    async def handle_log_level_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        repo = api.conversation_manager.repo
-        if not data:
-            return None
-        ok = await _global_update(flow_state, api, user_id, repo.update_log_settings(log_level=data))
-        if not ok:
-            return STATE_LOG_LEVEL
-        return STATE_LOGGING
-
-    flow.add_state(make_state(
-        STATE_LOG_LEVEL,
-        text_builder=build_log_level_text,
-        keyboard_builder=build_log_level_keyboard,
-        action=MessageAction.EDIT,
-        timeout=60,
-        on_button_press=handle_log_level_button,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_LOGGING,
-    ))
-
-    # Logging modules editor (paginated) — simplified using StagingManager
-    async def _ensure_logging_current_state(flow_state, api):
-        db_log_settings = await api.conversation_manager.repo.get_log_settings() or {}
-        global_level = (db_log_settings.get("log_level") or "INFO").upper()
-        if global_level not in LOG_STATE_SEQUENCE:
-            global_level = "INFO"
-        if flow_state.get("logging_current_state_index") is None:
-            idx = LOG_STATE_SEQUENCE.index(global_level) if global_level in LOG_STATE_SEQUENCE else 2
-            flow_state.set("logging_current_state_index", idx)
-
-    async def pagination_items_builder(flow_state, api, user_id):
-        repo = api.conversation_manager.repo
-        db_log_settings = await repo.get_log_settings() or {}
-        global_level = (db_log_settings.get("log_level") or "INFO").upper()
-        if global_level not in LOG_STATE_SEQUENCE:
-            global_level = "INFO"
-
-        staging = StagingManager(flow_state, "logging_pending_overrides")
-        pending = staging.get_staged() or {}
-        existing_overrides = dict(db_log_settings.get("log_module_overrides", {}) or {})
-
-        items: list[tuple[str, str]] = []
-        for module_name, display in get_known_loggers():
-            if module_name in pending:
-                state = pending[module_name]
-                suffix = " *"
-            elif module_name in existing_overrides:
-                state = existing_overrides[module_name]
-                suffix = ""
-            else:
-                state = global_level
-                suffix = ""
-
-            icon = LOG_STATE_ICON.get(state, "")
-            label = f"{display} {icon}{suffix}".strip()
-            items.append((module_name, label))
-
-        return items
-
-    def pagination_item_button_builder(item, idx):
-        module_name, label = item
-
-        def _make_toggle(module: str):
-            async def _handler(flow_state, api, user_id) -> Optional[str]:
-                await _ensure_logging_current_state(flow_state, api)
-                staging = StagingManager(flow_state, "logging_pending_overrides")
-                cur_idx = int(flow_state.get("logging_current_state_index") or 0)
-                target_level = LOG_STATE_SEQUENCE[cur_idx]
-
-                if module in staging.get_staged():
-                    staging.unstage(module)
-                else:
-                    staging.stage(module, target_level)
-
-                # Refresh pagination items so labels update immediately
-                try:
-                    if STATE_LOGGING_MODULES in flow_state.pagination_state:
-                        new_items = await pagination_items_builder(flow_state, api, user_id)
-                        flow_state.pagination_state[STATE_LOGGING_MODULES]["items"] = new_items
-                except Exception:
-                    pass
-                return STATE_LOGGING_MODULES
-
-            return _handler
-
-        return ButtonCallback(label, f"m_{idx}", callback_handler=_make_toggle(module_name))
-
-    async def pagination_extras(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        # Build state selector and apply/back row
-        db_log_settings = await api.conversation_manager.repo.get_log_settings() or {}
-        global_level = (db_log_settings.get("log_level") or "INFO").upper()
-        current_state_index = flow_state.get("logging_current_state_index")
-        if current_state_index is None:
-            current_state_index = LOG_STATE_SEQUENCE.index(global_level) if global_level in LOG_STATE_SEQUENCE else 2
-            flow_state.set("logging_current_state_index", current_state_index)
-
-        current_state = LOG_STATE_SEQUENCE[int(flow_state.get("logging_current_state_index"))]
-        current_icon = LOG_STATE_ICON.get(current_state, "")
-
-        header = [
-            ButtonCallback("⬅", "state_prev"),
-            ButtonCallback(f"{current_state} {current_icon}", "noop"),
-            ButtonCallback("➡", "state_next"),
-        ]
-
-        footer = [
-            ButtonCallback("✅ Apply", "apply"),
-            ButtonCallback(f"{SettingsUi.ICON_BACK} Back", CommonCallbacks.BACK),
-        ]
-
-        return [header, footer]
-
-    async def build_logging_modules_text(flow_state, api, user_id) -> str:
-        db_log_settings = await api.conversation_manager.repo.get_log_settings() or {}
-        global_level = (db_log_settings.get("log_level") or "INFO").upper()
-        current_index = flow_state.get("logging_current_state_index")
-        if current_index is None:
-            current_index = LOG_STATE_SEQUENCE.index(global_level) if global_level in LOG_STATE_SEQUENCE else 2
-            flow_state.set("logging_current_state_index", current_index)
-
-        staging = StagingManager(flow_state, "logging_pending_overrides")
-        pending = staging.get_staged() or {}
-        lines = [
-            "🧩 **Module Logging**",
-            "",
-            f"**Global level:** {format_log_state(global_level)}",
-            f"**Pending changes:** {len(pending)}",
-            "",
-            "Tap a module to stage that apply state. Tap it again to revert the staged change.",
-        ]
-
-        return "\n".join(lines)
-
-    async def handle_logging_modules_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        if data is None:
-            return None
-        if data == "state_prev":
-            idx = int(flow_state.get("logging_current_state_index") or 0)
-            idx = (idx + 1) % len(LOG_STATE_SEQUENCE)
-            flow_state.set("logging_current_state_index", idx)
-            return STATE_LOGGING_MODULES
-        if data == "state_next":
-            idx = int(flow_state.get("logging_current_state_index") or 0)
-            idx = (idx - 1) % len(LOG_STATE_SEQUENCE)
-            flow_state.set("logging_current_state_index", idx)
-            return STATE_LOGGING_MODULES
-        if data == "apply":
-            staging = StagingManager(flow_state, "logging_pending_overrides")
-            pending = staging.get_staged() or {}
-            db_log_settings = await api.conversation_manager.repo.get_log_settings() or {}
-            existing_overrides = dict(db_log_settings.get("log_module_overrides", {}) or {})
-            new_overrides = dict(existing_overrides)
-            for k, v in (pending or {}).items():
-                new_overrides[k] = v
-            ok = await apply_update_or_notify(
-                flow_state,
-                api,
-                user_id,
-                api.conversation_manager.repo.update_log_settings(log_module_overrides=new_overrides),
-                error_text="❌ Failed to apply module logging settings.",
-            )
-            if not ok:
-                return STATE_LOGGING_MODULES
-            # clear staging
-            staging.clear()
-            return STATE_LOGGING
-        if data == "noop":
-            return STATE_LOGGING_MODULES
-
-        # module toggle callbacks are handled by per-button callback_handler above
-        return None
+    # Logging modules editor (paginated) — isolated in dedicated helper module.
+    (
+        pagination_items_builder,
+        pagination_item_button_builder,
+        pagination_extras,
+        build_logging_modules_text,
+        handle_logging_modules_button,
+    ) = build_logging_modules_state_helpers(
+        state_logging_modules=STATE_LOGGING_MODULES,
+        state_logging=STATE_ADMIN_LOGGING_CATEGORY,
+    )
 
     flow.add_state(MessageDefinition(
         state_id=STATE_LOGGING_MODULES,
@@ -750,405 +341,7 @@ def create_settings_flow() -> MessageFlow:
         timeout=180,
         on_button_press=handle_logging_modules_button,
         back_button=CommonCallbacks.BACK,
-        parent_state=STATE_LOGGING,
-    ))
-
-    # ------------------ Admin: Notifications ------------------
-    async def build_notifications_text(flow_state, api, user_id) -> str:
-        sm = SettingsUi(api)
-        notification_settings = await api.conversation_manager.repo.get_notification_settings() or {"notifications_enabled": True, "notifications_silent": False}
-        return sm.get_notifications_submenu_text(notification_settings)
-
-    async def build_notifications_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        sm = SettingsUi(api)
-        notification_settings = await api.conversation_manager.repo.get_notification_settings() or {"notifications_enabled": True, "notifications_silent": False}
-        return sm.get_notifications_submenu_keyboard(notification_settings)
-
-    async def handle_notifications_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        if data == "toggle_notifications":
-            ns = await api.conversation_manager.repo.get_notification_settings()
-            new_value = not bool(ns.get("notifications_enabled", True))
-            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_notification_settings(notifications_enabled=new_value))
-            return STATE_NOTIFICATIONS
-
-        if data == "toggle_silent":
-            ns = await api.conversation_manager.repo.get_notification_settings()
-            if not ns.get("notifications_enabled", True):
-                await api.message_manager.send_text(user_id, "❌ Enable notifications first!", vanish=True, conv=False, delete_after=3)
-                return STATE_NOTIFICATIONS
-            new_value = not bool(ns.get("notifications_silent", False))
-            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_notification_settings(notifications_silent=new_value))
-            return STATE_NOTIFICATIONS
-
-        return None
-
-    flow.add_state(make_state(
-        STATE_NOTIFICATIONS,
-        text_builder=build_notifications_text,
-        keyboard_builder=build_notifications_keyboard,
-        action=MessageAction.EDIT,
-        timeout=120,
-        on_button_press=handle_notifications_button,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_ADMIN,
-    ))
-
-    # ------------------ Debts ------------------
-    async def build_debts_text(flow_state, api, user_id) -> str:
-        ds = await api.conversation_manager.repo.get_debt_settings()
-        sm = SettingsUi(api)
-        return sm.get_debts_submenu_text(ds)
-
-    async def build_debts_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        sm = SettingsUi(api)
-        return sm.get_debts_submenu_keyboard()
-
-    async def handle_debts_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        if data == "debt_correction":
-            return STATE_DEBT_CORRECTION
-        if data == "creditor_royalty":
-            return STATE_CREDITOR_ROYALTY
-        return None
-
-    flow.add_state(make_state(
-        STATE_DEBTS,
-        text_builder=build_debts_text,
-        keyboard_builder=build_debts_keyboard,
-        action=MessageAction.EDIT,
-        timeout=120,
-        on_button_press=handle_debts_button,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_ADMIN,
-    ))
-
-    # Debt Correction submenu (parent of method/threshold)
-    async def build_debt_correction_text(flow_state, api, user_id) -> str:
-        ds = await api.conversation_manager.repo.get_debt_settings()
-        sm = SettingsUi(api)
-        return sm.get_debt_correction_submenu_text(ds)
-
-    async def build_debt_correction_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        sm = SettingsUi(api)
-        return sm.get_debt_correction_submenu_keyboard()
-
-    async def handle_debt_correction_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        if data == "debt_method":
-            return STATE_DEBT_METHOD
-        if data == "debt_threshold":
-            return STATE_DEBT_THRESHOLD
-        return None
-
-    flow.add_state(make_state(
-        STATE_DEBT_CORRECTION,
-        text_builder=build_debt_correction_text,
-        keyboard_builder=build_debt_correction_keyboard,
-        action=MessageAction.EDIT,
-        timeout=120,
-        on_button_press=handle_debt_correction_button,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_DEBTS,
-    ))
-
-    # Debt method selector
-    async def build_debt_method_text(flow_state, api, user_id) -> str:
-        ds = await api.conversation_manager.repo.get_debt_settings()
-        return (
-            "🧮 **Debt Correction Method**\n\n"
-            f"**Current method:** {('Absolute' if (ds.correction_method == 'absolute') else 'Proportional')}\n\n"
-            "Choose a method:"
-        )
-
-    async def handle_debt_method_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        if data not in ("debt_method_absolute", "debt_method_proportional"):
-            return None
-        new_method = "absolute" if data == "debt_method_absolute" else "proportional"
-        ok = await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_debt_settings(correction_method=new_method))
-        if not ok:
-            return STATE_DEBT_METHOD
-        return STATE_DEBT_CORRECTION
-
-    flow.add_state(make_state(
-        STATE_DEBT_METHOD,
-        text_builder=build_debt_method_text,
-        buttons=[
-            [ButtonCallback("🧮 Absolute", "debt_method_absolute"), ButtonCallback("📊 Proportional", "debt_method_proportional")],
-            [ButtonCallback("◁ Back", CommonCallbacks.BACK)],
-        ],
-        action=MessageAction.EDIT,
-        timeout=120,
-        on_button_press=handle_debt_method_button,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_DEBT_CORRECTION,
-    ))
-
-    # Debt threshold input
-    async def build_debt_threshold_text(flow_state, api, user_id) -> str:
-        ds = await api.conversation_manager.repo.get_debt_settings()
-        return (
-            "🔢 **Debt Correction Threshold**\n\n"
-            f"Current value: {int(ds.correction_threshold)}\n\n"
-            "Enter a new threshold (0-50):"
-        )
-
-    async def handle_debt_threshold_input(input_text: str, flow_state, api, user_id) -> Optional[str]:
-        parser = IntegerParser()
-        val = parser.parse(input_text)
-        if val is None or val < 0 or val > 50:
-            await api.message_manager.send_text(user_id, "❌ Invalid input. Please enter a number between 0 and 50.", vanish=True, conv=True, delete_after=3)
-            return STATE_DEBT_THRESHOLD
-        ok = await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_debt_settings(correction_threshold=val))
-        if not ok:
-            return STATE_DEBT_THRESHOLD
-        return STATE_DEBT_CORRECTION
-
-    flow.add_state(MessageDefinition(
-        state_id=STATE_DEBT_THRESHOLD,
-        state_type=StateType.TEXT_INPUT,
-        text_builder=build_debt_threshold_text,
-        input_storage_key=STATE_DEBT_THRESHOLD,
-        on_input_received=handle_debt_threshold_input,
-        action=MessageAction.EDIT,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_DEBT_CORRECTION,
-    ))
-
-    # ------------------ Creditor Royalty submenu ------------------
-    async def build_creditor_royalty_text(flow_state, api, user_id) -> str:
-        ds = await api.conversation_manager.repo.get_debt_settings()
-        sm = SettingsUi(api)
-        return sm.get_creditor_royalty_submenu_text(ds)
-
-    async def build_creditor_royalty_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        ds = await api.conversation_manager.repo.get_debt_settings()
-        sm = SettingsUi(api)
-        return sm.get_creditor_royalty_submenu_keyboard(ds)
-
-    async def handle_creditor_royalty_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        ds = await api.conversation_manager.repo.get_debt_settings()
-        if data == "toggle_creditor_exempt":
-            new_val = not bool(getattr(ds, "creditor_exempt_from_correction", True))
-            ok = await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_debt_settings(creditor_exempt_from_correction=new_val))
-            if not ok:
-                return STATE_CREDITOR_ROYALTY
-            return STATE_CREDITOR_ROYALTY
-        if data == "creditor_free_set":
-            return STATE_CREDITOR_FREE_SET
-        return None
-
-    flow.add_state(make_state(
-        STATE_CREDITOR_ROYALTY,
-        text_builder=build_creditor_royalty_text,
-        keyboard_builder=build_creditor_royalty_keyboard,
-        action=MessageAction.EDIT,
-        timeout=120,
-        on_button_press=handle_creditor_royalty_button,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_DEBTS,
-    ))
-
-    # Creditor free coffees input
-    async def build_creditor_free_text(flow_state, api, user_id) -> str:
-        ds = await api.conversation_manager.repo.get_debt_settings()
-        current = int(getattr(ds, "creditor_free_coffees", 0) or 0)
-        return (
-            "🔢 **Creditor Free Coffees**\n\n"
-            f"Current value: {current}\n\n"
-            "Enter a new value (0-200):"
-        )
-
-    async def handle_creditor_free_input(input_text: str, flow_state, api, user_id) -> Optional[str]:
-        parser = IntegerParser()
-        val = parser.parse(input_text)
-        if val is None or val < 0 or val > 200:
-            await api.message_manager.send_text(user_id, "❌ Invalid input. Please enter a number between 0 and 200.", vanish=True, conv=True, delete_after=3)
-            return STATE_CREDITOR_FREE_SET
-        ok = await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_debt_settings(creditor_free_coffees=val))
-        if not ok:
-            return STATE_CREDITOR_FREE_SET
-        return STATE_CREDITOR_ROYALTY
-
-    flow.add_state(MessageDefinition(
-        state_id=STATE_CREDITOR_FREE_SET,
-        state_type=StateType.TEXT_INPUT,
-        text_builder=build_creditor_free_text,
-        input_storage_key=STATE_CREDITOR_FREE_SET,
-        on_input_received=handle_creditor_free_input,
-        action=MessageAction.EDIT,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_CREDITOR_ROYALTY,
-    ))
-
-    # ------------------ Google Sheets ------------------
-    async def build_gsheet_text(flow_state, api, user_id) -> str:
-        g = await api.conversation_manager.repo.get_gsheet_settings()
-        sm = SettingsUi(api)
-        return sm.get_gsheet_submenu_text(g)
-
-    async def build_gsheet_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        g = await api.conversation_manager.repo.get_gsheet_settings()
-        sm = SettingsUi(api)
-        return sm.get_gsheet_submenu_keyboard(g)
-
-    async def handle_gsheet_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        g = await api.conversation_manager.repo.get_gsheet_settings()
-        if data == "set_period":
-            return STATE_GSHEET_SET_PERIOD
-        if data == "toggle_periodic":
-            new_value = not bool(getattr(g, "periodic_sync_enabled", False))
-            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_gsheet_settings(periodic_sync_enabled=new_value))
-            return STATE_GSHEET
-        if data == "toggle_two_way":
-            new_value = not bool(getattr(g, "two_way_sync_enabled", False))
-            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_gsheet_settings(two_way_sync_enabled=new_value))
-            return STATE_GSHEET
-        if data == "toggle_after_actions":
-            new_value = not bool(getattr(g, "sync_after_actions_enabled", False))
-            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_gsheet_settings(sync_after_actions_enabled=new_value))
-            return STATE_GSHEET
-        return None
-
-    flow.add_state(make_state(
-        STATE_GSHEET,
-        text_builder=build_gsheet_text,
-        keyboard_builder=build_gsheet_keyboard,
-        action=MessageAction.EDIT,
-        timeout=120,
-        on_button_press=handle_gsheet_button,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_ADMIN,
-    ))
-
-    # GSheet set period input
-    async def build_gsheet_period_text(flow_state, api, user_id) -> str:
-        g = await api.conversation_manager.repo.get_gsheet_settings()
-        return (
-            "⏱ **Google Sheets Sync Period**\n\n"
-            f"Current value: {int(getattr(g, 'sync_period_minutes', 60))} min\n\n"
-            "Enter a new period in minutes (1-1440):"
-        )
-
-    async def handle_gsheet_period_input(input_text: str, flow_state, api, user_id) -> Optional[str]:
-        parser = IntegerParser()
-        val = parser.parse(input_text)
-        if val is None or val < 1 or val > 24 * 60:
-            await api.message_manager.send_text(user_id, "❌ Invalid input. Please enter a number between 1 and 1440.", vanish=True, conv=True, delete_after=3)
-            return STATE_GSHEET_SET_PERIOD
-        ok = await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_gsheet_settings(sync_period_minutes=val))
-        if not ok:
-            return STATE_GSHEET_SET_PERIOD
-        return STATE_GSHEET
-
-    flow.add_state(MessageDefinition(
-        state_id=STATE_GSHEET_SET_PERIOD,
-        state_type=StateType.TEXT_INPUT,
-        text_builder=build_gsheet_period_text,
-        input_storage_key=STATE_GSHEET_SET_PERIOD,
-        on_input_received=handle_gsheet_period_input,
-        action=MessageAction.EDIT,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_GSHEET,
-    ))
-
-    # ------------------ Snapshots ------------------
-    async def build_snapshots_text(flow_state, api, user_id) -> str:
-        s = await api.conversation_manager.repo.get_snapshot_settings()
-        sm = SettingsUi(api)
-        return sm.get_snapshots_submenu_text(s)
-
-    async def build_snapshots_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        s = await api.conversation_manager.repo.get_snapshot_settings()
-        sm = SettingsUi(api)
-        return sm.get_snapshots_submenu_keyboard(s)
-
-    async def handle_snapshots_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        if data == "set_keep_last":
-            return STATE_SNAPSHOT_SET_KEEP_LAST
-        if data == "creation_points":
-            return STATE_SNAPSHOT_CREATION_POINTS
-        return None
-
-    flow.add_state(make_state(
-        STATE_SNAPSHOTS,
-        text_builder=build_snapshots_text,
-        keyboard_builder=build_snapshots_keyboard,
-        action=MessageAction.EDIT,
-        timeout=120,
-        on_button_press=handle_snapshots_button,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_ADMIN,
-    ))
-
-    # Set keep last input
-    async def build_snapshots_keep_text(flow_state, api, user_id) -> str:
-        s = await api.conversation_manager.repo.get_snapshot_settings()
-        return (
-            "🔢 **Snapshots: Keep Last**\n\n"
-            f"Current value: {int(getattr(s, 'keep_last', 10))}\n\n"
-            "Enter how many snapshots to keep (1-200):"
-        )
-
-    async def handle_snapshots_keep_input(input_text: str, flow_state, api, user_id) -> Optional[str]:
-        parser = IntegerParser()
-        val = parser.parse(input_text)
-        if val is None or val < 1 or val > 200:
-            await api.message_manager.send_text(user_id, "❌ Invalid input. Please enter a number between 1 and 200.", vanish=True, conv=True, delete_after=3)
-            return STATE_SNAPSHOT_SET_KEEP_LAST
-        ok = await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_snapshot_settings(keep_last=val))
-        if not ok:
-            return STATE_SNAPSHOT_SET_KEEP_LAST
-        return STATE_SNAPSHOTS
-
-    flow.add_state(MessageDefinition(
-        state_id=STATE_SNAPSHOT_SET_KEEP_LAST,
-        state_type=StateType.TEXT_INPUT,
-        text_builder=build_snapshots_keep_text,
-        input_storage_key=STATE_SNAPSHOT_SET_KEEP_LAST,
-        on_input_received=handle_snapshots_keep_input,
-        action=MessageAction.EDIT,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_SNAPSHOTS,
-    ))
-
-    # Snapshot creation points toggles
-    async def build_snapshot_creation_text(flow_state, api, user_id) -> str:
-        s = await api.conversation_manager.repo.get_snapshot_settings()
-        sm = SettingsUi(api)
-        return sm.get_snapshots_creation_points_submenu_text(s)
-
-    async def build_snapshot_creation_keyboard(flow_state, api, user_id) -> List[List[ButtonCallback]]:
-        s = await api.conversation_manager.repo.get_snapshot_settings()
-        sm = SettingsUi(api)
-        return sm.get_snapshots_creation_points_submenu_keyboard(s)
-
-    async def handle_snapshot_creation_button(data: str, flow_state, api, user_id) -> Optional[str]:
-        s = await api.conversation_manager.repo.get_snapshot_settings()
-        if data == "toggle_card_closed":
-            new = not bool(getattr(s, "card_closed", True))
-            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_snapshot_settings(card_closed=new))
-            return STATE_SNAPSHOT_CREATION_POINTS
-        if data == "toggle_session_completed":
-            new = not bool(getattr(s, "session_completed", True))
-            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_snapshot_settings(session_completed=new))
-            return STATE_SNAPSHOT_CREATION_POINTS
-        if data == "toggle_quick_order":
-            new = not bool(getattr(s, "quick_order", False))
-            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_snapshot_settings(quick_order=new))
-            return STATE_SNAPSHOT_CREATION_POINTS
-        if data == "toggle_card_created":
-            new = not bool(getattr(s, "card_created", True))
-            await _global_update(flow_state, api, user_id, api.conversation_manager.repo.update_snapshot_settings(card_created=new))
-            return STATE_SNAPSHOT_CREATION_POINTS
-        return None
-
-    flow.add_state(make_state(
-        STATE_SNAPSHOT_CREATION_POINTS,
-        text_builder=build_snapshot_creation_text,
-        keyboard_builder=build_snapshot_creation_keyboard,
-        action=MessageAction.EDIT,
-        timeout=120,
-        on_button_press=handle_snapshot_creation_button,
-        back_button=CommonCallbacks.BACK,
-        parent_state=STATE_SNAPSHOTS,
+        parent_state=STATE_ADMIN_LOGGING_CATEGORY,
     ))
 
     # Short success exit state used when user presses 'Done' in main settings

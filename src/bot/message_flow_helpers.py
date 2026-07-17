@@ -670,7 +670,7 @@ def toggle_button(state: bool, label: str, callback: str, notify_text: Optional[
     Visuals/behavior:
     - Active state -> green dot (🟢)
     - Inactive state -> red dot (🔴)
-    - Button text shows the action ("Turn Off" / "Turn On") followed by the label
+    - Button text shows label, status icon, and the action ("Turn Off" / "Turn On")
     """
     icon = "🟢" if state else "🔴"
     action = "Turn Off" if state else "Turn On"
@@ -679,7 +679,32 @@ def toggle_button(state: bool, label: str, callback: str, notify_text: Optional[
     # when the button is activated. It is disabled by default (None).
     if notify_text:
         register_notify(callback, notify_text)
-    return ButtonCallback(f"{icon} {action} {label}", callback, callback_handler=None, notify_text=notify_text)
+    return ButtonCallback(
+        f"{label}: {icon} ({action})",
+        callback,
+        callback_handler=None,
+        notify_text=notify_text,
+    )
+
+
+def compact_toggle_button(state: bool, label: str, callback: str, notify_text: Optional[str] = None) -> ButtonCallback:
+    """
+    Create a compact toggle `ButtonCallback` for use in grid layouts.
+
+    Visuals/behavior:
+    - Active state -> green dot (🟢)
+    - Inactive state -> red dot (🔴)
+    - Button text shows status icon followed by the label
+    """
+    icon = "🟢" if state else "🔴"
+    if notify_text:
+        register_notify(callback, notify_text)
+    return ButtonCallback(
+        f"{icon} {label}",
+        callback,
+        callback_handler=None,
+        notify_text=notify_text,
+    )
 
 
 # Lightweight registry mapping callback_data -> notify_text for keyboards

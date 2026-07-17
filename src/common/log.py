@@ -27,24 +27,12 @@ CRITICAL = logging.CRITICAL
 
 # Global log settings that can be updated at runtime
 class LogSettings:
-    """Singleton to hold runtime log settings."""
+    """Shared runtime log settings."""
     show_time: bool = True
     show_caller: bool = True
     show_class: bool = True
     level: str = "INFO"
     module_overrides: Dict[str, str] = {}
-    
-    @classmethod
-    def update(cls, show_time: Optional[bool] = None, show_caller: Optional[bool] = None, show_class: Optional[bool] = None, level: Optional[str] = None):
-        """Update log settings."""
-        if show_time is not None:
-            cls.show_time = show_time
-        if show_caller is not None:
-            cls.show_caller = show_caller
-        if show_class is not None:
-            cls.show_class = show_class
-        if level is not None:
-            cls.level = level.upper()
 
 log_settings = LogSettings()
 
@@ -60,7 +48,7 @@ LOG_STATE_SEQUENCE: tuple[str, ...] = (
 )
 
 
-LOG_STATE_ICON: dict[str, str] = {
+LOG_LEVEL_STATE_ICON: dict[str, str] = {
     "OFF": "❌",
     "CRITICAL": "🔴",
     "ERROR": "🟠",
@@ -73,7 +61,7 @@ LOG_STATE_ICON: dict[str, str] = {
 
 def format_log_state(state: str) -> str:
     normalized = _normalize_log_state(state)
-    return f"{normalized} {LOG_STATE_ICON.get(normalized, '')}"
+    return f"{normalized} {LOG_LEVEL_STATE_ICON.get(normalized, '')}"
 
 
 def _normalize_log_state(value: str) -> str:
