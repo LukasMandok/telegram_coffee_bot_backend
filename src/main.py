@@ -1,11 +1,13 @@
 import asyncio
 from typing import Any, cast
 
+from beanie import init_beanie
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
 import uvicorn
 
+from src.bot.version_manager import check_and_notify_updates
 from src.config import app_config
 from src.api.telethon_api import TelethonAPI
 from src.routers import users, admin, coffee
@@ -58,7 +60,8 @@ async def lifespan(app: FastAPI):
         
         # Initialize application settings from database
         await SettingsManager.initialize_log_settings_from_db()
-
+        await check_and_notify_updates(telethon_api)
+        
         # Start Telethon bot in the background (do not block lifespan startup)
         telethon_task = asyncio.create_task(telethon_api.run())
 

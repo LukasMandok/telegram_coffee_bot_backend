@@ -76,6 +76,7 @@ class BeanieRepository(BaseRepository):
                 models.SnapshotMeta,
                 models.SnapshotHistory,
                 models.SnapshotDataChunk,
+                models.BotMetadata,
                 Feedback,
                 # Coffee models
                 CoffeeCard,

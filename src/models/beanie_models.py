@@ -155,6 +155,10 @@ class Password(base.Password, Document):
         return compare_password(plain_password, hash_bytes)
         
         
+class BotMetadata(Document):
+    id: str = "bot_metadata" # Singleton
+    current_version: str = "1.0.1"
+        
 class SnapshotCollectionChunkInfo(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
