@@ -1030,11 +1030,12 @@ class DebtManager:
 
         # Calculate estimated debt on active cards (not yet completed)
         # Fetch purchaser links up-front to avoid per-card fetch_link
-        active_cards = await CoffeeCard.find(CoffeeCard.is_active == True, fetch_links=True).to_list()
+        active_cards = await CoffeeCard.find_without_large_links({"is_active": True})
         estimated_debt_on_active = 0.0
 
         user_stable_id = user.stable_id
         for card in active_cards:
+            await card.fetch_link("purchaser")
             purchaser: TelegramUser = card.purchaser  # type: ignore
 
             # If I consumed from someone else's active card

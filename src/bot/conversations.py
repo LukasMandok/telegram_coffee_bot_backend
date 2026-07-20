@@ -13,6 +13,7 @@ from functools import wraps
 from pydantic import BaseModel, Field, ValidationError
 import pydantic_core
 from telethon import events, Button
+from telethon.errors import AlreadyInConversationError
 from telethon.tl.custom.conversation import Conversation
 from pymongo.errors import DuplicateKeyError
 
@@ -137,17 +138,24 @@ def managed_conversation(conversation_type: str, timeout: int = 60, use_existing
                         return False
                 else:
                     # Open a new Telethon conversation and pass it into the wrapped function
-                    async with self.api.bot.conversation(user_id) as conv:
-                        state.conv = conv
+                    for attempt in range(3):
                         try:
-                            result = await func(self, user_id, conv, state, *args, **kwargs)
-                            return result
-                        except ConversationCancelledException:
-                            self.logger.info(
-                                f"conversation_cancelled (user_id={user_id}, type={conversation_type}, reason=user_cancelled)",
-                                extra_tag="CONV",
-                            )
-                            return False
+                            async with self.api.bot.conversation(user_id) as conv:
+                                state.conv = conv
+                                try:
+                                    result = await func(self, user_id, conv, state, *args, **kwargs)
+                                    return result
+                                except ConversationCancelledException:
+                                    self.logger.info(
+                                        f"conversation_cancelled (user_id={user_id}, type={conversation_type}, reason=user_cancelled)",
+                                        extra_tag="CONV",
+                                    )
+                                    return False
+                        except AlreadyInConversationError:
+                            self._mark_recent_teardown(user_id, grace_seconds=0.5)
+                            if attempt == 2:
+                                raise
+                            await asyncio.sleep(0.25)
             except asyncio.TimeoutError:
                 # Telethon raises TimeoutError for both real timeouts and a cancelled
                 # conversation (e.g. when /cancel triggers conv.cancel()).
@@ -160,6 +168,7 @@ def managed_conversation(conversation_type: str, timeout: int = 60, use_existing
 
                 # Mark that a timeout occurred and handle cleanup centrally
                 timed_out = True
+                self._mark_recent_teardown(user_id)
                 await self.handle_timeout_abort(
                     user_id,
                     conversation_type,
@@ -168,6 +177,7 @@ def managed_conversation(conversation_type: str, timeout: int = 60, use_existing
                 return False
             except Exception as e:
                 # Log unexpected errors and return False to the caller
+                self._mark_recent_teardown(user_id)
                 self.logger.error(
                     f"managed_conversation failed (type={conversation_type}, user_id={user_id})",
                     extra_tag="CONV",
@@ -205,6 +215,7 @@ class ConversationManager:
         self.api = api
         # Manage active conversations within the conversation manager
         self.active_conversations: Dict[int, ConversationState] = {}
+        self._recently_cancelled_until: Dict[int, float] = {}
         # Initialize logger with class name
         self.logger = Logger("ConversationManager")
         # Cache repository instance for consistent access
@@ -382,9 +393,14 @@ class ConversationManager:
                     self.logger.info(f"Cancelled Telethon conversation for user {user_id}", extra_tag="Telegram")
                 except Exception as e:
                     self.logger.error(f"Error cancelling Telethon conversation for user {user_id}", extra_tag="Telegram", exc=e)
-            
-            # Remove from active conversations (this will also show the persistent keyboard)
-            self.remove_conversation_state(user_id)
+
+            # Give the cancelled Telethon conversation a short grace window to release
+            # its exclusive chat slot before a new conversation is started.
+            self._mark_recent_teardown(user_id)
+
+            # Let the cancelled conversation unwind before dropping the manager state.
+            loop = asyncio.get_running_loop()
+            loop.call_soon(self.remove_conversation_state, user_id)
 
             self.logger.info(
                 f"conversation_cancelled (user_id={user_id}, step={conversation_state.step}, reason=user_cancelled)",
@@ -395,6 +411,23 @@ class ConversationManager:
         
         self.logger.warning(f"No active conversation found for user {user_id} to cancel")
         return False
+
+    async def wait_for_cancel_cleanup(self, user_id: int) -> None:
+        """Wait briefly after /cancel so a just-cancelled Telethon conversation can unwind."""
+        deadline = self._recently_cancelled_until.get(user_id)
+        if deadline is None:
+            return
+
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(remaining, 0.1))
+
+        self._recently_cancelled_until.pop(user_id, None)
+
+    def _mark_recent_teardown(self, user_id: int, grace_seconds: float = 1.5) -> None:
+        self._recently_cancelled_until[user_id] = time.monotonic() + grace_seconds
 
     async def handle_timeout_abort(
         self,

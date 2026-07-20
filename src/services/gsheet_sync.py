@@ -1215,7 +1215,7 @@ async def _sync_all_cards_once_impl(
         two_way_enabled = bool(settings.gsheet.two_way_sync_enabled)
         logger.debug(f"Gsheet two-way sync enabled={two_way_enabled}", extra_tag="GSHEET")
 
-        cards = await CoffeeCard.find(fetch_links=False).to_list()
+        cards = await CoffeeCard.find_without_large_links()
         logger.debug(f"Snapshot loaded: cards={len(cards)}")
 
         purchaser_ids: Set[Any] = set()

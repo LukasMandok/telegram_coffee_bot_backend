@@ -108,6 +108,27 @@ class CoffeeCard(Document):
     class Settings:
         name = "coffee_cards"
 
+    @classmethod
+    async def find_without_large_links(
+        cls,
+        query: Optional[Dict[str, Any]] = None,
+        *,
+        sort_field: str = "created_at",
+        descending: bool = False,
+    ) -> List["CoffeeCard"]:
+        """Load cards while excluding the large relationship arrays.
+
+        This keeps read-only card lists usable even when a card has a very large
+        orders/sessions history that would otherwise exceed Mongo's BSON limit.
+        """
+        cursor = cls.get_pymongo_collection().find(
+            query or {},
+            {"orders": 0, "sessions": 0},
+        ).sort(sort_field, -1 if descending else 1)
+
+        raw_cards = await cursor.to_list(length=None)
+        return [cls.model_validate(card) for card in raw_cards]
+
 
 class CoffeeOrder(Document):
     """Represents an individual coffee order."""

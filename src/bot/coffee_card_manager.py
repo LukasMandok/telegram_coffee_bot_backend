@@ -54,14 +54,10 @@ class CoffeeCardManager:
     @requires_beanie(CoffeeCard)
     async def load_from_db(self):
         """Load active coffee cards from database."""
-        self.cards = (
-            await CoffeeCard.find(
-                CoffeeCard.is_active == True,
-                fetch_links=True,
-            )
-            .sort("created_at")
-            .to_list()
-        )  # type: ignore[comparison-overlap]
+        self.cards = await CoffeeCard.find_without_large_links(
+            {"is_active": True},
+            sort_field="created_at",
+        )
         await self._update_available()
         self.logger.info(f"Loaded {len(self.cards)} active coffee cards from database")
 
@@ -196,9 +192,21 @@ class CoffeeCardManager:
             raise ValueError("Card already exists in manager")
         
     async def _deactivate_coffee_card(self, card: CoffeeCard):    
+        if card.id is None:
+            raise ValueError(f"Card '{card.name}' cannot be deactivated without an id")
+
         card.is_active = False
         card.completed_at = datetime.now()
-        await card.save()
+
+        await CoffeeCard.get_pymongo_collection().update_one(
+            {"_id": card.id},
+            {
+                "$set": {
+                    "is_active": False,
+                    "completed_at": card.completed_at,
+                }
+            },
+        )
 
         removed_from_cache = False
         if card.id is not None:
@@ -294,8 +302,7 @@ class CoffeeCardManager:
             raise ValueError("Purchaser not found")
 
         # Count existing cards for naming
-        existing_cards = await CoffeeCard.find().to_list()
-        card_number = len(existing_cards) + 1
+        card_number = await CoffeeCard.count() + 1
         card_name = f"Card {card_number}"
 
         total_cost = float(total_coffees) * cost_per_coffee

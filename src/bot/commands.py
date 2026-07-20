@@ -51,6 +51,8 @@ class CommandManager:
             bool: True if user has an active conversation (command should abort),
                   False if user is free to start a new conversation
         """
+        await self.api.conversation_manager.wait_for_cancel_cleanup(user_id)
+
         if self.api.conversation_manager.has_active_conversation(user_id):
             await self.api.message_manager.send_text(
                 user_id,

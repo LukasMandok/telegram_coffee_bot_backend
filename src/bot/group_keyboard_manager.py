@@ -106,10 +106,15 @@ class GroupKeyboardManager:
                 warning_message = "🔄 Coffee orders will be split between multiple cards"
         
         # Build complete message text with optional warning
-        card_lines = [
-            f"• **{card.name}** (purchased by: {card.purchaser.display_name})"  # type: ignore[union-attr]
-            for card in active_cards
-        ]
+        card_lines = []
+        for card in active_cards:
+            purchaser_name = "(unknown)"
+            try:
+                await card.fetch_link("purchaser")
+                purchaser_name = card.purchaser.display_name  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            card_lines.append(f"• **{card.name}** (purchased by: {purchaser_name})")
 
         lines: List[str] = ["☕ **Group Coffee Order**", ""]
 

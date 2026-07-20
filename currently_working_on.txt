@@ -64,3 +64,24 @@ not working:
 
 
 - refactor users handler to a full user_manager
+
+
+Current Promt:
+
+currently the nameing of all the module specific loggers is a complete mess:
+
+      ConversationManager: 'DEBUG',
+      WeeklySnapshots: 'TRACE',
+      'src.bot.settings_flow': 'TRACE',
+      'src.bot.settings_manager': 'TRACE',
+      'src.bot.settings_generator': 'TRACE',
+      InitialSetup: 'DEBUG'
+
+    elspecially those src.bot.settings_flow I completly dislike. It should be a simple name like COnversationManager, which reflects how the name is called for all of them...
+
+    so SettingsFlow
+    SettingsManager
+    SettingsGenerator 
+    should probably do the trick.
+
+can you quickly go over all the modules with loggers to make sure this is simple an uniform

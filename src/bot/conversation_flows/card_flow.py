@@ -195,7 +195,10 @@ menu_allowlist: List[str] = [STATE_CREATE_MAIN]
 
 async def list_all_cards(flow_state, api, user_id: int) -> List[CoffeeCard]:
     # Newest first.
-    return await CoffeeCard.find(fetch_links=True).sort("-created_at").to_list()  # type: ignore[arg-type]
+    return await CoffeeCard.find_without_large_links(
+        sort_field="created_at",
+        descending=True,
+    )
 
 
 def build_card_number_button(card: CoffeeCard, index: int) -> ButtonCallback:
