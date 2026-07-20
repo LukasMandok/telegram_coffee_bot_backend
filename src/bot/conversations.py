@@ -6,6 +6,7 @@ authentication, and group selection processes.
 """
 
 import asyncio
+from datetime import datetime
 import logging
 import time
 from typing import TYPE_CHECKING, Dict, Any, Callable, Optional, Union, Tuple, overload, Literal
@@ -23,6 +24,7 @@ from ..dependencies.dependencies import get_repo
 from .conversation_flows.credit_flow import run_credit_flow
 from .conversation_flows.debt_flow import run_debt_flow
 from .conversation_flows.card_flow import create_card_menu_flow, create_close_card_flow, create_new_card_flow
+from .conversation_flows.old_order_flow import create_old_order_flow, KEY_FINAL_DATETIME
 from .conversation_flows.quick_order_flow import create_quick_order_flow, format_not_enough_coffees_text
 from .conversation_flows.snapshots_flow import create_snapshots_flow
 from .conversation_flows.users_flow import create_users_flow
@@ -896,8 +898,13 @@ class ConversationManager:
 
         return False
 
-    @managed_conversation("group_selection", 180)
-    async def group_selection(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
+    @managed_conversation("group_selection", 180, use_existing_conv=True)
+    async def group_selection(self, 
+                              user_id: int, 
+                              conv: Conversation, 
+                              state: ConversationState,
+                              custom_session_date: Optional[datetime] = None
+                             ) -> bool:
         """
         Start the group selection conversation with a user using integrated session management.
 
@@ -917,7 +924,8 @@ class ConversationManager:
         """
         try:
             # Use SessionManager to start or join a session
-            session, is_new_session = await self.api.session_manager.start_or_join_session(user_id)
+            session, is_new_session = await self.api.session_manager.start_or_join_session(user_id,
+                                                                                           custom_session_date=custom_session_date)
             
             # if is_new_session:
             #     await self.api.message_manager.send_text(
@@ -974,6 +982,35 @@ class ConversationManager:
             )
         return completed
 
+    @managed_conversation("old_order", 240)
+    async def old_order_conversation(self, user_id: int, conv: Conversation, state: ConversationState) -> bool:
+        """Runs the historical date/time picker, then launches the group order session."""
+        from .conversation_flows.old_order_flow import create_old_order_flow
+        
+        flow = create_old_order_flow()
+        
+        # We pass a shared dictionary in initial_data so old_order_flow can write the final datetime back to us
+        shared_context = {}
+        completed = await flow.run(
+            conv,
+            user_id,
+            self.api,
+            start_state="main",
+            initial_data={"shared": shared_context}
+        )
+        
+        # If user cancelled or timed out during date/time selection, abort
+        if not completed or "final_dt" not in shared_context:
+            return False
+
+        final_dt = shared_context["final_dt"]
+        
+        # Seamlessly transition into the group selection menu, reusing the active Telethon conv
+        return await self.group_selection(
+            user_id, 
+            existing_conv=conv, 
+            custom_session_date=final_dt
+        )
 
     @managed_conversation("quick_order", 45)
     async def quick_order_conversation(self, user_id: int, conv: Conversation, state: ConversationState, quantity: int) -> bool:

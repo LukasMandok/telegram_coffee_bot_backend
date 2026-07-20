@@ -128,6 +128,7 @@ class TelethonAPI:
         # Use CommandManager methods directly for cleaner architecture
         self.add_handler(lambda event: self.command_manager.handle_start_command(event), '/start')
         self.add_handler(lambda event: self.command_manager.handle_order_command(event), '/order')
+        self.add_handler(lambda event: self.command_manager.handle_old_order_command(event), '/old_order')
         self.add_handler(lambda event: self.command_manager.handle_password_command(event), '/password')
         self.add_handler(lambda event: self.command_manager.handle_card_command(event), "/cards")
         self.add_handler(lambda event: self.command_manager.handle_new_card_command(event), "/new_card")

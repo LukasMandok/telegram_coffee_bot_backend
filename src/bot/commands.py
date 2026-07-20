@@ -224,6 +224,24 @@ class CommandManager:
         
         # Start the group selection conversation
         await self.api.conversation_manager.group_selection(user_id)
+        
+    @dep.verify_user
+    async def handle_old_order_command(self, event: events.NewMessage.Event) -> None:
+        """
+        Handle the /old_order command to create an order with a historical date and time.
+        
+        Args:
+            event: The NewMessage event containing /old_order command
+        """
+        user_id = event.sender_id
+        self.logger.debug(f"[TELEGRAM] command_received (user_id={user_id}, command=/old_order)")
+
+        # Check if user already has an active conversation
+        if await self._check_and_notify_active_conversation(user_id):
+            return
+        
+        # Start the old order flow conversation
+        await self.api.conversation_manager.old_order_conversation(user_id)
 
     @dep.verify_user
     async def handle_new_card_command(self, event: events.NewMessage.Event) -> None:
@@ -618,6 +636,7 @@ class CommandManager:
             
             "**Coffee Orders:**\n"
             "• /order - Create or join a session to place an order\n"
+            "• /old_order - Create a dated back order\n"
             "• `send a number` - Quick order for yourself (e.g. send `2` → confirm)\n"
 
             "**Coffee Cards:**\n"

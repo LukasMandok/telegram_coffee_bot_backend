@@ -154,6 +154,7 @@ class SessionManager:
         initiator_id: int,
         coffee_cards: List[CoffeeCard],
         group_state: GroupState,
+        custom_session_date: Optional[datetime] = None,
     ) -> InMemoryCoffeeSession:
         """Start a new in-memory coffee ordering session."""
 
@@ -168,12 +169,15 @@ class SessionManager:
         session_id = f"session_{self._next_session_number}"
         self._next_session_number += 1
 
+        session_time = custom_session_date or datetime.now()
+
         session = InMemoryCoffeeSession(
             id=session_id,
             initiator=initiator,
             coffee_cards=cards,
             group_state=group_state,
             participants=[initiator],
+            session_date=session_time
         )
         session.coffee_card_manager = self.api.coffee_card_manager
 
@@ -294,12 +298,17 @@ class SessionManager:
         return bool(removed)
         
             
-    async def start_or_join_session(self, user_id: int) -> Tuple[InMemoryCoffeeSession, bool]:
+    async def start_or_join_session(
+        self,
+        user_id: int,
+        custom_session_date: Optional[datetime] = None
+    ) -> Tuple[InMemoryCoffeeSession, bool]:
         """
         Start a new session or join existing one.
         
         Args:
             user_id: Telegram user ID
+            custom_session_date: Optional custom session date and time
             
         Returns:
             tuple: (CoffeeSession, is_new_session)
@@ -315,6 +324,8 @@ class SessionManager:
         self.session = active_session
 
         if active_session is not None and bool(active_session.is_active):
+            if custom_session_date:
+                active_session.session_date = custom_session_date
             try:
                 if len(active_session.participants) == 0 and active_session.group_state.get_total_coffees() > 0:
                     self.logger.debug(
@@ -337,6 +348,7 @@ class SessionManager:
             int(user_id),
             active_cards,
             group_state=group_state,
+            custom_session_date=custom_session_date
         )
 
         try:
@@ -963,6 +975,15 @@ class SessionManager:
             f"• Participants: {participant_count}\n"
             f"• Total Coffees: {total_coffees}\n\n"
         )
+        
+        # Check if the session_date is not today
+        today = datetime.now().date()
+        if self.session.session_date.date() != today:
+            formatted_date = self.session.session_date.strftime("%d.%m.%Y")
+            summary += f"⚠️ **Remark:** This order is dated back to {formatted_date}\n"
+        # -------------------------------
+
+        summary += "\n"
 
         if card_usage:
             summary += "**Cards used:**\n"
