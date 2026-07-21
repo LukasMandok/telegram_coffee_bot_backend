@@ -2,16 +2,7 @@
 
 FROM python:3.13
 
-# Set working dorectory for bot script
-WORKDIR /app
-
-# Copy all files from bot directory to container
-COPY src/ /app/src
-COPY tests/ /app/tests
-
-# Install system dependencies
-# Combine updates and installs to keep the image clean and avoid "debconf" errors
-# Use --no-install-recommends to avoid installing huge unnecessary dependencies (like X11)
+# 1. System-Abhängigkeiten zuerst installieren (ändert sich fast nie -> perfekter Cache)
 RUN apt-get update && \
     export DEBIAN_FRONTEND=noninteractive && \
     apt-get install -y --no-install-recommends \
@@ -23,9 +14,17 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-RUN pip3 install --no-cache-dir -r /app/src/requirements.txt
+# Setze das Arbeitsverzeichnis
+WORKDIR /app
 
+# 2. Python-Requirements separat kopieren und installieren (nutzt Cache, solange sich keine Library ändert)
+COPY src/requirements.txt ./src/requirements.txt
+RUN pip3 install --no-cache-dir -r ./src/requirements.txt
+
+# 3. Den restlichen Code und die CHANGELOG kopieren (ändert sich oft)
+COPY src/ ./src/
+COPY tests/ ./tests/
+COPY CHANGELOG.md ./CHANGELOG.md
 
 # Set user group as environment variables
 ENV PUID=1000
@@ -35,11 +34,9 @@ ENV PGID=1000
 RUN groupadd -g $PGID cof && \
     useradd -u $PUID -g cof -m cof
 
-
-# Change the ownership of the working directory and start script to the non-root user
-RUN chown -R cof:cof /app
-RUN chown cof:cof src/start.sh
-RUN chmod +x src/start.sh
+# Berechtigungen anpassen (Pfade korrigiert, da wir im WORKDIR /app sind)
+RUN chown -R cof:cof /app && \
+    chmod +x src/start.sh
 
 # Set the non-root user as the user to run the container
 USER cof
