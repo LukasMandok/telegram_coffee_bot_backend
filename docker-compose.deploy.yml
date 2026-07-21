@@ -1,6 +1,6 @@
 services:
   coffee-bot:
-    image: ghcr.io/lukasmandok/telegram_coffee_bot_backend:main
+    image: ghcr.io/lukasmandok/telegram_coffee_bot_backend:latest
     ports:
       - "8000:8000"
       - "5678:5678"
